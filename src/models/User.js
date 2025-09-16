@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const bcrypt = require('bcrypt');
 
 const userSchema = new mongoose.Schema(
   {
@@ -12,8 +13,8 @@ const userSchema = new mongoose.Schema(
     },
     phone: {
       type: String,
-      required: true,
       unique: true,
+      sparse: true, // Cho phép null values
       trim: true
     },
     password: {
@@ -25,6 +26,7 @@ const userSchema = new mongoose.Schema(
     role: {
       type: String,
       enum: ['RENTER', 'OWNER', 'ADMIN', 'SHIPPER'],
+      default: 'RENTER',
       required: true
     },
     status: {
@@ -37,12 +39,10 @@ const userSchema = new mongoose.Schema(
     profile: {
       firstName: {
         type: String,
-        required: true,
         trim: true
       },
       lastName: {
         type: String,
-        required: true,
         trim: true
       },
       avatar: String,
@@ -69,7 +69,7 @@ const userSchema = new mongoose.Schema(
       }
     },
 
-    // Basic Verification Status
+    // Verification Status
     verification: {
       emailVerified: {
         type: Boolean,
@@ -102,8 +102,28 @@ const userSchema = new mongoose.Schema(
   }
 );
 
-userSchema.index({ email: 1 });
-userSchema.index({ phone: 1 });
+// Indexes
 userSchema.index({ role: 1, status: 1 });
+userSchema.index({ 'verification.emailVerified': 1 });
+
+// Hash password before saving
+userSchema.pre('save', async function (next) {
+  if (!this.isModified('password')) return next();
+
+  try {
+    const salt = await bcrypt.genSalt(10);
+    this.password = await bcrypt.hash(this.password, salt);
+    next();
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Remove password from JSON output
+userSchema.methods.toJSON = function () {
+  const userObject = this.toObject();
+  delete userObject.password;
+  return userObject;
+};
 
 module.exports = mongoose.model('User', userSchema);
