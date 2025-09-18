@@ -6,30 +6,25 @@ const { registerRoute } = require('./register.routes');
 const globalAsyncHandler = require('../middleware/handler');
 const { authMiddleware } = require('../middleware/auth');
 const multer = require('multer');
+const { validateRegister, validateLogin, authLimiter } = require('../middleware/validation');
 
 require('dotenv').config();
-
-
 
 const storage = multer.memoryStorage();
 
 globalAsyncHandler(router);
-router.post('/register', authController.registerUser);
+
+// Auth routes
+router.post('/login', validateLogin, authController.loginUser);
+router.post('/register', validateRegister, authController.registerUser);
 router.post('/refresh', authController.refreshToken);
-router.post('/login', authController.loginUser);
-router.delete('/deleteUser/:id', authMiddleware.verifyToken, userController.deleteUser);
-router.get(
-  '/getUsers',
-  authMiddleware.verifyToken,
-  authMiddleware.checkUserRole('admin'),
-  userController.getUsers
-);
 router.post('/googlelogin', authController.googleSignIn);
 router.get('/verify-email', authController.verifyEmail);
+router.post('/resend-verification', authController.resendVerificationEmail);
 router.post('/reset-password', authController.resetPassword);
 router.post('/forgot-password', authController.forgotPassword);
+router.post('/logout', authMiddleware.verifyToken, authController.logout);
 
-//router.get('/dashboard', authMiddleware, checkUserRole('admin'), authController.dashboard);
 registerRoute('/auth', router);
 
 module.exports = router;
