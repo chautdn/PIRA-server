@@ -6,7 +6,8 @@
   "scripts": {
     "start": "node src/app.js",
     "dev": "nodemon src/app.js",
-    "production": "NODE_ENV=production node src/app.js"
+    "production": "NODE_ENV=production node src/app.js",
+    "seed:products": "node src/seeds/seed-products.js"
   },
   "dependencies": {
     "axios": "^1.8.1",

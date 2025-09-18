@@ -102,8 +102,7 @@ const userSchema = new mongoose.Schema(
   }
 );
 
-userSchema.index({ email: 1 });
-userSchema.index({ phone: 1 });
+// Keep a compound index and rely on unique constraints on the schema fields
 userSchema.index({ role: 1, status: 1 });
 
 module.exports = mongoose.model('User', userSchema);
