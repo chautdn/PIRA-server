@@ -20,7 +20,8 @@ router.get('/health', (req, res) => {
 
 require('./user.routes');
 require('./auth.routes');
-require('./chat.routes'); // ADD: Chat routes
+require('./chat.routes'); 
+require('./products.routes');
 
 // Apply global async handler to router
 globalAsyncHandler(router);
