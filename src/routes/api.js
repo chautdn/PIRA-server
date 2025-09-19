@@ -3,10 +3,24 @@ const router = express.Router();
 const globalAsyncHandler = require('../middleware/handler');
 const getRoutes = require('./register.routes').getRoutes;
 
+// Health check endpoint
+router.get('/health', (req, res) => {
+  res.json({
+    success: true,
+    message: 'PIRA Server is running',
+    timestamp: new Date().toISOString(),
+    services: {
+      chat: 'enabled',
+      socketio: 'enabled'
+    }
+  });
+});
+
 //import router
 
 require('./user.routes');
 require('./auth.routes');
+require('./chat.routes'); // ADD: Chat routes
 
 // Apply global async handler to router
 globalAsyncHandler(router);

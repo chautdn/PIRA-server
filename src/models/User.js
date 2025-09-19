@@ -126,4 +126,5 @@ userSchema.methods.toJSON = function () {
   return userObject;
 };
 
-module.exports = mongoose.model('User', userSchema);
+// Prevent model overwrite error
+module.exports = mongoose.models.User || mongoose.model('User', userSchema);

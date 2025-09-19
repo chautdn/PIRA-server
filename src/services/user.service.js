@@ -1,4 +1,4 @@
-const User = require('../models/user');
+const User = require('../models/User');
 const { NotFoundError, ValidationError, DatabaseError } = require('../core/error');
 
 const getAllUsers = async () => {
