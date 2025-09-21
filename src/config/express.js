@@ -75,6 +75,11 @@ app.all('/api/*', (req, res) => {
   });
 });
 
+// Serve debug tool (always available)
+app.get('/debug', (req, res) => {
+  res.sendFile(path.join(__dirname, '../../frontend-chat-debug.html'));
+});
+
 // For React Router - serve index.html for all non-API routes in production
 if (process.env.NODE_ENV === 'production') {
   // Serve static files from React build

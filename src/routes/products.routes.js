@@ -1,29 +1,29 @@
 const express = require('express');
-const Product = require('../models/Product');
-const { registerRoute } = require('./register.routes');
-
 const router = express.Router();
+const { registerRoute } = require('./register.routes');
+const productController = require('../controllers/product.controller');
+const globalAsyncHandler = require('../middleware/handler');
 
-// GET /api/products?page=1&limit=12
-router.get('/', async (req, res) => {
-  const { page = 1, limit = 12 } = req.query;
-  const pageNum = Number(page) || 1;
-  const limitNum = Number(limit) || 12;
-  const skip = (pageNum - 1) * limitNum;
+// Apply global async handler to router
+globalAsyncHandler(router);
 
-  const [items, total] = await Promise.all([
-    Product.find({ status: 'ACTIVE' })
-      .sort({ createdAt: -1 })
-      .skip(skip)
-      .limit(limitNum),
-    Product.countDocuments({ status: 'ACTIVE' })
-  ]);
+// GET /api/products - Get products with filtering, search, pagination
+router.get('/', productController.getProducts);
 
-  res.json({
-    data: items,
-    pagination: { page: pageNum, limit: limitNum, total }
-  });
-});
+// GET /api/products/categories - Get all categories for filtering
+router.get('/categories', productController.getCategories);
+
+// GET /api/products/search-suggestions - Get search suggestions
+router.get('/search-suggestions', productController.getSearchSuggestions);
+
+// GET /api/products/filter-options - Get filter options (price range, locations, etc.)
+router.get('/filter-options', productController.getFilterOptions);
+
+// GET /api/products/featured - Get featured products for homepage
+router.get('/featured', productController.getFeaturedProducts);
+
+// GET /api/products/:id - Get product by ID
+router.get('/:id', productController.getProductById);
 
 registerRoute('/products', router);
 

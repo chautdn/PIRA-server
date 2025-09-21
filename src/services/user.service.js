@@ -1,4 +1,4 @@
-const User = require('../models/user');
+const User = require('../models/User');
 const { NotFoundError, ValidationError, DatabaseError } = require('../core/error');
 
 const getAllUsers = async () => {
@@ -12,7 +12,6 @@ const getAllUsers = async () => {
 };
 
 const createUser = async (userParam) => {
-  console.log(userParam);
   if (!userParam.email || !userParam.password) {
     throw new ValidationError('Email and password are required');
   }
