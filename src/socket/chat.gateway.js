@@ -13,14 +13,11 @@ class ChatGateway {
 
   setupSocketHandlers() {
     this.io.on('connection', (socket) => {
-      // console.log('Socket connected:', socket.id);
-
       // Handle authentication
       socket.on('authenticate', async (token) => {
         try {
           await this.authenticateSocket(socket, token);
         } catch (error) {
-          // console.error('Socket authentication failed:', error.message);
           socket.emit('auth:error', { message: 'Authentication failed' });
           socket.disconnect();
         }
@@ -52,7 +49,7 @@ class ChatGateway {
 
       // Handle errors
       socket.on('error', (error) => {
-        console.error('Socket error:', error);
+        // Socket error
       });
     });
   }
@@ -110,7 +107,7 @@ class ChatGateway {
         socket.join(`chat:${conversationId}`);
       });
     } catch (error) {
-      console.error('Error joining conversations:', error);
+      // Error joining conversations
       socket.emit('error', { message: 'Failed to join conversations' });
     }
   }
@@ -130,10 +127,8 @@ class ChatGateway {
       conversationIds.forEach((conversationId) => {
         socket.leave(`chat:${conversationId}`);
       });
-
-      console.log(`User ${socket.userId} left ${conversationIds.length} conversations`);
     } catch (error) {
-      console.error('Error leaving conversations:', error);
+      // Error leaving conversations
     }
   }
 
@@ -155,7 +150,7 @@ class ChatGateway {
         user: socket.user
       });
     } catch (error) {
-      console.error('Error handling typing:', error);
+      // Error handling typing
     }
   }
 
@@ -176,7 +171,7 @@ class ChatGateway {
         conversationId
       });
     } catch (error) {
-      console.error('Error handling stop typing:', error);
+      // Error handling stop typing
     }
   }
 
@@ -192,7 +187,7 @@ class ChatGateway {
         this.emitOnlineUsers();
       }
     } catch (error) {
-      console.error('Error handling disconnect:', error);
+      // Error handling disconnect
     }
   }
 
@@ -217,7 +212,7 @@ class ChatGateway {
         });
       }
     } catch (error) {
-      console.error('Error emitting new message:', error);
+      // Error emitting new message
     }
   }
 
@@ -230,7 +225,7 @@ class ChatGateway {
         timestamp: new Date()
       });
     } catch (error) {
-      console.error('Error emitting mark as read:', error);
+      // Error emitting mark as read
     }
   }
 
@@ -243,7 +238,7 @@ class ChatGateway {
         timestamp: new Date()
       });
     } catch (error) {
-      console.error('Error emitting message deleted:', error);
+      // Error emitting message deleted
     }
   }
 
@@ -252,7 +247,7 @@ class ChatGateway {
       const onlineUserIds = Array.from(this.userSockets.keys());
       this.io.emit('chat:online-users', { userIds: onlineUserIds });
     } catch (error) {
-      console.error('Error emitting online users:', error);
+      // Error emitting online users
     }
   }
 
@@ -270,7 +265,7 @@ class ChatGateway {
     try {
       this.io.to(`user:${userId}`).emit('notification', notification);
     } catch (error) {
-      console.error('Error sending notification to user:', error);
+      // Error sending notification to user
     }
   }
 

@@ -5,7 +5,7 @@ const Product = require('../models/Product');
 const Order = require('../models/Order');
 
 const chatService = {
-  // Get all conversations for a user
+  // Get all conversations for a user (including empty ones)
   getConversations: async (userId, cursor = null, limit = 50) => {
     try {
       if (!userId) {
@@ -13,17 +13,21 @@ const chatService = {
       }
 
       const query = {
-        participants: userId,
-        lastMessageAt: { $ne: null } // Only show chats with messages
+        participants: userId
+        // REMOVED: lastMessageAt filter - show ALL conversations including empty ones
       };
 
+      // For pagination, use createdAt if no lastMessageAt exists, otherwise use lastMessageAt
       if (cursor) {
-        query.lastMessageAt = { $lt: new Date(cursor) };
+        query.$or = [
+          { lastMessageAt: { $lt: new Date(cursor) } },
+          { lastMessageAt: null, createdAt: { $lt: new Date(cursor) } }
+        ];
       }
 
       const conversations = await Chat.find(query)
         .populate('participants', 'profile.firstName profile.lastName profile.avatar')
-        .populate('listingId', 'title images.url price')
+        .populate('listingId', 'title images pricing.dailyRate description condition')
         .populate('bookingId', 'status totalAmount')
         .populate({
           path: 'lastMessage',
@@ -33,13 +37,22 @@ const chatService = {
             select: 'profile.firstName profile.lastName'
           }
         })
-        .sort({ lastMessageAt: -1 })
+        .sort({
+          // Sort by lastMessageAt if exists, otherwise by createdAt (newest first)
+          lastMessageAt: -1,
+          createdAt: -1
+        })
         .limit(limit);
 
       // Add unread count for each conversation
       const conversationsWithUnread = conversations.map((conv) => {
         const convObj = conv.toObject();
-        convObj.unreadCount = conv.getUnreadCount(userId);
+        // Only add unread count if conversation has messages
+        convObj.unreadCount = conv.lastMessage
+          ? conv.getUnreadCount
+            ? conv.getUnreadCount(userId)
+            : 0
+          : 0;
         return convObj;
       });
 
@@ -168,7 +181,7 @@ const chatService = {
     }
   },
 
-  // Create or get existing conversation
+  // Create or get existing conversation (UNIFIED - ignores listingId/bookingId)
   createOrGetConversation: async (userId, targetUserId, listingId = null, bookingId = null) => {
     try {
       if (!userId || !targetUserId) {
@@ -179,31 +192,32 @@ const chatService = {
         throw new Error('Cannot create conversation with yourself');
       }
 
-      // Check if conversation already exists
-      let conversation = await Chat.findOne({
-        participants: { $all: [userId, targetUserId] },
-        $or: [
-          { listingId },
-          { bookingId },
-          { listingId: null, bookingId: null } // General chat
-        ]
-      });
+      // UNIFIED CHAT: Look for ANY conversation between these two users
+      // Ignore listingId and bookingId to ensure one conversation per user pair
+      const query = {
+        participants: { $all: [userId, targetUserId] }
+        // Removed listingId and bookingId filters for unified chat
+      };
+
+      let conversation = await Chat.findOne(query);
 
       if (conversation) {
         await conversation.populate(
           'participants',
           'profile.firstName profile.lastName profile.avatar'
         );
-        await conversation.populate('listingId', 'title images.url price');
+        await conversation.populate(
+          'listingId',
+          'title images pricing.dailyRate description condition'
+        );
         await conversation.populate('bookingId', 'status totalAmount');
         return conversation;
       }
 
-      // Create new conversation
+      // Create new conversation (without listingId/bookingId for unified chat)
       conversation = new Chat({
         participants: [userId, targetUserId],
-        listingId,
-        bookingId,
+        // Removed listingId and bookingId for unified chat
         lastReads: [
           { userId, lastReadAt: new Date() },
           { userId: targetUserId, lastReadAt: new Date() }
@@ -215,12 +229,52 @@ const chatService = {
         'participants',
         'profile.firstName profile.lastName profile.avatar'
       );
-      await conversation.populate('listingId', 'title images.url price');
+      await conversation.populate(
+        'listingId',
+        'title images pricing.dailyRate description condition'
+      );
       await conversation.populate('bookingId', 'status totalAmount');
 
       return conversation;
     } catch (error) {
       throw new Error(`Failed to create conversation: ${error.message}`);
+    }
+  },
+
+  // Find existing conversation without creating it (UNIFIED - ignores listingId)
+  findExistingConversation: async (userId, targetUserId, listingId = null) => {
+    try {
+      if (!userId || !targetUserId) {
+        throw new Error('User ID and Target User ID are required');
+      }
+
+      if (userId === targetUserId) {
+        throw new Error('Cannot find conversation with yourself');
+      }
+
+      // UNIFIED CHAT: Look for ANY conversation between these two users
+      // Ignore listingId to ensure unified conversation per user pair
+      const query = {
+        participants: { $all: [userId, targetUserId] }
+        // Removed listingId and bookingId filters for unified chat
+      };
+
+      const conversation = await Chat.findOne(query)
+        .populate('participants', 'profile.firstName profile.lastName profile.avatar')
+        .populate('listingId', 'title images pricing.dailyRate description condition')
+        .populate('bookingId', 'status totalAmount')
+        .populate({
+          path: 'lastMessage',
+          select: 'content type createdAt senderId',
+          populate: {
+            path: 'senderId',
+            select: 'profile.firstName profile.lastName'
+          }
+        });
+
+      return conversation; // Returns null if not found
+    } catch (error) {
+      throw new Error(`Failed to find conversation: ${error.message}`);
     }
   },
 
@@ -299,20 +353,23 @@ const chatService = {
     }
   },
 
-  // Get users for sidebar (users with existing conversations)
+  // Get users for sidebar (users with existing conversations, including empty ones)
   getUsersForSidebar: async (userId) => {
     try {
       if (!userId) {
         throw new Error('User ID is required');
       }
 
-      // Get all conversations for the user
+      // Get all conversations for the user (including empty ones)
       const conversations = await Chat.find({
-        participants: userId,
-        lastMessageAt: { $ne: null }
+        participants: userId
+        // REMOVED: lastMessageAt filter - include empty conversations
       })
         .populate('participants', 'profile.firstName profile.lastName profile.avatar _id')
-        .sort({ lastMessageAt: -1 });
+        .sort({
+          lastMessageAt: -1,
+          createdAt: -1
+        });
 
       // Extract other participants (not the current user)
       const users = conversations
@@ -364,4 +421,3 @@ const chatService = {
 };
 
 module.exports = chatService;
-

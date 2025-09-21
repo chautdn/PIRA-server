@@ -80,15 +80,55 @@ const chatController = {
       const userId = req.user._id;
       const { targetUserId, listingId = null, bookingId = null } = req.body;
 
+      // Validate ObjectIds
+      const mongoose = require('mongoose');
+      if (!mongoose.Types.ObjectId.isValid(targetUserId)) {
+        throw new Error(`Invalid targetUserId: ${targetUserId}`);
+      }
+      if (listingId && !mongoose.Types.ObjectId.isValid(listingId)) {
+        throw new Error(`Invalid listingId: ${listingId}`);
+      }
+      if (bookingId && !mongoose.Types.ObjectId.isValid(bookingId)) {
+        throw new Error(`Invalid bookingId: ${bookingId}`);
+      }
+
       const conversation = await chatService.createOrGetConversation(
         userId,
         targetUserId,
         listingId,
         bookingId
       );
+
       responseUtils.success(res, conversation, 'Conversation created/retrieved successfully');
     } catch (error) {
+      // Error creating conversation
       responseUtils.error(res, error.message, 400);
+    }
+  },
+
+  // Find existing conversation without creating
+  findExistingConversation: async (req, res) => {
+    try {
+      const userId = req.user._id;
+      const { targetUserId, listingId = null } = req.query;
+
+      if (!targetUserId) {
+        return responseUtils.error(res, 'Target user ID is required', 400);
+      }
+
+      const conversation = await chatService.findExistingConversation(
+        userId,
+        targetUserId,
+        listingId
+      );
+
+      if (!conversation) {
+        return responseUtils.error(res, 'Conversation not found', 404);
+      }
+
+      responseUtils.success(res, conversation, 'Conversation found');
+    } catch (error) {
+      responseUtils.error(res, error.message, 500);
     }
   },
 
@@ -158,4 +198,3 @@ const chatController = {
 };
 
 module.exports = { chatController, chatActionLimiter };
-

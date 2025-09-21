@@ -20,7 +20,7 @@ router.get('/health', (req, res) => {
 
 require('./user.routes');
 require('./auth.routes');
-require('./chat.routes'); 
+require('./chat.routes');
 require('./products.routes');
 
 // Apply global async handler to router
@@ -37,7 +37,6 @@ getRoutes()?.forEach(({ path, router: moduleRouter }) => {
   }
 
   const normalizedPath = path.startsWith('/') ? path : `/${path}`;
-  console.log(normalizedPath, '\n');
 
   router.use(normalizedPath, moduleRouter);
 });

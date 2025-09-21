@@ -39,7 +39,7 @@ const authMiddleware = {
       req.user = user;
       next();
     } catch (error) {
-      console.error('Auth middleware error:', error);
+      // Auth middleware error
       return res.status(401).json({
         success: false,
         message: 'Invalid or expired token'
@@ -48,7 +48,6 @@ const authMiddleware = {
   },
   checkUserRole: (role) => {
     return (req, res, next) => {
-      console.log(req.user);
       if (req.user.role === role) {
         next();
       } else {

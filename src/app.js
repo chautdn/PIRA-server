@@ -27,13 +27,10 @@ global.chatGateway = chatGateway; // Make available globally
 
 // Log Socket.IO events for monitoring
 io.engine.on('connection_error', (err) => {
-  console.error('Socket.IO connection error:', err);
+  // Socket.IO connection error
 });
 
 // Use server instead of app for listening
-server.listen(PORT, () => {
-  console.log(`Server running on http://localhost:${PORT}`);
-  console.log('Socket.IO enabled for real-time chat');
-});
+server.listen(PORT, () => {});
 
 module.exports = { app, server, io };

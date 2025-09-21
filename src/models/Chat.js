@@ -64,10 +64,10 @@ chatSchema.pre('save', function (next) {
     return next(new Error('Chat must have exactly 2 participants'));
   }
 
-  // Must have either listingId or bookingId
-  if (!this.listingId && !this.bookingId) {
-    return next(new Error('Chat must be tied to either a listing or booking'));
-  }
+  // Conversations can be general (no listingId/bookingId required)
+  // if (!this.listingId && !this.bookingId) {
+  //   return next(new Error('Chat must be tied to either a listing or booking'));
+  // }
 
   next();
 });

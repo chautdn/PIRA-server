@@ -19,6 +19,9 @@ router.get('/search-suggestions', productController.getSearchSuggestions);
 // GET /api/products/filter-options - Get filter options (price range, locations, etc.)
 router.get('/filter-options', productController.getFilterOptions);
 
+// GET /api/products/featured - Get featured products for homepage
+router.get('/featured', productController.getFeaturedProducts);
+
 // GET /api/products/:id - Get product by ID
 router.get('/:id', productController.getProductById);
 

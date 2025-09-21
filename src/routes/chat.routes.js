@@ -9,8 +9,8 @@ const responseUtils = require('../utils/response');
 // Apply authentication middleware to all chat routes
 router.use(authMiddleware.verifyToken);
 
-// Apply rate limiting to all chat actions
-router.use(chatActionLimiter);
+// Apply rate limiting to all chat actions (temporarily disabled for debugging)
+// router.use(chatActionLimiter);
 
 // Validation middleware
 const validateSendMessage = [
@@ -89,8 +89,11 @@ router.get('/conversations', chatController.getConversations);
 // GET /api/chat/users - Get users for sidebar
 router.get('/users', chatController.getUsersForSidebar);
 
-// POST /api/chat/conversations - Create or get conversation
-router.post('/conversations', validateCreateConversation, chatController.createOrGetConversation);
+// POST /api/chat/conversations - Create or get conversation (temporarily disabled validation for debugging)
+router.post('/conversations', chatController.createOrGetConversation);
+
+// GET /api/chat/conversations/find - Find existing conversation
+router.get('/conversations/find', chatController.findExistingConversation);
 
 // GET /api/chat/:conversationId/messages - Get messages for conversation
 router.get('/:conversationId/messages', validateConversationId, chatController.getMessages);
@@ -109,4 +112,3 @@ router.delete('/messages/:messageId', validateMessageId, chatController.deleteMe
 
 registerRoute('/chat', router);
 module.exports = router;
-

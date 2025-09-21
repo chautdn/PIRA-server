@@ -8,7 +8,7 @@ const productController = {
   getProducts: async (req, res) => {
     try {
       const result = await productService.getProducts(req.query);
-      
+
       responseUtils.success(
         res,
         {
@@ -19,7 +19,7 @@ const productController = {
         'Lấy danh sách sản phẩm thành công'
       );
     } catch (error) {
-      console.error('Get products error:', error);
+      // Get products error
       responseUtils.error(res, error.message, 500);
     }
   },
@@ -31,14 +31,10 @@ const productController = {
     try {
       const { id } = req.params;
       const product = await productService.getProductById(id);
-      
-      responseUtils.success(
-        res,
-        { product },
-        'Lấy chi tiết sản phẩm thành công'
-      );
+
+      responseUtils.success(res, { product }, 'Lấy chi tiết sản phẩm thành công');
     } catch (error) {
-      console.error('Get product by ID error:', error);
+      // Get product by ID error
       const statusCode = error.message === 'Sản phẩm không tồn tại' ? 404 : 500;
       responseUtils.error(res, error.message, statusCode);
     }
@@ -50,14 +46,10 @@ const productController = {
   getCategories: async (req, res) => {
     try {
       const categories = await productService.getCategories();
-      
-      responseUtils.success(
-        res,
-        { categories },
-        'Lấy danh sách danh mục thành công'
-      );
+
+      responseUtils.success(res, { categories }, 'Lấy danh sách danh mục thành công');
     } catch (error) {
-      console.error('Get categories error:', error);
+      // Get categories error
       responseUtils.error(res, error.message, 500);
     }
   },
@@ -69,14 +61,10 @@ const productController = {
     try {
       const { q } = req.query;
       const suggestions = await productService.getSearchSuggestions(q);
-      
-      responseUtils.success(
-        res,
-        { suggestions },
-        'Lấy gợi ý tìm kiếm thành công'
-      );
+
+      responseUtils.success(res, { suggestions }, 'Lấy gợi ý tìm kiếm thành công');
     } catch (error) {
-      console.error('Get search suggestions error:', error);
+      // Get search suggestions error
       responseUtils.error(res, error.message, 500);
     }
   },
@@ -87,14 +75,23 @@ const productController = {
   getFilterOptions: async (req, res) => {
     try {
       const filterOptions = await productService.getFilterOptions();
-      
-      responseUtils.success(
-        res,
-        { filterOptions },
-        'Lấy tùy chọn lọc thành công'
-      );
+
+      responseUtils.success(res, { filterOptions }, 'Lấy tùy chọn lọc thành công');
     } catch (error) {
-      console.error('Get filter options error:', error);
+      // Get filter options error
+      responseUtils.error(res, error.message, 500);
+    }
+  },
+
+  // Get featured products for homepage
+  getFeaturedProducts: async (req, res) => {
+    try {
+      const limit = parseInt(req.query.limit) || 6;
+      const featuredProducts = await productService.getFeaturedProducts(limit);
+
+      responseUtils.success(res, featuredProducts, 'Featured products retrieved successfully');
+    } catch (error) {
+      // Get featured products error
       responseUtils.error(res, error.message, 500);
     }
   }

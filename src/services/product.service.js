@@ -8,24 +8,19 @@ const productService = {
    * Get products with advanced filtering, search, and pagination
    */
   getProducts: async (filters) => {
-    console.log('=== getProducts called ===');
-    console.log('Raw filters received:', JSON.stringify(filters, null, 2));
-    
     // First, test basic database connection
     try {
       const totalProductsInDB = await Product.countDocuments({});
       const activeProducts = await Product.countDocuments({ status: 'ACTIVE' });
-      console.log('Total products in database:', totalProductsInDB);
-      console.log('Active products in database:', activeProducts);
-      
+
       // Get a sample product to check structure - INCLUDING PRICING
-      const sampleProduct = await Product.findOne({}).select('title category status pricing').lean();
-      console.log('Sample product:', sampleProduct);
-      console.log('Sample product pricing:', sampleProduct?.pricing);
+      const sampleProduct = await Product.findOne({})
+        .select('title category status pricing')
+        .lean();
     } catch (dbError) {
-      console.error('Database connection test failed:', dbError);
+      // Database connection test failed
     }
-    
+
     const {
       page = 1,
       limit = 12,
@@ -39,70 +34,56 @@ const productService = {
       order = 'desc'
     } = filters;
 
-    console.log('Extracted filters:', {
-      page, limit, search, category, priceMin, priceMax, location, available, sort, order
-    });
-
     const pageNum = Math.max(1, parseInt(page));
     const limitNum = Math.min(50, Math.max(1, parseInt(limit)));
     const skip = (pageNum - 1) * limitNum;
 
     // Build query filter - START WITH BASIC
     const filter = { status: 'ACTIVE' };
-    console.log('Initial filter:', filter);
 
     // Text search - COMPREHENSIVE VIETNAMESE SEARCH
     if (search && search.trim()) {
       const searchTerm = search.trim();
-      console.log('🔍 [SEARCH] Processing search term:', searchTerm);
-      
+
       // Use comprehensive Vietnamese search utility
       const searchConditions = generateSearchConditions(searchTerm, [
-        'title', 
-        'description', 
-        'brand.name', 
+        'title',
+        'description',
+        'brand.name',
         'brand.model'
       ]);
-      
+
       filter.$or = searchConditions;
     }
 
     // Category filter - FIXED: Handle mapping from frontend IDs
     if (category && category.trim()) {
-      console.log('📂 [DEBUG] Category filter received:', category.trim());
-      
       // First, debug what categories exist in database
       const allCategories = await Category.find({}).select('_id name');
-      console.log('📂 [DEBUG] All categories in DB:', allCategories);
-      
+
       if (category.match(/^[0-9a-fA-F]{24}$/)) {
         // Valid ObjectID
         filter.category = category;
-        console.log('📂 [DEBUG] Using ObjectID category filter');
       } else {
         // Map frontend fake IDs to real category names
         const categoryMapping = {
-          'cameras': 'Máy ảnh & Quay phim',
-          'camping': 'Thiết bị cắm trại', 
-          'luggage': 'Vali & Túi xách',
-          'sports': 'Thiết bị thể thao',
-          'accessories': 'Phụ kiện du lịch'
+          cameras: 'Máy ảnh & Quay phim',
+          camping: 'Thiết bị cắm trại',
+          luggage: 'Vali & Túi xách',
+          sports: 'Thiết bị thể thao',
+          accessories: 'Phụ kiện du lịch'
         };
-        
+
         const categoryName = categoryMapping[category] || category;
-        console.log('📂 [DEBUG] Mapped category name:', categoryName);
-        
+
         // Find category by name to get real ObjectId
-        const categoryDoc = await Category.findOne({ 
-          name: { $regex: categoryName, $options: 'i' } 
+        const categoryDoc = await Category.findOne({
+          name: { $regex: categoryName, $options: 'i' }
         });
-        
-        console.log('📂 [DEBUG] Found category doc:', categoryDoc);
+
         if (categoryDoc) {
           filter.category = categoryDoc._id;
-          console.log('📂 [DEBUG] Using category ObjectId:', categoryDoc._id);
         } else {
-          console.log('❌ [DEBUG] Category not found, no filter applied');
           // Don't add filter if category not found - show all products
         }
       }
@@ -113,7 +94,6 @@ const productService = {
       filter['pricing.dailyRate'] = {};
       if (priceMin) filter['pricing.dailyRate'].$gte = parseInt(priceMin);
       if (priceMax) filter['pricing.dailyRate'].$lte = parseInt(priceMax);
-      console.log('💰 [DEBUG] Price filter applied:', filter['pricing.dailyRate']);
     }
 
     // Location filter - RE-ENABLED but handle $or conflicts
@@ -123,18 +103,14 @@ const productService = {
         { 'location.address.province': { $regex: location, $options: 'i' } },
         { 'location.address.district': { $regex: location, $options: 'i' } }
       ];
-      
+
       // Handle $or conflicts properly
       if (filter.$or) {
-        filter.$and = [
-          { $or: filter.$or },
-          { $or: locationConditions }
-        ];
+        filter.$and = [{ $or: filter.$or }, { $or: locationConditions }];
         delete filter.$or;
       } else {
         filter.$or = locationConditions;
       }
-      console.log('📍 [DEBUG] Location filter applied');
     }
 
     // Availability filter
@@ -161,9 +137,6 @@ const productService = {
         break;
     }
 
-    console.log('Final filter object:', JSON.stringify(filter, null, 2)); // Debug log
-    console.log('Sort options:', sortOptions); // Debug log
-
     try {
       const [products, total] = await Promise.all([
         Product.find(filter)
@@ -176,12 +149,6 @@ const productService = {
         Product.countDocuments(filter)
       ]);
 
-      console.log('Query results - Total found:', total);
-      console.log('Query results - Products returned:', products.length);
-      if (products.length > 0) {
-        console.log('First product title:', products[0].title);
-      }
-
       const pagination = {
         page: pageNum,
         limit: limitNum,
@@ -190,8 +157,6 @@ const productService = {
         hasNext: pageNum < Math.ceil(total / limitNum),
         hasPrev: pageNum > 1
       };
-
-      console.log('Pagination:', pagination);
 
       return {
         products,
@@ -208,7 +173,7 @@ const productService = {
         }
       };
     } catch (error) {
-      console.error('Database query error:', error);
+      // Database query error
       throw error;
     }
   },
@@ -227,8 +192,8 @@ const productService = {
     }
 
     // Increment view count
-    await Product.findByIdAndUpdate(productId, { 
-      $inc: { 'metrics.viewCount': 1 } 
+    await Product.findByIdAndUpdate(productId, {
+      $inc: { 'metrics.viewCount': 1 }
     });
 
     return product;
@@ -238,18 +203,13 @@ const productService = {
    * Get all categories for filtering
    */
   getCategories: async () => {
-    console.log('Getting categories from database...'); // Debug log
     const categories = await Category.find({ status: 'ACTIVE' })
       .select('name slug')
       .sort({ name: 1 })
       .lean();
 
-    console.log('Categories found:', categories.length, categories); // Debug log
-    
     // If no categories in database, create some default ones
     if (categories.length === 0) {
-      console.log('No categories found, creating default categories'); // Debug log
-      
       const defaultCategories = [
         { name: 'Máy ảnh & Quay phim', slug: 'may-anh-quay-phim', status: 'ACTIVE' },
         { name: 'Thiết bị cắm trại', slug: 'thiet-bi-cam-trai', status: 'ACTIVE' },
@@ -257,13 +217,12 @@ const productService = {
         { name: 'Thiết bị thể thao', slug: 'thiet-bi-the-thao', status: 'ACTIVE' },
         { name: 'Phụ kiện du lịch', slug: 'phu-kien-du-lich', status: 'ACTIVE' }
       ];
-      
+
       try {
         const createdCategories = await Category.insertMany(defaultCategories);
-        console.log('Created default categories:', createdCategories); // Debug log
         return createdCategories;
       } catch (error) {
-        console.error('Failed to create categories:', error);
+        // Failed to create categories
         return [];
       }
     }
@@ -332,7 +291,7 @@ const productService = {
           }
         }
       ]),
-      
+
       // Get unique locations
       Product.aggregate([
         { $match: { status: 'ACTIVE' } },
@@ -372,12 +331,57 @@ const productService = {
 
     return {
       priceRange: priceRange[0] || { minPrice: 0, maxPrice: 1000000 },
-      locations: locations.map(loc => ({
+      locations: locations.map((loc) => ({
         name: loc._id,
         count: loc.count
       })),
       categories: categories
     };
+  },
+
+  /**
+   * Get featured products for homepage
+   * Returns products with active featured status, sorted by tier and last upgrade date
+   */
+  getFeaturedProducts: async (limit = 6) => {
+    try {
+      const now = new Date();
+
+      const featuredProducts = await Product.find({
+        status: 'ACTIVE',
+        featuredTier: { $exists: true, $ne: null },
+        featuredPaymentStatus: 'PAID',
+        $or: [{ featuredExpiresAt: { $gt: now } }, { featuredExpiresAt: { $exists: false } }]
+      })
+        .populate('category', 'name')
+        .populate('owner', 'profile.firstName profile.lastName profile.avatar')
+        .sort({
+          featuredTier: 1, // Tier 1 (highest) first
+          featuredUpgradedAt: -1 // Most recently upgraded first within same tier
+        })
+        .limit(limit)
+        .lean();
+
+      // Filter out products with expired featured status
+      const validFeaturedProducts = featuredProducts.filter((product) => {
+        if (!product.featuredTier) {
+          return false;
+        }
+
+        const endDate = product.featuredExpiresAt;
+
+        // Check if featured is still active
+        if (endDate && now > new Date(endDate)) {
+          return false;
+        }
+
+        return true;
+      });
+
+      return validFeaturedProducts;
+    } catch (error) {
+      throw new Error(`Failed to get featured products: ${error.message}`);
+    }
   }
 };
 
