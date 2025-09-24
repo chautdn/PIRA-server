@@ -1,5 +1,6 @@
 const jwtUtils = require('../utils/jwt');
 const User = require('../models/User');
+const mongoose = require('mongoose');
 
 const authMiddleware = {
   verifyToken: async (req, res, next) => {
