@@ -18,7 +18,7 @@ const authController = {
         201
       );
     } catch (error) {
-      console.error('Register error:', error);
+      // Register error
       responseUtils.error(res, error.message, 400);
     }
   },
@@ -54,7 +54,7 @@ const authController = {
         200
       );
     } catch (error) {
-      console.error('Verify email error:', error);
+      // Verify email error
       responseUtils.error(res, error.message, 400);
     }
   },
@@ -72,7 +72,7 @@ const authController = {
 
       responseUtils.success(res, null, 'Email xác thực đã được gửi lại');
     } catch (error) {
-      console.error('Resend verification error:', error);
+      // Resend verification error
       responseUtils.error(res, error.message, 400);
     }
   },
@@ -102,7 +102,7 @@ const authController = {
         'Đăng nhập thành công'
       );
     } catch (error) {
-      console.error('Login error:', error);
+      // Login error
       responseUtils.error(res, error.message, 401);
     }
   },
@@ -136,7 +136,7 @@ const authController = {
         'Google sign in successful'
       );
     } catch (error) {
-      console.error('Google Sign-In Error:', error);
+      // Google Sign-In Error
       responseUtils.error(res, 'Invalid Google token', 401);
     }
   },
@@ -179,7 +179,7 @@ const authController = {
 
       responseUtils.success(res, null, 'Vui lòng kiểm tra email để đặt lại mật khẩu.');
     } catch (error) {
-      console.error('Forgot password error:', error);
+      // Forgot password error
       responseUtils.error(res, error.message, 400);
     }
   },
@@ -197,7 +197,7 @@ const authController = {
 
       responseUtils.success(res, null, 'Mật khẩu đã được đặt lại thành công');
     } catch (error) {
-      console.error('Reset password error:', error);
+      // Reset password error
       responseUtils.error(res, error.message, 400);
     }
   }

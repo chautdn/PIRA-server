@@ -20,10 +20,9 @@ const sendMail = async ({ email, subject, html }) => {
     };
 
     const result = await transporter.sendMail(message);
-    console.log(`Đã gửi email tới ${email}`);
     return result;
   } catch (error) {
-    console.error('Lỗi khi gửi email:', error);
+    // Lỗi khi gửi email
     throw new Error('Không thể gửi email');
   }
 };

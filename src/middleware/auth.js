@@ -4,6 +4,12 @@ const mongoose = require('mongoose');
 const authMiddleware = {
   verifyToken: async (req, res, next) => {
     try {
+      console.log('🔍 [AUTH] Request headers:', {
+        authorization: req.headers.authorization,
+        token: req.headers.token,
+        'x-verification-token': req.headers['x-verification-token']
+      });
+
       let token;
 
       // Lấy token từ nhiều nguồn
@@ -17,7 +23,10 @@ const authMiddleware = {
         token = req.query.token;
       }
 
+      console.log('🔍 [AUTH] Extracted token:', token ? 'Present' : 'Missing');
+
       if (!token) {
+        console.log('❌ [AUTH] No token found');
         return res.status(401).json({
           success: false,
           message: 'Access token is required'
@@ -26,16 +35,24 @@ const authMiddleware = {
 
       // Verify token
       const decoded = jwtUtils.verifyAccessToken(token);
+      console.log('✅ [AUTH] Token decoded successfully:', { userId: decoded.id });
 
       // Lấy thông tin user - sử dụng mongoose.model thay vì require
       const User = mongoose.model('User');
       const user = await User.findById(decoded.id);
       if (!user) {
+        console.log('❌ [AUTH] User not found:', decoded.id);
         return res.status(401).json({
           success: false,
           message: 'User not found'
         });
       }
+
+      console.log('✅ [AUTH] User authenticated:', {
+        id: user._id,
+        email: user.email,
+        role: user.role
+      });
 
       req.user = user;
       next();

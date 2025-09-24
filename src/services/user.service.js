@@ -13,7 +13,6 @@ const getAllUsers = async () => {
 };
 
 const createUser = async (userParam) => {
-  console.log(userParam);
   if (!userParam.email || !userParam.password) {
     throw new ValidationError('Email and password are required');
   }
