@@ -1,5 +1,5 @@
 const jwtUtils = require('../utils/jwt');
-const User = require('../models/user');
+const mongoose = require('mongoose');
 
 const authMiddleware = {
   verifyToken: async (req, res, next) => {
@@ -27,7 +27,8 @@ const authMiddleware = {
       // Verify token
       const decoded = jwtUtils.verifyAccessToken(token);
 
-      // Lấy thông tin user
+      // Lấy thông tin user - sử dụng mongoose.model thay vì require
+      const User = mongoose.model('User');
       const user = await User.findById(decoded.id);
       if (!user) {
         return res.status(401).json({
@@ -46,6 +47,7 @@ const authMiddleware = {
       });
     }
   },
+
   checkUserRole: (role) => {
     return (req, res, next) => {
       console.log(req.user);

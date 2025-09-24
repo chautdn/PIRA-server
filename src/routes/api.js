@@ -8,6 +8,7 @@ const getRoutes = require('./register.routes').getRoutes;
 require('./user.routes');
 require('./auth.routes');
 require('./products.routes');
+require('./kyc.routes');
 
 // Apply global async handler to router
 globalAsyncHandler(router);
