@@ -181,7 +181,7 @@ const chatService = {
     }
   },
 
-  // Create or get existing conversation (UNIFIED - ignores listingId/bookingId)
+  // Create or get existing conversation
   createOrGetConversation: async (userId, targetUserId, listingId = null, bookingId = null) => {
     try {
       if (!userId || !targetUserId) {
@@ -192,12 +192,21 @@ const chatService = {
         throw new Error('Cannot create conversation with yourself');
       }
 
-      // UNIFIED CHAT: Look for ANY conversation between these two users
-      // Ignore listingId and bookingId to ensure one conversation per user pair
-      const query = {
+      // Check if conversation already exists
+      let query = {
         participants: { $all: [userId, targetUserId] }
-        // Removed listingId and bookingId filters for unified chat
       };
+
+      // If listingId is provided, look for conversation with that specific listing
+      if (listingId) {
+        query.listingId = listingId;
+      } else if (bookingId) {
+        query.bookingId = bookingId;
+      } else {
+        // General chat without specific context
+        query.listingId = null;
+        query.bookingId = null;
+      }
 
       let conversation = await Chat.findOne(query);
 
@@ -214,10 +223,11 @@ const chatService = {
         return conversation;
       }
 
-      // Create new conversation (without listingId/bookingId for unified chat)
+      // Create new conversation
       conversation = new Chat({
         participants: [userId, targetUserId],
-        // Removed listingId and bookingId for unified chat
+        listingId,
+        bookingId,
         lastReads: [
           { userId, lastReadAt: new Date() },
           { userId: targetUserId, lastReadAt: new Date() }
@@ -241,7 +251,7 @@ const chatService = {
     }
   },
 
-  // Find existing conversation without creating it (UNIFIED - ignores listingId)
+  // Find existing conversation without creating it
   findExistingConversation: async (userId, targetUserId, listingId = null) => {
     try {
       if (!userId || !targetUserId) {
@@ -252,12 +262,19 @@ const chatService = {
         throw new Error('Cannot find conversation with yourself');
       }
 
-      // UNIFIED CHAT: Look for ANY conversation between these two users
-      // Ignore listingId to ensure unified conversation per user pair
-      const query = {
+      // Build query to find conversation
+      let query = {
         participants: { $all: [userId, targetUserId] }
-        // Removed listingId and bookingId filters for unified chat
       };
+
+      // If listingId is provided, look for conversation with that specific listing
+      if (listingId) {
+        query.listingId = listingId;
+      } else {
+        // General chat without specific context
+        query.listingId = null;
+        query.bookingId = null;
+      }
 
       const conversation = await Chat.findOne(query)
         .populate('participants', 'profile.firstName profile.lastName profile.avatar')
