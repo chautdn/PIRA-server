@@ -4,9 +4,11 @@ const globalAsyncHandler = require('../middleware/handler');
 const getRoutes = require('./register.routes').getRoutes;
 
 //import router
-
+require('./product.routes');
+require('./wishlist.routes');
 require('./user.routes');
 require('./auth.routes');
+
 
 // Apply global async handler to router
 globalAsyncHandler(router);
