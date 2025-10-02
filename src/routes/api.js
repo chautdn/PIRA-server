@@ -23,6 +23,7 @@ require('./auth.routes');
 require('./chat.routes');
 require('./products.routes');
 require('./kyc.routes');
+require('./admin.routes'); // Thêm admin routes
 
 // Apply global async handler to router
 globalAsyncHandler(router);
