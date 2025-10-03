@@ -129,7 +129,7 @@ class AdminService {
 
     const [users, total] = await Promise.all([
       User.find(query)
-        .select('-password -refreshTokens')
+        .select('-password')
         .sort({ createdAt: -1 })
         .skip(skip)
         .limit(parseInt(limit)),
@@ -155,7 +155,7 @@ class AdminService {
     }
 
     try {
-      const user = await User.findById(userId).select('-password -refreshTokens');
+      const user = await User.findById(userId).select('-password -address.coordinates -verification');
       
       if (!user) {
         throw new Error('Không tìm thấy người dùng');
@@ -189,7 +189,7 @@ class AdminService {
         updatedAt: new Date()
       },
       { new: true, runValidators: true }
-    ).select('-password -refreshTokens');
+    ).select('-password');
 
     if (!user) {
       throw new Error('Không tìm thấy người dùng');
@@ -215,7 +215,7 @@ class AdminService {
         updatedAt: new Date()
       },
       { new: true, runValidators: true }
-    ).select('-password -refreshTokens');
+    ).select('-password');
 
     if (!user) {
       throw new Error('Không tìm thấy người dùng');
@@ -251,6 +251,14 @@ class AdminService {
       if (updateData.phone !== undefined) updateFields.phone = updateData.phone;
       if (updateData.role !== undefined) updateFields.role = updateData.role;
       if (updateData.status !== undefined) updateFields.status = updateData.status;
+      if (updateData.creditScore !== undefined) {
+        // Validate creditScore range
+        const score = parseInt(updateData.creditScore);
+        if (score < 0 || score > 1000) {
+          throw new Error('Điểm tín dụng phải từ 0 đến 1000');
+        }
+        updateFields.creditScore = score;
+      }
       
       // Handle profile nested object
       if (updateData.profile) {
@@ -279,7 +287,7 @@ class AdminService {
         { 
           new: true, 
           runValidators: true,
-          select: '-password -refreshTokens'
+          select: '-password'
         }
       );
 
@@ -297,6 +305,39 @@ class AdminService {
       
       throw new Error(`Lỗi cập nhật người dùng: ${error.message}`);
     }
+  }
+
+  async updateUserCreditScore(userId, creditScore, adminId) {
+    // Validate ObjectId format
+    const mongoose = require('mongoose');
+    if (!mongoose.Types.ObjectId.isValid(userId)) {
+      throw new Error('ID người dùng không hợp lệ');
+    }
+
+    // Validate creditScore
+    const score = parseInt(creditScore);
+    if (isNaN(score) || score < 0 || score > 1000) {
+      throw new Error('Điểm tín dụng phải là số từ 0 đến 1000');
+    }
+
+    if (userId === adminId) {
+      throw new Error('Không thể thay đổi điểm tín dụng của chính mình');
+    }
+
+    const user = await User.findByIdAndUpdate(
+      userId,
+      { 
+        creditScore: score,
+        updatedAt: new Date()
+      },
+      { new: true, runValidators: true }
+    ).select('-password');
+
+    if (!user) {
+      throw new Error('Không tìm thấy người dùng');
+    }
+
+    return user;
   }
 
   async deleteUser(userId, adminId) {

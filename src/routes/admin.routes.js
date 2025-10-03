@@ -19,9 +19,10 @@ router.get('/dashboard', adminController.getDashboard);
 // ========== USER MANAGEMENT ==========
 router.get('/users', adminController.getAllUsers);
 router.get('/users/:userId', adminController.getUserById);
-router.put('/users/:userId', adminController.updateUser);
+// router.put('/users/:userId', adminController.updateUser);
 router.patch('/users/:userId/status', adminController.updateUserStatus);
 router.patch('/users/:userId/role', adminController.updateUserRole);
+// router.patch('/users/:userId/credit-score', adminController.updateUserCreditScore);
 router.delete('/users/:userId', adminController.deleteUser);
 router.patch('/users/bulk-update', adminController.bulkUpdateUsers);
 

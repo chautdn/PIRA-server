@@ -97,6 +97,23 @@ class AdminController {
     }
   }
 
+  async updateUserCreditScore(req, res) {
+    try {
+      const { userId } = req.params;
+      const { creditScore } = req.body;
+      const adminId = req.user.id;
+
+      if (creditScore === undefined || creditScore === null) {
+        return responseUtils.error(res, 'Vui lòng cung cấp điểm tín dụng', 400);
+      }
+
+      const user = await adminService.updateUserCreditScore(userId, creditScore, adminId);
+      return responseUtils.success(res, user, 'Cập nhật điểm tín dụng thành công');
+    } catch (error) {
+      return responseUtils.error(res, error.message, 500);
+    }
+  }
+
   async deleteUser(req, res) {
     try {
       const { userId } = req.params;
