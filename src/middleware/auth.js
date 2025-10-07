@@ -1,5 +1,6 @@
 const jwtUtils = require('../utils/jwt');
-const User = require('../models/user');
+const User = require('../models/User');
+const mongoose = require('mongoose');
 
 const authMiddleware = {
   verifyToken: async (req, res, next) => {
@@ -16,7 +17,6 @@ const authMiddleware = {
       } else if (req.query.token) {
         token = req.query.token;
       }
-
       if (!token) {
         return res.status(401).json({
           success: false,
@@ -26,8 +26,8 @@ const authMiddleware = {
 
       // Verify token
       const decoded = jwtUtils.verifyAccessToken(token);
-
-      // Lấy thông tin user
+      // Lấy thông tin user - sử dụng mongoose.model thay vì require
+      const User = mongoose.model('User');
       const user = await User.findById(decoded.id);
       if (!user) {
         return res.status(401).json({
@@ -39,17 +39,17 @@ const authMiddleware = {
       req.user = user;
       next();
     } catch (error) {
-      console.error('Auth middleware error:', error);
+      // Auth middleware error
       return res.status(401).json({
         success: false,
         message: 'Invalid or expired token'
       });
     }
   },
-  checkUserRole: (role) => {
+
+  checkUserRole: (roles) => {
     return (req, res, next) => {
-      console.log(req.user);
-      if (req.user.role === role) {
+      if (roles.includes(req.user.role)) {
         next();
       } else {
         return res.status(403).json('You are not allowed to do that!');

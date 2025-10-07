@@ -69,6 +69,25 @@ const userSchema = new mongoose.Schema(
       }
     },
 
+    // KYC/CCCD Information
+    cccd: {
+      frontImageHash: String, // URL ảnh mặt trước đã mã hóa
+      backImageHash: String, // URL ảnh mặt sau đã mã hóa
+      cccdNumber: String, // Số CCCD
+      fullName: String, // Họ tên trên CCCD
+      dateOfBirth: Date, // Ngày sinh
+      address: String, // Địa chỉ trên CCCD
+      gender: String, // Giới tính
+      uploadedAt: Date, // Thời gian upload ảnh
+      isVerified: {
+        // Trạng thái xác thực
+        type: Boolean,
+        default: false
+      },
+      verifiedAt: Date, // Thời gian xác thực
+      verificationSource: String // Nguồn xác thực (FPT.AI, VNPT, etc.)
+    },
+
     // Verification Status
     verification: {
       emailVerified: {
@@ -105,6 +124,8 @@ const userSchema = new mongoose.Schema(
 // Indexes
 userSchema.index({ role: 1, status: 1 });
 userSchema.index({ 'verification.emailVerified': 1 });
+userSchema.index({ 'cccd.isVerified': 1 });
+userSchema.index({ 'cccd.cccdNumber': 1 });
 
 // Hash password before saving
 userSchema.pre('save', async function (next) {
@@ -126,4 +147,4 @@ userSchema.methods.toJSON = function () {
   return userObject;
 };
 
-module.exports = mongoose.model('User', userSchema);
+module.exports = mongoose.models.User || mongoose.model('User', userSchema);

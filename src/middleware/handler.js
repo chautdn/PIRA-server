@@ -6,11 +6,7 @@ const handleError = (error, next) => {
     error = new Error(typeof error === 'string' ? error : 'Unknown error!');
   }
   // Log error for debugging
-  console.error('Error caught by global handler:', {
-    name: error.name,
-    message: error.message,
-    stack: error.stack
-  });
+  // Error caught by global handler
 
   next(error);
 };
@@ -40,7 +36,6 @@ const globalAsyncHandler = (router) => {
     const original = router[method].bind(router);
 
     router[method] = function (path, ...handlers) {
-      // console.log({
       //   method,
       //   path,
       //   handlers
