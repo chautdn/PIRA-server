@@ -21,8 +21,10 @@ router.get('/health', (req, res) => {
 require('./user.routes');
 require('./auth.routes');
 require('./chat.routes');
+require('./category.routes');
 require('./products.routes');
 require('./kyc.routes');
+require('./ownerProduct.routes');
 
 // Apply global async handler to router
 globalAsyncHandler(router);
