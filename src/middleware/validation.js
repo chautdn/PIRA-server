@@ -154,10 +154,36 @@ const validatePagination = [
   }
 ];
 
+// Role-based access control middleware
+const requireRole = (requiredRole) => {
+  return (req, res, next) => {
+    try {
+      console.log('🔐 Checking role requirement...');
+      console.log('Required role:', requiredRole);
+      console.log('User role:', req.user ? req.user.role : 'No user');
+
+      if (!req.user) {
+        return responseUtils.error(res, 'Vui lòng đăng nhập', 401);
+      }
+
+      if (req.user.role !== requiredRole) {
+        return responseUtils.error(res, 'Bạn không có quyền truy cập tính năng này', 403);
+      }
+
+      console.log('✅ Role check passed');
+      next();
+    } catch (error) {
+      console.error('❌ Role check error:', error);
+      return responseUtils.error(res, 'Lỗi hệ thống khi kiểm tra quyền', 500);
+    }
+  };
+};
+
 module.exports = {
   validateRegister,
   validateLogin,
   authLimiter,
+  requireRole, // Add this
   // Chat validation exports
   validateConversation,
   validateMessage,

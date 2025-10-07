@@ -1,4 +1,5 @@
 const jwtUtils = require('../utils/jwt');
+const User = require('../models/User');
 const mongoose = require('mongoose');
 
 const authMiddleware = {
@@ -17,7 +18,6 @@ const authMiddleware = {
         token = req.query.token;
       }
       if (!token) {
-        console.log('❌ [AUTH] No token found');
         return res.status(401).json({
           success: false,
           message: 'Access token is required'
@@ -39,7 +39,7 @@ const authMiddleware = {
       req.user = user;
       next();
     } catch (error) {
-      console.error('Auth middleware error:', error);
+      // Auth middleware error
       return res.status(401).json({
         success: false,
         message: 'Invalid or expired token'

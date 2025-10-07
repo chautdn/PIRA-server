@@ -25,6 +25,7 @@ require('./category.routes');
 require('./products.routes');
 require('./kyc.routes');
 require('./ownerProduct.routes');
+require('./admin.routes'); 
 
 // Apply global async handler to router
 globalAsyncHandler(router);
