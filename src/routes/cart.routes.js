@@ -5,7 +5,13 @@ const { authMiddleware } = require('../middleware/auth');
 const { registerRoute } = require('./register.routes');
 const globalAsyncHandler = require('../middleware/handler');
 
-// All cart routes require authentication
+// Check availability (public - no auth required)
+router.post('/check-availability', cartController.checkAvailability);
+
+// Get month availability (public)
+router.get('/month-availability/:productId/:year/:month', cartController.getMonthAvailability);
+
+// All other cart routes require authentication
 router.use(authMiddleware.verifyToken);
 
 // Get cart

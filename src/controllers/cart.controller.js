@@ -137,6 +137,49 @@ class CartController {
     const message = result.valid ? 'Giỏ hàng hợp lệ' : 'Giỏ hàng có lỗi';
     new SuccessResponse(result, message).send(res);
   });
+
+  /**
+   * @desc Check product availability for dates
+   * @route POST /api/cart/check-availability
+   * @access Public
+   */
+  checkAvailability = asyncHandler(async (req, res) => {
+    const { productId, startDate, endDate } = req.body;
+
+    if (!productId || !startDate || !endDate) {
+      throw new BadRequest('Product ID và ngày thuê là bắt buộc');
+    }
+
+    const result = await cartService.checkDateAvailability(
+      productId,
+      startDate,
+      endDate,
+      req.user?._id
+    );
+
+    new SuccessResponse(result, 'Kiểm tra thành công').send(res);
+  });
+
+  /**
+   * @desc Get month availability for product
+   * @route GET /api/cart/month-availability/:productId/:year/:month
+   * @access Public
+   */
+  getMonthAvailability = asyncHandler(async (req, res) => {
+    const { productId, year, month } = req.params;
+
+    if (!productId || !year || month === undefined) {
+      throw new BadRequest('Product ID, năm và tháng là bắt buộc');
+    }
+
+    const result = await cartService.getMonthAvailability(
+      productId,
+      parseInt(year),
+      parseInt(month)
+    );
+
+    new SuccessResponse(result, 'Lấy thông tin thành công').send(res);
+  });
 }
 
 module.exports = new CartController();

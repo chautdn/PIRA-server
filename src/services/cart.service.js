@@ -3,6 +3,93 @@ const Product = require('../models/Product');
 
 class CartService {
   /**
+   * Check if product is available for rental dates
+   * Returns: { available: boolean, inCartCount: number, reason: string }
+   */
+  async checkDateAvailability(productId, startDate, endDate, excludeUserId = null) {
+    const product = await Product.findById(productId);
+    if (!product) {
+      return { available: false, inCartCount: 0, reason: 'Sản phẩm không tồn tại' };
+    }
+
+    const totalStock = product.availability?.quantity || 0;
+
+    // Get all carts that have this product with overlapping dates
+    const carts = await Cart.find({
+      'items.product': productId,
+      ...(excludeUserId && { user: { $ne: excludeUserId } })
+    });
+
+    let inCartCount = 0;
+    const requestStart = new Date(startDate);
+    const requestEnd = new Date(endDate);
+
+    for (const cart of carts) {
+      const cartItem = cart.items.find(item => item.product.toString() === productId);
+      if (!cartItem || !cartItem.rental?.startDate || !cartItem.rental?.endDate) {
+        continue;
+      }
+
+      const cartStart = new Date(cartItem.rental.startDate);
+      const cartEnd = new Date(cartItem.rental.endDate);
+
+      // Check if dates overlap
+      if (requestStart <= cartEnd && requestEnd >= cartStart) {
+        inCartCount += cartItem.quantity;
+      }
+    }
+
+    const available = (totalStock - inCartCount) > 0;
+    const availableCount = totalStock - inCartCount;
+
+    return {
+      available,
+      inCartCount,
+      availableCount: Math.max(0, availableCount),
+      totalStock,
+      reason: available ? null : `Sản phẩm đã hết cho khung thời gian này. Có ${inCartCount} người đang đặt.`
+    };
+  }
+
+  /**
+   * Get availability for entire month (based on total stock only)
+   * Returns object with dates as keys and availability info as values
+   */
+  async getMonthAvailability(productId, year, month) {
+    const product = await Product.findById(productId);
+    if (!product) {
+      throw new Error('Sản phẩm không tồn tại');
+    }
+
+    const totalStock = product.availability?.quantity || 0;
+    
+    // Get number of days in month
+    const daysInMonth = new Date(year, month + 1, 0).getDate();
+    const availability = {};
+
+    // All days have same availability (no booking check for soft reservation)
+    for (let day = 1; day <= daysInMonth; day++) {
+      const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+      const checkDate = new Date(year, month, day);
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      
+      // Only check if date is in past
+      const isPast = checkDate < today;
+      
+      availability[dateStr] = {
+        available: !isPast && totalStock > 0,
+        availableCount: totalStock,
+        bookedCount: 0, // Not tracking for soft reservation
+        totalStock,
+        status: isPast ? 'unavailable' : (totalStock > 0 ? 'available' : 'unavailable')
+      };
+    }
+
+    return availability;
+  }
+
+  /**
    * Get user's cart
    */
   async getCart(userId) {
@@ -59,6 +146,26 @@ class CartService {
       throw new Error(`Chỉ còn ${availableStock} sản phẩm trong kho`);
     }
 
+    // Check date availability if rental dates provided
+    let availabilityWarning = null;
+    if (rental?.startDate && rental?.endDate) {
+      const dateCheck = await this.checkDateAvailability(
+        productId,
+        rental.startDate,
+        rental.endDate,
+        userId
+      );
+
+      if (!dateCheck.available) {
+        throw new Error(dateCheck.reason);
+      }
+
+      // Add warning if stock is running low
+      if (dateCheck.availableCount <= 2 && dateCheck.inCartCount > 0) {
+        availabilityWarning = `⚠️ Chỉ còn ${dateCheck.availableCount} sản phẩm cho ngày này. Có ${dateCheck.inCartCount} người khác đang đặt.`;
+      }
+    }
+
     if (existingItemIndex > -1) {
       // Update existing item
       cart.items[existingItemIndex].quantity = newQuantity;
@@ -86,6 +193,11 @@ class CartService {
       path: 'items.product',
       select: 'title images pricing availability status'
     });
+
+    // Add warning to response if exists
+    if (availabilityWarning) {
+      cart.availabilityWarning = availabilityWarning;
+    }
 
     return cart;
   }
