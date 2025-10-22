@@ -32,8 +32,8 @@ router.delete('/:productId', cartController.removeItem);
 // Clear cart
 router.delete('/', cartController.clearCart);
 
-// Apply global async handler
-globalAsyncHandler(router);
+// Apply global async handler - COMMENTED OUT TO PREVENT SERVER CRASH
+// globalAsyncHandler(router);
 
 // Register routes
 registerRoute('/cart', router);

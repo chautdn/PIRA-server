@@ -8,7 +8,7 @@ class CartService {
   async getCart(userId) {
     let cart = await Cart.findOne({ user: userId }).populate({
       path: 'items.product',
-      select: 'title images pricing stock status'
+      select: 'title images pricing availability status'
     });
 
     if (!cart) {
@@ -37,7 +37,7 @@ class CartService {
     }
 
     // Check stock availability
-    const availableStock = product.stock?.available || 0;
+    const availableStock = product.availability?.quantity || 0;
     
     let cart = await Cart.findOne({ user: userId });
     if (!cart) {
@@ -84,7 +84,7 @@ class CartService {
     // Populate and return
     await cart.populate({
       path: 'items.product',
-      select: 'title images pricing stock status'
+      select: 'title images pricing availability status'
     });
 
     return cart;
@@ -117,7 +117,7 @@ class CartService {
       throw new Error('Sản phẩm không tồn tại');
     }
 
-    const availableStock = product.stock?.available || 0;
+    const availableStock = product.availability?.quantity || 0;
     if (quantity > availableStock) {
       throw new Error(`Chỉ còn ${availableStock} sản phẩm trong kho`);
     }
@@ -127,7 +127,7 @@ class CartService {
 
     await cart.populate({
       path: 'items.product',
-      select: 'title images pricing stock status'
+      select: 'title images pricing availability status'
     });
 
     return cart;
@@ -155,7 +155,7 @@ class CartService {
 
     await cart.populate({
       path: 'items.product',
-      select: 'title images pricing stock status'
+      select: 'title images pricing availability status'
     });
 
     return cart;
@@ -178,7 +178,7 @@ class CartService {
 
     await cart.populate({
       path: 'items.product',
-      select: 'title images pricing stock status'
+      select: 'title images pricing availability status'
     });
 
     return cart;
@@ -218,7 +218,7 @@ class CartService {
         continue; // Skip invalid products
       }
 
-      const availableStock = product.stock?.available || 0;
+      const availableStock = product.availability?.quantity || 0;
       const quantity = Math.min(localItem.quantity, availableStock);
 
       if (quantity < 1) continue;
@@ -254,7 +254,7 @@ class CartService {
 
     await cart.populate({
       path: 'items.product',
-      select: 'title images pricing stock status'
+      select: 'title images pricing availability status'
     });
 
     return cart;
@@ -286,7 +286,7 @@ class CartService {
         continue;
       }
 
-      const availableStock = product.stock?.available || 0;
+      const availableStock = product.availability?.quantity || 0;
       if (item.quantity > availableStock) {
         errors.push({
           productId: item.product._id,

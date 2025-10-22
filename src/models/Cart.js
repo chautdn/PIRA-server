@@ -48,7 +48,7 @@ const cartSchema = new mongoose.Schema(
 );
 
 // Index
-cartSchema.index({ user: 1 });
+// Remove duplicate user index - already created by unique: true above
 cartSchema.index({ 'items.product': 1 });
 
 // Update lastModified on save

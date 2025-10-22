@@ -1,6 +1,11 @@
 const cartService = require('../services/cart.service');
 const { SuccessResponse } = require('../core/success');
-const { BadRequestError } = require('../core/error');
+const { BadRequest } = require('../core/error');
+
+// Async handler wrapper to catch errors
+const asyncHandler = (fn) => (req, res, next) => {
+  Promise.resolve(fn(req, res, next)).catch(next);
+};
 
 class CartController {
   /**
@@ -8,25 +13,22 @@ class CartController {
    * @route GET /api/cart
    * @access Private
    */
-  async getCart(req, res) {
+  getCart = asyncHandler(async (req, res) => {
     const cart = await cartService.getCart(req.user._id);
     
-    new SuccessResponse({
-      message: 'Lấy giỏ hàng thành công',
-      data: cart
-    }).send(res);
-  }
+    new SuccessResponse(cart, 'Lấy giỏ hàng thành công').send(res);
+  });
 
   /**
    * @desc Add item to cart
    * @route POST /api/cart
    * @access Private
    */
-  async addToCart(req, res) {
+  addToCart = asyncHandler(async (req, res) => {
     const { productId, quantity = 1, rental } = req.body;
 
     if (!productId) {
-      throw new BadRequestError('Product ID là bắt buộc');
+      throw new BadRequest('Product ID là bắt buộc');
     }
 
     const cart = await cartService.addToCart(
@@ -36,23 +38,20 @@ class CartController {
       rental
     );
 
-    new SuccessResponse({
-      message: 'Đã thêm sản phẩm vào giỏ hàng',
-      data: cart
-    }).send(res);
-  }
+    new SuccessResponse(cart, 'Đã thêm sản phẩm vào giỏ hàng').send(res);
+  });
 
   /**
    * @desc Update item quantity
    * @route PUT /api/cart/:productId
    * @access Private
    */
-  async updateQuantity(req, res) {
+  updateQuantity = asyncHandler(async (req, res) => {
     const { productId } = req.params;
     const { quantity } = req.body;
 
     if (!quantity || quantity < 0) {
-      throw new BadRequestError('Số lượng không hợp lệ');
+      throw new BadRequest('Số lượng không hợp lệ');
     }
 
     const cart = await cartService.updateQuantity(
@@ -61,23 +60,20 @@ class CartController {
       quantity
     );
 
-    new SuccessResponse({
-      message: 'Đã cập nhật số lượng',
-      data: cart
-    }).send(res);
-  }
+    new SuccessResponse(cart, 'Đã cập nhật số lượng').send(res);
+  });
 
   /**
    * @desc Update rental dates
    * @route PUT /api/cart/:productId/rental
    * @access Private
    */
-  async updateRental(req, res) {
+  updateRental = asyncHandler(async (req, res) => {
     const { productId } = req.params;
     const { rental } = req.body;
 
     if (!rental) {
-      throw new BadRequestError('Thông tin thuê là bắt buộc');
+      throw new BadRequest('Thông tin thuê là bắt buộc');
     }
 
     const cart = await cartService.updateRental(
@@ -86,82 +82,61 @@ class CartController {
       rental
     );
 
-    new SuccessResponse({
-      message: 'Đã cập nhật thông tin thuê',
-      data: cart
-    }).send(res);
-  }
+    new SuccessResponse(cart, 'Đã cập nhật thông tin thuê').send(res);
+  });
 
   /**
    * @desc Remove item from cart
    * @route DELETE /api/cart/:productId
    * @access Private
    */
-  async removeItem(req, res) {
+  removeItem = asyncHandler(async (req, res) => {
     const { productId } = req.params;
 
     const cart = await cartService.removeItem(req.user._id, productId);
 
-    new SuccessResponse({
-      message: 'Đã xóa sản phẩm khỏi giỏ hàng',
-      data: cart
-    }).send(res);
-  }
+    new SuccessResponse(cart, 'Đã xóa sản phẩm khỏi giỏ hàng').send(res);
+  });
 
   /**
    * @desc Clear cart
    * @route DELETE /api/cart
    * @access Private
    */
-  async clearCart(req, res) {
+  clearCart = asyncHandler(async (req, res) => {
     const cart = await cartService.clearCart(req.user._id);
 
-    new SuccessResponse({
-      message: 'Đã xóa toàn bộ giỏ hàng',
-      data: cart
-    }).send(res);
-  }
+    new SuccessResponse(cart, 'Đã xóa toàn bộ giỏ hàng').send(res);
+  });
 
   /**
    * @desc Sync cart from localStorage
    * @route POST /api/cart/sync
    * @access Private
    */
-  async syncCart(req, res) {
+  syncCart = asyncHandler(async (req, res) => {
     const { items } = req.body;
 
     if (!Array.isArray(items)) {
-      throw new BadRequestError('Items phải là một mảng');
+      throw new BadRequest('Items phải là một mảng');
     }
 
     const cart = await cartService.syncCart(req.user._id, items);
 
-    new SuccessResponse({
-      message: 'Đã đồng bộ giỏ hàng',
-      data: cart
-    }).send(res);
-  }
+    new SuccessResponse(cart, 'Đã đồng bộ giỏ hàng').send(res);
+  });
 
   /**
    * @desc Validate cart before checkout
    * @route POST /api/cart/validate
    * @access Private
    */
-  async validateCart(req, res) {
+  validateCart = asyncHandler(async (req, res) => {
     const result = await cartService.validateCart(req.user._id);
 
-    if (!result.valid) {
-      new SuccessResponse({
-        message: 'Giỏ hàng có lỗi',
-        data: result
-      }).send(res);
-    } else {
-      new SuccessResponse({
-        message: 'Giỏ hàng hợp lệ',
-        data: result
-      }).send(res);
-    }
-  }
+    const message = result.valid ? 'Giỏ hàng hợp lệ' : 'Giỏ hàng có lỗi';
+    new SuccessResponse(result, message).send(res);
+  });
 }
 
 module.exports = new CartController();

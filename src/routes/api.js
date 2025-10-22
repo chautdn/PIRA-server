@@ -28,10 +28,7 @@ require('./ownerProduct.routes');
 require('./admin.routes');
 require('./cart.routes'); 
 
-// Apply global async handler to router
-globalAsyncHandler(router);
-
-// Register all routes from the registry
+// Register all routes from the registry FIRST
 getRoutes()?.forEach(({ path, router: moduleRouter }) => {
   if (!path || typeof path !== 'string') {
     throw new Error(`Invalid route path: ${path}`);
@@ -45,5 +42,8 @@ getRoutes()?.forEach(({ path, router: moduleRouter }) => {
 
   router.use(normalizedPath, moduleRouter);
 });
+
+// Apply global async handler to router AFTER registering routes
+// globalAsyncHandler(router); // COMMENTED OUT - Causing issues with requests hanging
 
 module.exports = router;
