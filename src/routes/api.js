@@ -8,6 +8,7 @@ require('./product.routes');
 require('./wishlist.routes');
 require('./user.routes');
 require('./auth.routes');
+require('./rating.routes');
 
 
 // Apply global async handler to router
