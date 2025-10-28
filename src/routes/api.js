@@ -26,7 +26,8 @@ require('./products.routes');
 require('./kyc.routes');
 require('./ownerProduct.routes');
 require('./admin.routes');
-require('./cart.routes'); 
+require('./cart.routes');
+require('./rating.routes');
 
 // Register all routes from the registry FIRST
 getRoutes()?.forEach(({ path, router: moduleRouter }) => {
