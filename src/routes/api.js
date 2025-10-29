@@ -26,6 +26,7 @@ require('./products.routes');
 require('./kyc.routes');
 require('./ownerProduct.routes');
 require('./admin.routes');
+require('./payment.routes');
 require('./cart.routes');
 require('./rating.routes');
 require('./rental.routes');

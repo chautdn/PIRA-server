@@ -269,6 +269,67 @@ class ChatGateway {
     }
   }
 
+  // WALLET REAL-TIME UPDATES - NEW METHODS
+
+  // Emit wallet balance update to user
+  emitWalletUpdate(userId, data) {
+    try {
+      this.io.to(`user:${userId}`).emit('wallet-updated', {
+        ...data,
+        timestamp: new Date().toISOString()
+      });
+    } catch (error) {
+      console.error('Error emitting wallet update:', error);
+    }
+  }
+
+  // Emit transaction update to user
+  emitTransactionUpdate(userId, transactionData) {
+    try {
+      this.io.to(`user:${userId}`).emit('wallet-transaction-updated', {
+        transaction: transactionData,
+        timestamp: new Date().toISOString()
+      });
+    } catch (error) {
+      console.error('Error emitting transaction update:', error);
+    }
+  }
+
+  // Emit payment status update
+  emitPaymentStatusUpdate(userId, paymentData) {
+    try {
+      this.io.to(`user:${userId}`).emit('wallet-payment-status', {
+        payment: paymentData,
+        timestamp: new Date().toISOString()
+      });
+    } catch (error) {
+      console.error('Error emitting payment status update:', error);
+    }
+  }
+
+  // Broadcast wallet maintenance notifications
+  broadcastWalletMaintenance(message, affectedUsers = null) {
+    try {
+      const notification = {
+        type: 'wallet-maintenance',
+        message,
+        timestamp: new Date().toISOString()
+      };
+
+      if (affectedUsers && Array.isArray(affectedUsers)) {
+        // Send to specific users
+        affectedUsers.forEach((userId) => {
+          this.io.to(`user:${userId}`).emit('wallet-maintenance', notification);
+        });
+      } else {
+        // Broadcast to all connected users
+        this.io.emit('wallet-maintenance', notification);
+      }
+    } catch (error) {
+      console.error('Error broadcasting wallet maintenance:', error);
+    }
+  }
+
   // Cleanup method
   cleanup() {
     this.userSockets.clear();

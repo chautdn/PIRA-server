@@ -112,6 +112,11 @@ const userSchema = new mongoose.Schema(
       max: 1000
     },
 
+    wallet: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Wallet'
+    },
+
     lastLoginAt: Date,
     deletedAt: Date
   },
@@ -146,5 +151,36 @@ userSchema.methods.toJSON = function () {
   delete userObject.password;
   return userObject;
 };
+
+// ADD: Create wallet when user is created
+userSchema.post('save', async function (doc) {
+  // Only create wallet for new users that don't already have one
+  if (this.isNew && !doc.wallet) {
+    try {
+      const Wallet = require('./Wallet');
+
+      // Create new wallet
+      const wallet = new Wallet({
+        user: doc._id,
+        balance: {
+          available: 0,
+          frozen: 0,
+          pending: 0
+        },
+        currency: 'VND',
+        status: 'ACTIVE'
+      });
+
+      await wallet.save();
+
+      // Update user document directly without triggering hooks
+      await mongoose.model('User').updateOne({ _id: doc._id }, { wallet: wallet._id });
+
+      console.log(`✅ Auto-created wallet ${wallet._id} for new user ${doc.email}`);
+    } catch (error) {
+      console.error('❌ Error auto-creating wallet for user:', doc.email, error.message);
+    }
+  }
+});
 
 module.exports = mongoose.models.User || mongoose.model('User', userSchema);
