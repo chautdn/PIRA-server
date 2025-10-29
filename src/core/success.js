@@ -10,7 +10,8 @@ class SuccessResponse {
     return res.status(this.statusCode).json({
       status: this.status,
       message: this.message,
-      data: this.data
+      data: this.data,
+      metadata: this.data // Also include as metadata for consistency
     });
   }
 
@@ -48,7 +49,22 @@ const successHandler = (req, res, next) => {
   next();
 };
 
+// Create named classes for different HTTP status codes
+class SUCCESS extends SuccessResponse {
+  constructor({ message = 'Success', metadata = null }) {
+    super(metadata, message, 200);
+  }
+}
+
+class CREATED extends SuccessResponse {
+  constructor({ message = 'Created successfully', metadata = null }) {
+    super(metadata, message, 201);
+  }
+}
+
 module.exports = {
   SuccessResponse,
-  successHandler
+  successHandler,
+  SUCCESS,
+  CREATED
 };
