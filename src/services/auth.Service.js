@@ -103,7 +103,7 @@ const authService = {
 
   // Login user
   loginUser: async (email, password) => {
-    const user = await User.findOne({ email });
+    const user = await User.findOne({ email }).populate('wallet');
 
     if (!user) {
       throw new Error('Tài khoản không tồn tại');
@@ -154,7 +154,7 @@ const authService = {
       const name = payload['name'];
       const picture = payload['picture'];
 
-      let user = await User.findOne({ email });
+      let user = await User.findOne({ email }).populate('wallet');
 
       if (!user) {
         user = new User({
@@ -174,6 +174,8 @@ const authService = {
           lastLoginAt: new Date()
         });
         await user.save();
+        // Populate wallet after creation
+        user = await User.findById(user._id).populate('wallet');
       } else {
         if (!user.verification.emailVerified) {
           user.verification.emailVerified = true;

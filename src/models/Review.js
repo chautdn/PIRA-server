@@ -6,29 +6,28 @@ const reviewSchema = new mongoose.Schema(
     order: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'Order',
-      required: true
+      required: false
     },
     product: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'Product',
-      required: true
+      required: false
     },
     reviewer: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: 'User',
-      required: true
+      ref: 'User'
     },
     reviewee: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'User',
-      required: true
+      required: false
     },
 
     // Review Type
     type: {
       type: String,
       enum: ['PRODUCT_REVIEW', 'USER_REVIEW'],
-      required: true
+      required: false
     },
 
     // Rating
@@ -86,6 +85,14 @@ const reviewSchema = new mongoose.Schema(
       default: 'PENDING'
     },
 
+    // Intended role when reviewee is not set at creation time (dev/testing)
+    // allows temporarily storing that this USER_REVIEW was meant for OWNER or SHIPPER
+    intendedFor: {
+      type: String,
+      enum: ['OWNER', 'SHIPPER'],
+      required: false
+    },
+
     // Moderation
     moderation: {
       moderatedBy: {
@@ -108,11 +115,60 @@ const reviewSchema = new mongoose.Schema(
       }
     },
 
-    // Response from reviewee
-    response: {
-      comment: String,
-      respondedAt: Date
-    }
+    // Users who liked this review (for toggling likes)
+    likedBy: [
+      {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'User'
+      }
+    ],
+
+    // Responses from reviewee(s) (allow nested replies)
+    responses: [
+      {
+        commenter: {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: 'User'
+        },
+        comment: String,
+        respondedAt: Date,
+        editedAt: Date,
+        helpfulness: {
+          helpful: { type: Number, default: 0 },
+          notHelpful: { type: Number, default: 0 }
+        },
+        likedBy: [
+          {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: 'User'
+          }
+        ],
+        // allow replies to responses (nested)
+        responses: [
+          {
+            commenter: {
+              type: mongoose.Schema.Types.ObjectId,
+              ref: 'User'
+            },
+            comment: String,
+            respondedAt: Date,
+            editedAt: Date,
+            helpfulness: {
+              helpful: { type: Number, default: 0 },
+              notHelpful: { type: Number, default: 0 }
+            },
+            likedBy: [
+              {
+                type: mongoose.Schema.Types.ObjectId,
+                ref: 'User'
+              }
+            ],
+            // further nesting allowed (keeps the same shape)
+            responses: []
+          }
+        ]
+      }
+    ]
   },
   {
     timestamps: true,
