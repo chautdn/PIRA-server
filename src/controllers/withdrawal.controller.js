@@ -9,15 +9,19 @@ const withdrawalController = {
       const withdrawal = await withdrawalService.requestWithdrawal(userId, req.body);
 
       // Emit socket event for real-time update
-      if (global.chatGateway) {
-        global.chatGateway.emitToUser(userId.toString(), {
-          type: 'withdrawal-requested',
-          withdrawal: {
-            _id: withdrawal._id,
-            amount: withdrawal.amount,
-            status: withdrawal.status
-          }
-        });
+      try {
+        if (global.chatGateway && typeof global.chatGateway.emitToUser === 'function') {
+          global.chatGateway.emitToUser(userId.toString(), {
+            type: 'withdrawal-requested',
+            withdrawal: {
+              _id: withdrawal._id,
+              amount: withdrawal.amount,
+              status: withdrawal.status
+            }
+          });
+        }
+      } catch (socketError) {
+        console.warn('Failed to emit socket event:', socketError.message);
       }
 
       new CREATED({
@@ -59,15 +63,19 @@ const withdrawalController = {
       const withdrawal = await withdrawalService.cancelWithdrawal(id, userId);
 
       // Emit socket event
-      if (global.chatGateway) {
-        global.chatGateway.emitToUser(userId.toString(), {
-          type: 'withdrawal-cancelled',
-          withdrawal: {
-            _id: withdrawal._id,
-            amount: withdrawal.amount,
-            status: withdrawal.status
-          }
-        });
+      try {
+        if (global.chatGateway && typeof global.chatGateway.emitToUser === 'function') {
+          global.chatGateway.emitToUser(userId.toString(), {
+            type: 'withdrawal-cancelled',
+            withdrawal: {
+              _id: withdrawal._id,
+              amount: withdrawal.amount,
+              status: withdrawal.status
+            }
+          });
+        }
+      } catch (socketError) {
+        console.warn('Failed to emit socket event:', socketError.message);
       }
 
       new SUCCESS({
@@ -124,17 +132,21 @@ const withdrawalController = {
       const withdrawal = await withdrawalService.updateWithdrawalStatus(id, adminId, req.body);
 
       // Emit socket event to user
-      if (global.chatGateway) {
-        global.chatGateway.emitToUser(withdrawal.user._id.toString(), {
-          type: 'withdrawal-updated',
-          withdrawal: {
-            _id: withdrawal._id,
-            status: withdrawal.status,
-            amount: withdrawal.amount,
-            processedAt: withdrawal.processedAt,
-            rejectionReason: withdrawal.rejectionReason
-          }
-        });
+      try {
+        if (global.chatGateway && typeof global.chatGateway.emitToUser === 'function') {
+          global.chatGateway.emitToUser(withdrawal.user._id.toString(), {
+            type: 'withdrawal-updated',
+            withdrawal: {
+              _id: withdrawal._id,
+              status: withdrawal.status,
+              amount: withdrawal.amount,
+              processedAt: withdrawal.processedAt,
+              rejectionReason: withdrawal.rejectionReason
+            }
+          });
+        }
+      } catch (socketError) {
+        console.warn('Failed to emit socket event:', socketError.message);
       }
 
       new SUCCESS({

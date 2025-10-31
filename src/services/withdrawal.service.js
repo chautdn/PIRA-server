@@ -3,7 +3,7 @@ const Withdrawal = require('../models/Withdrawal');
 const Wallet = require('../models/Wallet');
 const Transaction = require('../models/Transaction');
 const User = require('../models/User');
-const { BadRequestError, NotFoundError } = require('../core/error');
+const { BadRequest, NotFoundError } = require('../core/error');
 
 const WITHDRAWAL_LIMITS = {
   MIN_AMOUNT: 10000,
@@ -30,43 +30,39 @@ const VIETNAMESE_BANKS = {
 };
 
 const withdrawalService = {
-  // Request withdrawal (ATOMIC)
+  // Request withdrawal (without transactions for development)
   requestWithdrawal: async (userId, withdrawalData) => {
-    const session = await mongoose.startSession();
-
     try {
-      session.startTransaction();
-
       const { amount, note } = withdrawalData;
 
       // 1. Get user and check KYC
-      const user = await User.findById(userId).session(session);
+      const user = await User.findById(userId);
       if (!user) {
         throw new NotFoundError('User not found');
       }
 
       if (!user.cccd?.isVerified) {
-        throw new BadRequestError(
+        throw new BadRequest(
           'KYC verification required. Please complete KYC verification before requesting withdrawal.'
         );
       }
 
       // 2. Check if user has bank account
       if (!user.bankAccount?.accountNumber) {
-        throw new BadRequestError(
+        throw new BadRequest(
           'Bank account required. Please add your bank account details in your profile.'
         );
       }
 
       // 3. Validate amount
       if (amount < WITHDRAWAL_LIMITS.MIN_AMOUNT) {
-        throw new BadRequestError(
+        throw new BadRequest(
           `Minimum withdrawal is ${WITHDRAWAL_LIMITS.MIN_AMOUNT.toLocaleString('vi-VN')} VND`
         );
       }
 
       if (amount > WITHDRAWAL_LIMITS.MAX_AMOUNT) {
-        throw new BadRequestError(
+        throw new BadRequest(
           `Maximum withdrawal is ${WITHDRAWAL_LIMITS.MAX_AMOUNT.toLocaleString('vi-VN')} VND per transaction`
         );
       }
@@ -95,37 +91,45 @@ const withdrawalService = {
 
       if (totalToday + amount > WITHDRAWAL_LIMITS.DAILY_LIMIT) {
         const remaining = WITHDRAWAL_LIMITS.DAILY_LIMIT - totalToday;
-        throw new BadRequestError(
+        throw new BadRequest(
           `Daily limit exceeded. You can withdraw up to ${remaining.toLocaleString('vi-VN')} VND more today`
         );
       }
 
       // 5. Get wallet
-      const wallet = await Wallet.findOne({ user: userId }).session(session);
+      const wallet = await Wallet.findOne({ user: userId });
       if (!wallet) {
         throw new NotFoundError('Wallet not found');
       }
 
+      console.log('💰 Wallet balance check:', {
+        userId,
+        requestedAmount: amount,
+        availableBalance: wallet.balance.available,
+        frozenBalance: wallet.balance.frozen,
+        pendingBalance: wallet.balance.pending
+      });
+
       // 6. Check available balance
       if (wallet.balance.available < amount) {
-        throw new BadRequestError('Insufficient balance');
+        throw new BadRequest(`Insufficient balance. Available: ${wallet.balance.available}, Requested: ${amount}`);
       }
 
       // 7. Freeze amount in wallet (move from available to frozen)
       wallet.balance.available -= amount;
       wallet.balance.frozen += amount;
-      await wallet.save({ session });
+      await wallet.save();
 
       // 8. Create transaction record
       const transaction = new Transaction({
         user: userId,
         wallet: wallet._id,
         type: 'withdrawal',
-        amount: -amount,
+        amount: amount,
         status: 'pending',
         description: `Withdrawal to ${user.bankAccount.bankName} ${user.bankAccount.accountNumber}`
       });
-      await transaction.save({ session });
+      await transaction.save();
 
       // 9. Create withdrawal request (snapshot bank details)
       const withdrawal = new Withdrawal({
@@ -142,16 +146,11 @@ const withdrawalService = {
           accountHolderName: user.bankAccount.accountHolderName
         }
       });
-      await withdrawal.save({ session });
-
-      await session.commitTransaction();
+      await withdrawal.save();
 
       return withdrawal;
     } catch (error) {
-      await session.abortTransaction();
       throw error;
-    } finally {
-      session.endSession();
     }
   },
 
@@ -182,49 +181,39 @@ const withdrawalService = {
 
   // Cancel withdrawal (user can only cancel pending)
   cancelWithdrawal: async (withdrawalId, userId) => {
-    const session = await mongoose.startSession();
-
     try {
-      session.startTransaction();
-
       const withdrawal = await Withdrawal.findOne({
         _id: withdrawalId,
         user: userId
-      }).session(session);
+      });
 
       if (!withdrawal) {
         throw new NotFoundError('Withdrawal not found');
       }
 
       if (withdrawal.status !== 'pending') {
-        throw new BadRequestError('Only pending withdrawals can be cancelled');
+        throw new BadRequest('Only pending withdrawals can be cancelled');
       }
 
       // Unfreeze amount (move from frozen back to available)
-      const wallet = await Wallet.findById(withdrawal.wallet).session(session);
+      const wallet = await Wallet.findById(withdrawal.wallet);
       wallet.balance.available += withdrawal.amount;
       wallet.balance.frozen -= withdrawal.amount;
-      await wallet.save({ session });
+      await wallet.save();
 
       // Update withdrawal status
       withdrawal.status = 'cancelled';
-      await withdrawal.save({ session });
+      await withdrawal.save();
 
       // Update transaction
       await Transaction.findByIdAndUpdate(
         withdrawal.transaction,
-        { status: 'cancelled' },
-        { session }
+        { status: 'cancelled' }
       );
-
-      await session.commitTransaction();
 
       return withdrawal;
     } catch (error) {
-      await session.abortTransaction();
       throw error;
-    } finally {
-      session.endSession();
     }
   },
 
@@ -252,27 +241,23 @@ const withdrawalService = {
     return result.length > 0 ? result[0].total : 0;
   },
 
-  // ADMIN: Update withdrawal status (ATOMIC)
+  // ADMIN: Update withdrawal status
   updateWithdrawalStatus: async (withdrawalId, adminId, statusData) => {
-    const session = await mongoose.startSession();
-
     try {
-      session.startTransaction();
-
       const { status, adminNote, rejectionReason } = statusData;
 
-      const withdrawal = await Withdrawal.findById(withdrawalId).session(session);
+      const withdrawal = await Withdrawal.findById(withdrawalId);
 
       if (!withdrawal) {
         throw new NotFoundError('Withdrawal not found');
       }
 
-      const wallet = await Wallet.findById(withdrawal.wallet).session(session);
+      const wallet = await Wallet.findById(withdrawal.wallet);
 
       // Handle status transitions
       if (status === 'processing') {
         if (withdrawal.status !== 'pending') {
-          throw new BadRequestError('Can only process pending withdrawals');
+          throw new BadRequest('Can only process pending withdrawals');
         }
 
         withdrawal.status = 'processing';
@@ -281,12 +266,12 @@ const withdrawalService = {
         withdrawal.adminNote = adminNote;
       } else if (status === 'completed') {
         if (withdrawal.status !== 'processing') {
-          throw new BadRequestError('Can only complete processing withdrawals');
+          throw new BadRequest('Can only complete processing withdrawals');
         }
 
         // Remove from frozen (money already left the system)
         wallet.balance.frozen -= withdrawal.amount;
-        await wallet.save({ session });
+        await wallet.save();
 
         withdrawal.status = 'completed';
         withdrawal.completedAt = new Date();
@@ -295,18 +280,17 @@ const withdrawalService = {
         // Update transaction
         await Transaction.findByIdAndUpdate(
           withdrawal.transaction,
-          { status: 'success', processedAt: new Date() },
-          { session }
+          { status: 'success', processedAt: new Date() }
         );
       } else if (status === 'rejected') {
         if (!['pending', 'processing'].includes(withdrawal.status)) {
-          throw new BadRequestError('Can only reject pending/processing withdrawals');
+          throw new BadRequest('Can only reject pending/processing withdrawals');
         }
 
         // Unfreeze and return to available
         wallet.balance.available += withdrawal.amount;
         wallet.balance.frozen -= withdrawal.amount;
-        await wallet.save({ session });
+        await wallet.save();
 
         withdrawal.status = 'rejected';
         withdrawal.processedBy = adminId;
@@ -316,23 +300,18 @@ const withdrawalService = {
         // Update transaction
         await Transaction.findByIdAndUpdate(
           withdrawal.transaction,
-          { status: 'failed', processedAt: new Date() },
-          { session }
+          { status: 'failed', processedAt: new Date() }
         );
       }
 
-      await withdrawal.save({ session });
-      await session.commitTransaction();
+      await withdrawal.save();
 
       // Populate for response
       await withdrawal.populate('user', 'email profile.firstName profile.lastName');
 
       return withdrawal;
     } catch (error) {
-      await session.abortTransaction();
       throw error;
-    } finally {
-      session.endSession();
     }
   },
 

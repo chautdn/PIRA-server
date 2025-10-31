@@ -28,7 +28,7 @@ const deleteUser = async (id) => {
   return user;
 };
 const getProfile = async (id) => {
-  const user = await User.findById(id);
+  const user = await User.findById(id).populate('wallet');
   if (!user) {
     throw new NotFoundError('User');
   }
