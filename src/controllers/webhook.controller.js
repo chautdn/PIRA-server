@@ -1,22 +1,58 @@
 const Transaction = require('../models/Transaction');
 const Wallet = require('../models/Wallet');
 const User = require('../models/User');
+const productPromotionService = require('../services/productPromotion.service');
 
 const webhookController = {
   // Simple webhook handler - just update transaction and wallet
   handlePayOSWebhook: async (req, res) => {
     try {
+      console.log('🔔 PayOS Webhook received:', JSON.stringify(req.body, null, 2));
+
       // Get order code from webhook
       const webhookData = req.body;
       const orderCode = webhookData.orderCode || webhookData.orderId;
       const isSuccess =
         webhookData.success || webhookData.code === '00' || webhookData.status === 'PAID';
 
+      console.log('📝 Parsed webhook data:', { orderCode, isSuccess });
+
       if (!orderCode) {
+        console.error('❌ No order code in webhook');
         return res.status(400).json({ error: 'No order code' });
       }
 
-      // Find the transaction
+      // Check if this is a product promotion payment
+      console.log('🔍 Checking if this is a promotion payment...');
+      const promotionResult = await productPromotionService.processPayOSWebhook(
+        orderCode,
+        isSuccess
+      );
+      console.log('✅ Promotion result:', promotionResult);
+
+      if (promotionResult.success || promotionResult.message === 'Promotion not found') {
+        // If it's a promotion payment or not found (continue to regular flow)
+        if (promotionResult.message !== 'Promotion not found') {
+          // Emit socket update for promotion activation
+          if (global.chatGateway && promotionResult.promotion) {
+            global.chatGateway.emitToUser(
+              promotionResult.promotion.user.toString(),
+              'promotion-activated',
+              {
+                promotionId: promotionResult.promotion._id,
+                productId: promotionResult.promotion.product
+              }
+            );
+          }
+
+          return res.status(200).json({
+            message: promotionResult.message,
+            orderCode
+          });
+        }
+      }
+
+      // Regular wallet top-up flow
       const transaction = await Transaction.findOne({
         externalId: orderCode.toString()
       }).populate('user wallet');

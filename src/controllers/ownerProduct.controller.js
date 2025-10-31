@@ -323,45 +323,6 @@ const ownerProductController = {
     }
   },
 
-  // PUT /api/owner/products/:id/featured
-  updateFeaturedStatus: async (req, res) => {
-    try {
-      const errors = validationResult(req);
-      if (!errors.isEmpty()) {
-        return res.status(400).json({
-          success: false,
-          message: 'Validation errors',
-          errors: errors.array()
-        });
-      }
-
-      const ownerId = req.user._id;
-      const productId = req.params.id;
-      const { featuredTier, duration } = req.body;
-
-      const product = await ownerProductService.updateFeaturedStatus(
-        ownerId,
-        productId,
-        featuredTier,
-        duration
-      );
-
-      return res.status(200).json({
-        success: true,
-        message: 'Featured status updated successfully',
-        data: product
-      });
-    } catch (error) {
-      if (!res.headersSent) {
-        const statusCode = error.message.includes('not found') ? 404 : 500;
-        return res.status(statusCode).json({
-          success: false,
-          message: error.message
-        });
-      }
-    }
-  },
-
   // POST /api/owner/products/:id/upload-images
   uploadImages: async (req, res) => {
     try {
