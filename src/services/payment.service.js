@@ -6,11 +6,10 @@ const mongoose = require('mongoose');
 
 // Initialize PayOS at module level (v2 API)
 const payos = new PayOS({
-  clientId: process.env.PAYOS_CLIENT_ID || 'ac8c9eb9-59cf-4573-90bf-aaac9b0b2c1e',
-  apiKey: process.env.PAYOS_API_KEY || '5a1a52ee-8681-4d80-b797-effd7312fdbc',
+  clientId: process.env.PAYOS_CLIENT_ID,
+  apiKey: process.env.PAYOS_API_KEY,
   checksumKey:
-    process.env.PAYOS_CHECKSUM_KEY ||
-    '44ad85b6579ea663ee033a7830a2a11f0c3dc5005125e28284b917f6c1b17263'
+    process.env.PAYOS_CHECKSUM_KEY 
 });
 
 // Constants

@@ -5,7 +5,12 @@ const {
   getUsers,
   getProfile,
   updateProfile,
-  updateProfileByKyc
+  updateProfileByKyc,
+  getBankAccount,
+  addBankAccount,
+  updateBankAccount,
+  removeBankAccount,
+  getVietnameseBanks
 } = require('../controllers/user.controller');
 const { registerRoute } = require('./register.routes');
 const { authMiddleware } = require('../middleware/auth');
@@ -15,6 +20,14 @@ router.post('/create', authMiddleware.checkUserRole('admin'), createUser); // T�
 router.get('/profile', authMiddleware.verifyToken, getProfile); // Lấy thông tin user
 router.put('/profile', authMiddleware.verifyToken, updateProfile); // Cập nhật thông tin user
 router.put('/profile-by-kyc', authMiddleware.verifyToken, updateProfileByKyc); // Cập nhật thông tin user
+
+// Bank Account routes
+router.get('/banks', getVietnameseBanks); // Get list of Vietnamese banks (public)
+router.get('/bank-account', authMiddleware.verifyToken, getBankAccount); // Get user's bank account
+router.post('/bank-account', authMiddleware.verifyToken, addBankAccount); // Add bank account
+router.put('/bank-account', authMiddleware.verifyToken, updateBankAccount); // Update bank account
+router.delete('/bank-account', authMiddleware.verifyToken, removeBankAccount); // Remove bank account
+
 registerRoute('/users', router);
 
 module.exports = router;

@@ -112,6 +112,41 @@ const userSchema = new mongoose.Schema(
       max: 1000
     },
 
+    // Bank Account Information (for withdrawals)
+    bankAccount: {
+      bankCode: {
+        type: String,
+        enum: [
+          'VCB',
+          'TCB',
+          'BIDV',
+          'VTB',
+          'ACB',
+          'MB',
+          'TPB',
+          'STB',
+          'VPB',
+          'AGR',
+          'EIB',
+          'MSB',
+          'SCB',
+          'SHB',
+          'OCB'
+        ]
+      },
+      bankName: String,
+      accountNumber: String,
+      accountHolderName: {
+        type: String,
+        uppercase: true
+      },
+      isVerified: {
+        type: Boolean,
+        default: false
+      },
+      addedAt: Date
+    },
+
     wallet: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'Wallet'

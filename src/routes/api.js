@@ -30,6 +30,10 @@ require('./payment.routes');
 require('./cart.routes');
 require('./rating.routes');
 
+// Withdrawal routes
+const withdrawalRoutes = require('./withdrawal.routes');
+router.use('/withdrawals', withdrawalRoutes);
+
 // Register all routes from the registry FIRST
 getRoutes()?.forEach(({ path, router: moduleRouter }) => {
   if (!path || typeof path !== 'string') {

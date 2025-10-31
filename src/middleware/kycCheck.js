@@ -8,7 +8,7 @@ const kycCheck = {
       }
 
       const kycStatus = await getKYCStatus(req.user.id);
-      
+
       if (!kycStatus.isVerified) {
         return res.status(403).json({
           success: false,
@@ -17,7 +17,7 @@ const kycCheck = {
           kycStatus: kycStatus
         });
       }
-      
+
       next();
     } catch (error) {
       return res.status(500).json({ success: false, message: error.message });
@@ -35,12 +35,12 @@ const kycCheck = {
         // Lấy thông tin sản phẩm để check giá trị
         const { productId, rentalDays } = req.body;
         const product = await Product.findById(productId);
-        
+
         const totalValue = product.pricePerDay * rentalDays;
-        
+
         if (totalValue >= minimumValue) {
           const kycStatus = await getKYCStatus(req.user.id);
-          
+
           if (!kycStatus.isVerified) {
             return res.status(403).json({
               success: false,
@@ -51,7 +51,7 @@ const kycCheck = {
             });
           }
         }
-        
+
         next();
       } catch (error) {
         return res.status(500).json({ success: false, message: error.message });
@@ -67,7 +67,7 @@ const kycCheck = {
       }
 
       const kycStatus = await getKYCStatus(req.user.id);
-      
+
       if (!kycStatus.isVerified) {
         return res.status(403).json({
           success: false,
@@ -76,10 +76,31 @@ const kycCheck = {
           kycStatus: kycStatus
         });
       }
-      
+
+      next();
+    } catch (error) {
+      return res.status(500).json({ success: false, message: error.message });
+    }
+  },
+
+  // Kiểm tra KYC cho withdrawal (kiểm tra CCCD verification)
+  checkKycStatus: async (req, res, next) => {
+    try {
+      // Check if user has verified CCCD
+      if (!req.user.cccd || !req.user.cccd.isVerified) {
+        return res.status(403).json({
+          success: false,
+          message:
+            'KYC verification required. Please complete KYC verification before requesting withdrawal.',
+          kycRequired: true
+        });
+      }
+
       next();
     } catch (error) {
       return res.status(500).json({ success: false, message: error.message });
     }
   }
 };
+
+module.exports = kycCheck;
