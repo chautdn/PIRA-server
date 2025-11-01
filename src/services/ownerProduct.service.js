@@ -121,15 +121,27 @@ const ownerProductService = {
 
       const slug = await ownerProductService.generateUniqueSlug(productData.title);
 
+      // Set initial status based on whether promotion is intended
+      // If promotion with PayOS is intended but not yet paid, set to PENDING
+      // Otherwise, set to ACTIVE (normal products or wallet-paid promotions)
+      const initialStatus = productData.promotionIntended ? 'PENDING' : 'ACTIVE';
+
       const newProduct = new Product({
         ...productData,
         owner: ownerId,
         category: category._id,
         slug,
-        status: 'ACTIVE'
+        status: initialStatus
       });
 
       const savedProduct = await newProduct.save();
+
+      // Add OWNER role to user if they don't have it yet
+      if (owner.role === 'RENTER') {
+        owner.role = 'OWNER';
+        await owner.save();
+        console.log(`✅ User ${owner.email} upgraded to OWNER role`);
+      }
 
       return await Product.findById(savedProduct._id)
         .populate('category', 'name slug')

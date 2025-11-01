@@ -7,7 +7,11 @@ const webhookController = {
   // Simple webhook handler - just update transaction and wallet
   handlePayOSWebhook: async (req, res) => {
     try {
-      console.log('🔔 PayOS Webhook received:', JSON.stringify(req.body, null, 2));
+      console.log('\n============ 🔔 PayOS WEBHOOK RECEIVED ============');
+      console.log('Timestamp:', new Date().toISOString());
+      console.log('Headers:', JSON.stringify(req.headers, null, 2));
+      console.log('Body:', JSON.stringify(req.body, null, 2));
+      console.log('================================================\n');
 
       // Get order code from webhook
       const webhookData = req.body;

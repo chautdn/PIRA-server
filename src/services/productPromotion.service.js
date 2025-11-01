@@ -155,6 +155,17 @@ const productPromotionService = {
       throw new Error('Product already has an active promotion');
     }
 
+    // Check for existing pending promotion (don't create duplicate)
+    const existingPending = await ProductPromotion.findOne({
+      product: productId,
+      paymentStatus: 'pending',
+      paymentMethod: 'payos'
+    });
+
+    if (existingPending) {
+      throw new Error('Product already has a pending promotion payment');
+    }
+
     // Calculate cost
     const { pricePerDay, totalAmount, discountApplied } = this.calculateCost(tier, duration);
 
@@ -181,10 +192,13 @@ const productPromotionService = {
     });
     await promotion.save();
 
-    // Set product to PENDING status (will be ACTIVE after payment)
-    await Product.findByIdAndUpdate(productId, {
-      status: 'PENDING'
-    });
+    // Keep product in PENDING status (will be ACTIVE after payment)
+    // Don't update if already PENDING
+    if (product.status !== 'PENDING') {
+      await Product.findByIdAndUpdate(productId, {
+        status: 'PENDING'
+      });
+    }
 
     // Create PayOS payment session
     const paymentData = {
@@ -297,34 +311,56 @@ const productPromotionService = {
 
   // Process PayOS webhook for promotion payment
   async processPayOSWebhook(orderCode, success) {
+    console.log(`[Promotion Webhook] Processing orderCode: ${orderCode}, success: ${success}`);
+
     // Find promotion by orderCode
     const promotion = await ProductPromotion.findOne({
-      externalOrderCode: orderCode.toString(),
-      paymentStatus: 'pending'
+      externalOrderCode: orderCode.toString()
     });
 
+    console.log(`[Promotion Webhook] Found promotion:`, promotion ? {
+      id: promotion._id,
+      status: promotion.paymentStatus,
+      isActive: promotion.isActive,
+      productId: promotion.product
+    } : 'null');
+
     if (!promotion) {
+      console.log('[Promotion Webhook] No promotion found for this orderCode');
       return { success: false, message: 'Promotion not found' };
     }
 
     // Check if already processed (idempotency)
     if (promotion.paymentStatus === 'paid') {
-      return { success: true, message: 'Already processed' };
+      console.log('[Promotion Webhook] Already processed, returning success');
+      return { success: true, message: 'Already processed', promotion };
     }
 
     if (success) {
       try {
+        console.log('[Promotion Webhook] Processing successful payment...');
+
         // Update promotion
         promotion.paymentStatus = 'paid';
         promotion.isActive = true;
         await promotion.save();
+        console.log('[Promotion Webhook] Promotion updated to paid and active');
 
         // Update product (activate it and set promotion)
-        await Product.findByIdAndUpdate(promotion.product, {
-          status: 'ACTIVE', // Publish the product
-          currentPromotion: promotion._id,
-          isPromoted: true,
-          promotionTier: promotion.tier
+        const updatedProduct = await Product.findByIdAndUpdate(
+          promotion.product,
+          {
+            status: 'ACTIVE', // Publish the product
+            currentPromotion: promotion._id,
+            isPromoted: true,
+            promotionTier: promotion.tier
+          },
+          { new: true }
+        );
+        console.log('[Promotion Webhook] Product updated:', {
+          id: updatedProduct._id,
+          status: updatedProduct.status,
+          isPromoted: updatedProduct.isPromoted
         });
 
         // Get user's wallet
@@ -353,38 +389,99 @@ const productPromotionService = {
           }
         });
         await transaction.save();
+        console.log('[Promotion Webhook] Transaction created:', transaction._id);
 
         promotion.transaction = transaction._id;
         await promotion.save();
 
+        console.log('[Promotion Webhook] ✅ Promotion activation complete');
         return {
           success: true,
           message: 'Promotion activated',
           promotion
         };
       } catch (error) {
+        console.error('[Promotion Webhook] ❌ Error processing payment:', error);
         throw error;
       }
     } else {
+      console.log('[Promotion Webhook] Payment failed or cancelled');
+
       // Payment failed or cancelled
       promotion.paymentStatus = 'failed';
       await promotion.save();
 
-      // Set product back to DRAFT (user can re-publish later without promotion)
+      // Keep product in PENDING (user can retry payment or publish without promotion)
       await Product.findByIdAndUpdate(promotion.product, {
-        status: 'DRAFT'
+        status: 'PENDING'
       });
 
+      console.log('[Promotion Webhook] Promotion marked as failed');
       return { success: false, message: 'Payment failed' };
     }
   },
 
-  // Verify promotion by order code
+  // Verify promotion by order code (with PayOS check)
   async verifyByOrderCode(orderCode, userId) {
+    console.log(`[Verify] Checking promotion for orderCode: ${orderCode}`);
+    
     const promotion = await ProductPromotion.findOne({
       externalOrderCode: orderCode.toString(),
       user: userId
     }).populate('product', 'title images status');
+
+    if (!promotion) {
+      console.log('[Verify] No promotion found');
+      return null;
+    }
+
+    console.log(`[Verify] Promotion found:`, {
+      id: promotion._id,
+      paymentStatus: promotion.paymentStatus,
+      isActive: promotion.isActive
+    });
+
+    // If already paid, return immediately
+    if (promotion.paymentStatus === 'paid') {
+      console.log('[Verify] Already paid, returning');
+      return promotion;
+    }
+
+    // Check PayOS status directly
+    try {
+      console.log('[Verify] Checking PayOS status...');
+      const { PayOS } = require('@payos/node');
+      const payos = new PayOS({
+        clientId: process.env.PAYOS_CLIENT_ID,
+        apiKey: process.env.PAYOS_API_KEY,
+        checksumKey: process.env.PAYOS_CHECKSUM_KEY
+      });
+
+      const payosStatus = await payos.paymentRequests.get(Number(orderCode));
+      console.log('[Verify] PayOS status:', payosStatus.status);
+
+      // If PayOS shows PAID but our DB shows pending, process it now
+      if (payosStatus.status === 'PAID' && promotion.paymentStatus === 'pending') {
+        console.log('[Verify] 🎉 Payment confirmed by PayOS! Processing now...');
+        
+        // Process the payment (same as webhook would do)
+        const result = await this.processPayOSWebhook(orderCode, true);
+        
+        if (result.success) {
+          console.log('[Verify] ✅ Promotion activated successfully');
+          // Reload promotion to get updated data
+          const updatedPromotion = await ProductPromotion.findOne({
+            externalOrderCode: orderCode.toString(),
+            user: userId
+          }).populate('product', 'title images status');
+          
+          return updatedPromotion;
+        }
+      }
+    } catch (payosError) {
+      console.error('[Verify] PayOS check failed:', payosError.message);
+      // Continue with database status
+    }
 
     return promotion;
   }
