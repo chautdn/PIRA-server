@@ -318,12 +318,17 @@ const productPromotionService = {
       externalOrderCode: orderCode.toString()
     });
 
-    console.log(`[Promotion Webhook] Found promotion:`, promotion ? {
-      id: promotion._id,
-      status: promotion.paymentStatus,
-      isActive: promotion.isActive,
-      productId: promotion.product
-    } : 'null');
+    console.log(
+      `[Promotion Webhook] Found promotion:`,
+      promotion
+        ? {
+            id: promotion._id,
+            status: promotion.paymentStatus,
+            isActive: promotion.isActive,
+            productId: promotion.product
+          }
+        : 'null'
+    );
 
     if (!promotion) {
       console.log('[Promotion Webhook] No promotion found for this orderCode');
@@ -424,7 +429,7 @@ const productPromotionService = {
   // Verify promotion by order code (with PayOS check)
   async verifyByOrderCode(orderCode, userId) {
     console.log(`[Verify] Checking promotion for orderCode: ${orderCode}`);
-    
+
     const promotion = await ProductPromotion.findOne({
       externalOrderCode: orderCode.toString(),
       user: userId
@@ -463,10 +468,10 @@ const productPromotionService = {
       // If PayOS shows PAID but our DB shows pending, process it now
       if (payosStatus.status === 'PAID' && promotion.paymentStatus === 'pending') {
         console.log('[Verify] 🎉 Payment confirmed by PayOS! Processing now...');
-        
+
         // Process the payment (same as webhook would do)
         const result = await this.processPayOSWebhook(orderCode, true);
-        
+
         if (result.success) {
           console.log('[Verify] ✅ Promotion activated successfully');
           // Reload promotion to get updated data
@@ -474,7 +479,7 @@ const productPromotionService = {
             externalOrderCode: orderCode.toString(),
             user: userId
           }).populate('product', 'title images status');
-          
+
           return updatedPromotion;
         }
       }
