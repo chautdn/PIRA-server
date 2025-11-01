@@ -1,20 +1,49 @@
 // middleware/kycCheck.js
+const User = require('../models/User');
+
 const kycCheck = {
-  // Kiểm tra cho OWNER khi đăng sản phẩm
+  // Kiểm tra cho OWNER khi đăng sản phẩm - yêu cầu CCCD và Bank Account
   requireOwnerKYC: async (req, res, next) => {
     try {
+      // Only check for OWNER role
       if (req.user.role !== 'OWNER') {
         return next();
       }
 
-      const kycStatus = await getKYCStatus(req.user.id);
+      // Get full user data with CCCD and bank account information
+      const user = await User.findById(req.user._id);
 
-      if (!kycStatus.isVerified) {
+      if (!user) {
+        return res.status(404).json({
+          success: false,
+          message: 'User not found'
+        });
+      }
+
+      // Check CCCD verification
+      if (!user.cccd || !user.cccd.isVerified) {
         return res.status(403).json({
           success: false,
-          message: 'Cần xác thực danh tính trước khi đăng sản phẩm',
+          message:
+            'CCCD verification required. Please complete KYC verification before creating products.',
           kycRequired: true,
-          kycStatus: kycStatus
+          missingRequirements: {
+            cccdVerified: false,
+            bankAccountAdded: !!user.bankAccount && !!user.bankAccount.accountNumber
+          }
+        });
+      }
+
+      // Check bank account
+      if (!user.bankAccount || !user.bankAccount.accountNumber || !user.bankAccount.bankCode) {
+        return res.status(403).json({
+          success: false,
+          message: 'Bank account required. Please add a bank account before creating products.',
+          kycRequired: true,
+          missingRequirements: {
+            cccdVerified: true,
+            bankAccountAdded: false
+          }
         });
       }
 

@@ -119,8 +119,15 @@ const productService = {
       filter['availability.quantity'] = { $gt: 0 };
     }
 
-    // Build sort options
+    // Build sort options - PRIORITIZE PROMOTED PRODUCTS
     const sortOptions = {};
+
+    // Always sort promoted products first (isPromoted: true)
+    // Then by promotionTier (1 = highest, 5 = lowest)
+    sortOptions.isPromoted = -1; // Promoted products first
+    sortOptions.promotionTier = 1; // Lower tier number = higher priority
+
+    // Then apply user-selected sort
     switch (sort) {
       case 'price':
         sortOptions['pricing.dailyRate'] = order === 'asc' ? 1 : -1;
@@ -142,6 +149,7 @@ const productService = {
         Product.find(filter)
           .populate('category', 'name slug')
           .populate('owner', 'email profile.firstName profile.lastName trustScore')
+          .populate('currentPromotion', 'tier startDate endDate isActive')
           .sort(sortOptions)
           .skip(skip)
           .limit(limitNum)
@@ -340,48 +348,38 @@ const productService = {
   },
 
   /**
-   * Get featured products for homepage
-   * Returns products with active featured status, sorted by tier and last upgrade date
+   * Get promoted products for homepage
+   * Returns products with active promotion status, sorted by tier and creation date
    */
-  getFeaturedProducts: async (limit = 6) => {
+  getPromotedProducts: async (limit = 6) => {
     try {
-      const now = new Date();
-
-      const featuredProducts = await Product.find({
+      const promotedProducts = await Product.find({
         status: 'ACTIVE',
-        featuredTier: { $exists: true, $ne: null },
-        featuredPaymentStatus: 'PAID',
-        $or: [{ featuredExpiresAt: { $gt: now } }, { featuredExpiresAt: { $exists: false } }]
+        isPromoted: true,
+        promotionTier: { $exists: true, $ne: null }
       })
         .populate('category', 'name')
         .populate('owner', 'profile.firstName profile.lastName profile.avatar')
+        .populate('currentPromotion', 'tier endDate isActive')
         .sort({
-          featuredTier: 1, // Tier 1 (highest) first
-          featuredUpgradedAt: -1 // Most recently upgraded first within same tier
+          promotionTier: 1, // Tier 1 (highest) first
+          createdAt: -1 // Most recent first within same tier
         })
         .limit(limit)
         .lean();
 
-      // Filter out products with expired featured status
-      const validFeaturedProducts = featuredProducts.filter((product) => {
-        if (!product.featuredTier) {
-          return false;
-        }
-
-        const endDate = product.featuredExpiresAt;
-
-        // Check if featured is still active
-        if (endDate && now > new Date(endDate)) {
-          return false;
-        }
-
-        return true;
-      });
-
-      return validFeaturedProducts;
+      return promotedProducts;
     } catch (error) {
-      throw new Error(`Failed to get featured products: ${error.message}`);
+      throw new Error(`Failed to get promoted products: ${error.message}`);
     }
+  },
+
+  /**
+   * Legacy method - kept for backward compatibility
+   * @deprecated Use getPromotedProducts instead
+   */
+  getFeaturedProducts: async (limit = 6) => {
+    return productService.getPromotedProducts(limit);
   }
 };
 

@@ -17,21 +17,22 @@ const ownerProductService = {
    */
   getOwnerProducts: async (ownerId, options = {}) => {
     try {
-      const { page = 1, limit = 10, status, category, featured } = options;
+      const { page = 1, limit = 10, status, category, promoted } = options;
       const skip = (page - 1) * limit;
 
       let query = { owner: ownerId, deletedAt: { $exists: false } };
 
       if (status) query.status = status;
       if (category) query.category = category;
-      if (featured === 'true') query.featuredTier = { $ne: null };
-      if (featured === 'false') query.featuredTier = null;
+      if (promoted === 'true') query.isPromoted = true;
+      if (promoted === 'false') query.isPromoted = { $ne: true };
 
       const products = await Product.find(query)
         .populate('category', 'name slug')
         .populate('subCategory', 'name slug')
         .populate('owner', 'profile.firstName profile.lastName email')
-        .sort({ featuredTier: 1, updatedAt: -1 })
+        .populate('currentPromotion', 'tier endDate isActive')
+        .sort({ isPromoted: -1, promotionTier: 1, updatedAt: -1 })
         .skip(skip)
         .limit(limit);
 
@@ -120,15 +121,27 @@ const ownerProductService = {
 
       const slug = await ownerProductService.generateUniqueSlug(productData.title);
 
+      // Set initial status based on whether promotion is intended
+      // If promotion with PayOS is intended but not yet paid, set to PENDING
+      // Otherwise, set to ACTIVE (normal products or wallet-paid promotions)
+      const initialStatus = productData.promotionIntended ? 'PENDING' : 'ACTIVE';
+
       const newProduct = new Product({
         ...productData,
         owner: ownerId,
         category: category._id,
         slug,
-        status: 'ACTIVE'
+        status: initialStatus
       });
 
       const savedProduct = await newProduct.save();
+
+      // Add OWNER role to user if they don't have it yet
+      if (owner.role === 'RENTER') {
+        owner.role = 'OWNER';
+        await owner.save();
+        console.log(`✅ User ${owner.email} upgraded to OWNER role`);
+      }
 
       return await Product.findById(savedProduct._id)
         .populate('category', 'name slug')
@@ -215,43 +228,6 @@ const ownerProductService = {
       return product;
     } catch (error) {
       throw new Error('Error deleting product: ' + error.message);
-    }
-  },
-
-  /**
-   * Update featured status
-   */
-  updateFeaturedStatus: async (ownerId, productId, featuredTier, duration) => {
-    try {
-      const product = await Product.findOne({
-        _id: productId,
-        owner: ownerId,
-        deletedAt: { $exists: false }
-      });
-
-      if (!product) {
-        throw new Error('Product not found or access denied');
-      }
-
-      const now = new Date();
-      const tierPricing = {
-        1: 100000,
-        2: 75000,
-        3: 50000,
-        4: 25000,
-        5: 10000
-      };
-
-      product.featuredTier = featuredTier;
-      product.featuredExpiresAt = new Date(now.getTime() + duration * 24 * 60 * 60 * 1000);
-      product.featuredPaymentAmount = tierPricing[featuredTier] * duration;
-      product.featuredPaymentStatus = 'PENDING';
-      product.featuredUpgradedAt = now;
-
-      await product.save();
-      return product;
-    } catch (error) {
-      throw new Error('Error updating featured status: ' + error.message);
     }
   },
 

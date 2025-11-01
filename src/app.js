@@ -25,6 +25,11 @@ const io = new Server(server, {
 const chatGateway = new ChatGateway(io);
 global.chatGateway = chatGateway; // Make available globally
 
+// Initialize promotion cron job
+const { startPromotionCronJob, runImmediately } = require('./scripts/promotionCron');
+startPromotionCronJob();
+runImmediately(); // Run cleanup on startup
+
 // Log Socket.IO events for monitoring
 io.engine.on('connection_error', (err) => {
   console.error('Socket.IO connection error:', err);
