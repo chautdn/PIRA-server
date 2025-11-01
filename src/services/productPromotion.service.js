@@ -272,38 +272,26 @@ const productPromotionService = {
 
   // Check and deactivate expired promotions (cron job)
   async deactivateExpired() {
-    const session = await mongoose.startSession();
-
     try {
-      session.startTransaction();
-
       const expired = await ProductPromotion.find({
         isActive: true,
         endDate: { $lte: new Date() }
-      }).session(session);
+      });
 
       for (const promo of expired) {
         promo.isActive = false;
-        await promo.save({ session });
+        await promo.save();
 
-        await Product.findByIdAndUpdate(
-          promo.product,
-          {
-            isPromoted: false,
-            currentPromotion: null,
-            promotionTier: null
-          },
-          { session }
-        );
+        await Product.findByIdAndUpdate(promo.product, {
+          isPromoted: false,
+          currentPromotion: null,
+          promotionTier: null
+        });
       }
 
-      await session.commitTransaction();
       return expired.length;
     } catch (error) {
-      await session.abortTransaction();
       throw error;
-    } finally {
-      session.endSession();
     }
   },
 
