@@ -2,7 +2,7 @@ const Chat = require('../models/Chat');
 const Message = require('../models/Message');
 const User = require('../models/User');
 const Product = require('../models/Product');
-const Order = require('../models/Order');
+
 
 const chatService = {
   // Get all conversations for a user (including empty ones)

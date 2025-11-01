@@ -2,7 +2,42 @@
 
 ## Tổng quan
 
-Hệ thống thuê sản phẩm PIRA cho phép người dùng thuê các sản phẩm có giá trị cao với hợp đồng điện tử (e-contract) và chữ ký số.
+Hệ thống thuê sản phẩm PIRA cho phép người dùng thuê các sản phẩm có giá trị cao với hợp đồng điện tử (e-contract) và chữ ký số. Hệ thống hỗ trợ đầy đủ luồng nghiệp vụ từ chọn sản phẩm, tính phí vận chuyển, thanh toán đến ký hợp đồng điện tử 3 bên.
+
+## Luồng Nghiệp Vụ Mới (Updated)
+
+### Bước 1-2: Chọn sản phẩm và thời gian thuê
+
+- Người thuê chọn sản phẩm từ nhiều chủ khác nhau
+- Hệ thống tự động gom sản phẩm theo chủ cho thuê
+- Điền thời gian thuê và địa chỉ giao hàng
+- Chọn hình thức nhận: trực tiếp hoặc giao tận nơi
+
+### Bước 3: Tính phí vận chuyển tự động
+
+- **Tích hợp VietMap API** để tính khoảng cách chính xác
+- Tự động tính phí ship: `phí cố định + (khoảng cách × giá/km)`
+- Mỗi chủ cho thuê chỉ tính 1 lần phí ship (không chồng chéo)
+- Hiển thị thời gian ước lượng giao hàng
+
+### Bước 4: Tạo đơn thuê thông minh
+
+- **MasterOrder**: Tổng thể giao dịch của người thuê
+- **SubOrder**: Đơn con riêng cho từng chủ cho thuê
+- Tích hợp đầy đủ: sản phẩm + thời gian + phí ship + cọc
+
+### Bước 5-6: Thanh toán và xác nhận
+
+- Người thuê thanh toán tổng thể qua nền tảng
+- Từng chủ cho thuê xác nhận riêng SubOrder của mình
+- Nền tảng giữ tiền trong tài khoản ký quỹ (escrow)
+
+### Bước 7: Hợp đồng điện tử 3 bên
+
+- **Tự động sinh hợp đồng** với đầy đủ thông tin pháp lý
+- **3 bên ký**: Chủ cho thuê + Người thuê + Nền tảng trung gian
+- **Chữ ký điện tử** với xác thực OTP/Email
+- **Xuất PDF** hợp đồng đã ký đầy đủ
 
 ## Các tính năng chính
 

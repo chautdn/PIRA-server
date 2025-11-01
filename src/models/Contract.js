@@ -85,6 +85,7 @@ const contractSchema = new mongoose.Schema(
       type: String,
       enum: [
         'DRAFT', // Nháp
+        'PENDING_SIGNATURE', // Chờ ký
         'PENDING_OWNER', // Chờ chủ sở hữu ký
         'PENDING_RENTER', // Chờ người thuê ký
         'SIGNED', // Đã ký đầy đủ
