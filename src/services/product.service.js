@@ -38,8 +38,23 @@ const productService = {
     const limitNum = Math.min(50, Math.max(1, parseInt(limit)));
     const skip = (pageNum - 1) * limitNum;
 
-    // Build query filter - START WITH BASIC
-    const filter = { status: 'ACTIVE' };
+    // Build query filter
+    // Respect the `status` query param from frontend. If frontend explicitly
+    // sends status='' (empty) we DO NOT filter by status (return all statuses).
+    // If frontend omits the status param entirely we keep the historical
+    // behavior of showing only ACTIVE products.
+    const filter = {};
+    if (Object.prototype.hasOwnProperty.call(filters, 'status')) {
+      // frontend explicitly provided status
+      const s = String(filters.status || '').trim();
+      if (s !== '') {
+        // map to uppercase values used in DB (e.g., 'active' -> 'ACTIVE')
+        filter.status = s.toUpperCase();
+      } // empty string => do not filter by status (show all)
+    } else {
+      // no status param provided -> keep default behavior
+      filter.status = 'ACTIVE';
+    }
 
     // Text search - COMPREHENSIVE VIETNAMESE SEARCH
     if (search && search.trim()) {
@@ -97,11 +112,31 @@ const productService = {
     }
 
     // Location filter - RE-ENABLED but handle $or conflicts
-    if (location) {
+    // Accept `district` from frontend as well (some clients send filters.district)
+    // The frontend uses slug-like values (e.g. 'hai-chau'), while DB stores
+    // the Vietnamese display names (e.g. 'Hải Châu'). Map common slugs to
+    // display names so regex matches correctly.
+    const rawLocation = (location || filters.district || '') || '';
+    let locationValue = String(rawLocation).trim();
+    if (locationValue) {
+      const districtMapping = {
+        'hai-chau': 'Hải Châu',
+        'thanh-khe': 'Thanh Khê',
+        'son-tra': 'Sơn Trà',
+        'ngu-hanh-son': 'Ngũ Hành Sơn',
+        'lien-chieu': 'Liên Chiểu',
+        'cam-le': 'Cẩm Lệ'
+      };
+
+      const normalized = locationValue.toLowerCase();
+      if (districtMapping[normalized]) {
+        locationValue = districtMapping[normalized];
+      }
+
       const locationConditions = [
-        { 'location.address.city': { $regex: location, $options: 'i' } },
-        { 'location.address.province': { $regex: location, $options: 'i' } },
-        { 'location.address.district': { $regex: location, $options: 'i' } }
+        { 'location.address.city': { $regex: locationValue, $options: 'i' } },
+        { 'location.address.province': { $regex: locationValue, $options: 'i' } },
+        { 'location.address.district': { $regex: locationValue, $options: 'i' } }
       ];
 
       // Handle $or conflicts properly
@@ -117,6 +152,13 @@ const productService = {
     if (available === 'true') {
       filter['availability.isAvailable'] = true;
       filter['availability.quantity'] = { $gt: 0 };
+    }
+
+    // Condition filter (product physical condition)
+    if (filters.condition) {
+      // Map frontend values like 'like-new' -> 'LIKE_NEW'
+      const cond = String(filters.condition).trim().toUpperCase().replace(/-/g, '_');
+      if (cond) filter.condition = cond;
     }
 
     // Build sort options
