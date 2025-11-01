@@ -6,11 +6,9 @@ const mongoose = require('mongoose');
 
 // Initialize PayOS at module level (v2 API)
 const payos = new PayOS({
-  clientId: process.env.PAYOS_CLIENT_ID || 'ac8c9eb9-59cf-4573-90bf-aaac9b0b2c1e',
-  apiKey: process.env.PAYOS_API_KEY || '5a1a52ee-8681-4d80-b797-effd7312fdbc',
-  checksumKey:
-    process.env.PAYOS_CHECKSUM_KEY ||
-    '44ad85b6579ea663ee033a7830a2a11f0c3dc5005125e28284b917f6c1b17263'
+  clientId: process.env.PAYOS_CLIENT_ID,
+  apiKey: process.env.PAYOS_API_KEY,
+  checksumKey: process.env.PAYOS_CHECKSUM_KEY
 });
 
 // Constants
@@ -448,10 +446,42 @@ const getTransactionHistory = async (userId, options = {}) => {
   }
 };
 
+// Generic payment link creation (for promotions, rentals, etc.)
+const createPaymentLink = async (paymentData) => {
+  try {
+    const { orderCode, amount, description, returnUrl, cancelUrl, metadata = {} } = paymentData;
+
+    if (!orderCode || !amount || !description) {
+      throw new Error('Missing required payment data');
+    }
+
+    // Create PayOS payment link
+    const payosData = {
+      orderCode,
+      amount,
+      description: description.substring(0, 25), // Max 25 chars for PayOS
+      returnUrl: returnUrl || `${process.env.CLIENT_URL}/payment-success`,
+      cancelUrl: cancelUrl || `${process.env.CLIENT_URL}/payment-cancel`
+    };
+
+    const paymentLink = await payos.paymentRequests.create(payosData);
+
+    return {
+      checkoutUrl: paymentLink.checkoutUrl,
+      orderCode,
+      qrCode: paymentLink.qrCode
+    };
+  } catch (error) {
+    console.error('Payment link creation error:', error);
+    throw new Error(`Failed to create payment link: ${error.message}`);
+  }
+};
+
 module.exports = {
   validateAmount,
   checkDailyLimit,
   createTopUpSession,
+  createPaymentLink,
   processWebhook,
   parseWebhookData,
   verifyPayment,

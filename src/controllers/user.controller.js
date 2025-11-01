@@ -6,7 +6,12 @@ const {
   deleteUser,
   getProfile,
   updateProfile,
-  updateProfileByKyc
+  updateProfileByKyc,
+  addBankAccount,
+  updateBankAccount,
+  removeBankAccount,
+  getBankAccount,
+  VIETNAMESE_BANKS
 } = require('../services/user.service');
 
 exports.getUsers = async (req, res) => {
@@ -40,4 +45,57 @@ exports.updateProfileByKyc = async (req, res) => {
     console.error('Update profile by KYC error:', error);
     return responseUtils.error(res, error.message, 400);
   }
+};
+
+// Bank Account Management
+exports.getBankAccount = async (req, res) => {
+  try {
+    const bankAccount = await getBankAccount(req.user.id);
+    return SuccessResponse.ok(res, { bankAccount }, 'Bank account retrieved successfully');
+  } catch (error) {
+    return responseUtils.error(res, error.message, 400);
+  }
+};
+
+exports.addBankAccount = async (req, res) => {
+  try {
+    const user = await addBankAccount(req.user.id, req.body);
+    return SuccessResponse.ok(
+      res,
+      { bankAccount: user.bankAccount },
+      'Bank account added successfully'
+    );
+  } catch (error) {
+    return responseUtils.error(res, error.message, 400);
+  }
+};
+
+exports.updateBankAccount = async (req, res) => {
+  try {
+    const user = await updateBankAccount(req.user.id, req.body);
+    return SuccessResponse.ok(
+      res,
+      { bankAccount: user.bankAccount },
+      'Bank account updated successfully'
+    );
+  } catch (error) {
+    return responseUtils.error(res, error.message, 400);
+  }
+};
+
+exports.removeBankAccount = async (req, res) => {
+  try {
+    const result = await removeBankAccount(req.user.id);
+    return SuccessResponse.ok(res, result, 'Bank account removed successfully');
+  } catch (error) {
+    return responseUtils.error(res, error.message, 400);
+  }
+};
+
+exports.getVietnameseBanks = async (req, res) => {
+  const banks = Object.entries(VIETNAMESE_BANKS).map(([code, data]) => ({
+    code,
+    name: data.name
+  }));
+  return SuccessResponse.ok(res, { banks }, 'Vietnamese banks retrieved successfully');
 };
