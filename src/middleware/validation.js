@@ -179,11 +179,25 @@ const requireRole = (requiredRole) => {
   };
 };
 
+// Generic validation error handler
+const handleValidationErrors = (req, res, next) => {
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) {
+    return res.status(400).json({
+      success: false,
+      message: 'Validation failed',
+      errors: errors.array()
+    });
+  }
+  next();
+};
+
 module.exports = {
   validateRegister,
   validateLogin,
   authLimiter,
-  requireRole, // Add this
+  requireRole,
+  handleValidationErrors, // Add this
   // Chat validation exports
   validateConversation,
   validateMessage,
@@ -191,5 +205,20 @@ module.exports = {
   validateMessageId,
   validatePagination,
   chatMessageLimiter,
-  chatActionLimiter
+  chatActionLimiter,
+  validateRequest: (req, res, next) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({
+        success: false,
+        message: 'Dữ liệu không hợp lệ',
+        errors: errors.array().map((error) => ({
+          field: error.path,
+          message: error.msg,
+          value: error.value
+        }))
+      });
+    }
+    next();
+  }
 };

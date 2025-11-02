@@ -26,8 +26,15 @@ require('./products.routes');
 require('./kyc.routes');
 require('./ownerProduct.routes');
 require('./admin.routes');
+require('./payment.routes');
 require('./cart.routes');
 require('./rating.routes');
+require('./productPromotion.routes');
+require('./rentalOrder.routes');
+
+// Withdrawal routes
+const withdrawalRoutes = require('./withdrawal.routes');
+router.use('/withdrawals', withdrawalRoutes);
 
 // Register all routes from the registry FIRST
 getRoutes()?.forEach(({ path, router: moduleRouter }) => {

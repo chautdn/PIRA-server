@@ -28,7 +28,7 @@ const deleteUser = async (id) => {
   return user;
 };
 const getProfile = async (id) => {
-  const user = await User.findById(id);
+  const user = await User.findById(id).populate('wallet');
   if (!user) {
     throw new NotFoundError('User');
   }
@@ -112,11 +112,127 @@ const updateProfileByKyc = async (id) => {
   }
 };
 
+// Bank Account Management
+const VIETNAMESE_BANKS = {
+  VCB: { name: 'Vietcombank', accountLength: [13, 14] },
+  TCB: { name: 'Techcombank', accountLength: [12, 19] },
+  BIDV: { name: 'BIDV', accountLength: [12, 14] },
+  VTB: { name: 'Vietinbank', accountLength: [12, 13] },
+  ACB: { name: 'ACB', accountLength: [9, 14] },
+  MB: { name: 'MB Bank', accountLength: [12, 13] },
+  TPB: { name: 'TPBank', accountLength: [10, 12] },
+  STB: { name: 'Sacombank', accountLength: [13, 16] },
+  VPB: { name: 'VPBank', accountLength: [12, 13] },
+  AGR: { name: 'Agribank', accountLength: [13, 14] },
+  EIB: { name: 'Eximbank', accountLength: [12, 16] },
+  MSB: { name: 'MSB', accountLength: [12, 13] },
+  SCB: { name: 'SCB', accountLength: [12, 13] },
+  SHB: { name: 'SHB', accountLength: [12, 13] },
+  OCB: { name: 'OCB', accountLength: [12, 14] }
+};
+
+const validateBankAccount = (bankCode, accountNumber) => {
+  const bank = VIETNAMESE_BANKS[bankCode];
+  if (!bank) {
+    throw new ValidationError('Invalid bank code');
+  }
+
+  const cleanNumber = accountNumber.replace(/[\s-]/g, '');
+  if (!/^\d+$/.test(cleanNumber)) {
+    throw new ValidationError('Account number must contain only digits');
+  }
+
+  const [minLen, maxLen] = bank.accountLength;
+  if (cleanNumber.length < minLen || cleanNumber.length > maxLen) {
+    throw new ValidationError(`${bank.name} account number must be ${minLen}-${maxLen} digits`);
+  }
+
+  return { bankName: bank.name, cleanNumber };
+};
+
+const addBankAccount = async (userId, bankData) => {
+  const { bankCode, accountNumber, accountHolderName } = bankData;
+
+  // Validate bank account
+  const { bankName, cleanNumber } = validateBankAccount(bankCode, accountNumber);
+
+  // Validate account holder name
+  if (!accountHolderName || accountHolderName.trim().length < 2) {
+    throw new ValidationError('Account holder name is required');
+  }
+
+  const user = await User.findById(userId);
+  if (!user) {
+    throw new NotFoundError('User not found');
+  }
+
+  // Update user with bank account info
+  user.bankAccount = {
+    bankCode,
+    bankName,
+    accountNumber: cleanNumber,
+    accountHolderName: accountHolderName.trim().toUpperCase(),
+    isVerified: false,
+    addedAt: new Date()
+  };
+
+  await user.save();
+  return user;
+};
+
+const updateBankAccount = async (userId, bankData) => {
+  const user = await User.findById(userId);
+  if (!user) {
+    throw new NotFoundError('User not found');
+  }
+
+  if (!user.bankAccount) {
+    throw new NotFoundError('No bank account found');
+  }
+
+  // Only allow updating account holder name
+  if (bankData.accountHolderName) {
+    if (bankData.accountHolderName.trim().length < 2) {
+      throw new ValidationError('Account holder name is required');
+    }
+    user.bankAccount.accountHolderName = bankData.accountHolderName.trim().toUpperCase();
+  }
+
+  await user.save();
+  return user;
+};
+
+const removeBankAccount = async (userId) => {
+  const user = await User.findById(userId);
+  if (!user) {
+    throw new NotFoundError('User not found');
+  }
+
+  user.bankAccount = undefined;
+  await user.save();
+
+  return { message: 'Bank account removed successfully' };
+};
+
+const getBankAccount = async (userId) => {
+  const user = await User.findById(userId).select('bankAccount');
+  if (!user) {
+    throw new NotFoundError('User not found');
+  }
+
+  return user.bankAccount || null;
+};
+
 module.exports = {
   getAllUsers,
   createUser,
   deleteUser,
   getProfile,
   updateProfile,
-  updateProfileByKyc
+  updateProfileByKyc,
+  addBankAccount,
+  updateBankAccount,
+  removeBankAccount,
+  getBankAccount,
+  VIETNAMESE_BANKS
 };

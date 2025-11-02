@@ -16,7 +16,7 @@ const chatSchema = new mongoose.Schema(
     },
     bookingId: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: 'Order',
+      ref: 'MasterOrder',
       default: null
     },
     lastMessage: {
