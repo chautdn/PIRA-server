@@ -23,7 +23,7 @@ class RentalOrderService {
         path: 'items.product',
         populate: {
           path: 'owner',
-          select: 'profile.fullName profile.phone profile.address'
+          select: 'profile.firstName phone address'
         }
       });
 
@@ -135,7 +135,7 @@ class RentalOrderService {
             { path: 'products.product', select: 'name images price deposit category' }
           ]
         })
-        .populate('renter', 'profile.fullName profile.phone email');
+        .populate('renter', 'profile phone email');
     } catch (error) {
       console.error('❌ Error creating draft order:', error);
 
@@ -147,6 +147,342 @@ class RentalOrderService {
       } else {
         throw new Error('Không thể tạo đơn thuê: ' + error.message);
       }
+    }
+  }
+
+  /**
+   * Tạo đơn thuê với thanh toán (renter pays upfront)
+   */
+  async createPaidOrderFromCart(renterId, orderData) {
+    const {
+      rentalPeriod,
+      deliveryAddress,
+      deliveryMethod,
+      paymentMethod,
+      totalAmount,
+      paymentTransactionId,
+      paymentMessage
+    } = orderData;
+
+    try {
+      console.log('🚀 Creating paid order for renter:', renterId);
+      console.log('💳 Payment method:', paymentMethod);
+      console.log('💰 Total amount:', totalAmount);
+
+      // First create draft order using existing method
+      const draftOrder = await this.createDraftOrderFromCart(renterId, {
+        rentalPeriod,
+        deliveryAddress,
+        deliveryMethod
+      });
+
+      if (!draftOrder || !draftOrder._id) {
+        throw new Error('Không thể tạo đơn hàng draft');
+      }
+
+      console.log('✅ Draft order created:', draftOrder._id);
+
+      // Process payment based on method
+      console.log('💳 Processing payment with method:', paymentMethod);
+      const paymentResult = await this.processPaymentForOrder(draftOrder._id, {
+        method: paymentMethod,
+        amount: totalAmount,
+        transactionId:
+          paymentTransactionId || `TXN_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
+        message: paymentMessage
+      });
+
+      // Check payment result
+      if (paymentResult.status === 'FAILED') {
+        throw new Error(`Thanh toán thất bại: ${paymentResult.error || 'Unknown error'}`);
+      }
+
+      // Update order status based on payment method
+      draftOrder.status = 'PENDING_CONFIRMATION';
+      draftOrder.paymentMethod = paymentMethod;
+      draftOrder.paymentInfo = paymentResult;
+
+      // Set payment status based on method
+      if (paymentMethod === 'COD') {
+        draftOrder.paymentStatus = 'PENDING'; // Will be paid on delivery
+      } else {
+        draftOrder.paymentStatus = 'PAID'; // Immediate payment methods
+      }
+
+      await draftOrder.save();
+
+      // Update all SubOrders to PENDING_OWNER_CONFIRMATION
+      await SubOrder.updateMany(
+        { masterOrder: draftOrder._id },
+        { status: 'PENDING_OWNER_CONFIRMATION' }
+      );
+
+      console.log('✅ Paid order created successfully with status PENDING_CONFIRMATION');
+
+      // Return populated order
+      return await MasterOrder.findById(draftOrder._id)
+        .populate({
+          path: 'subOrders',
+          populate: [
+            { path: 'owner', select: 'profile.fullName profile.phone profile.address' },
+            { path: 'products.product', select: 'name images price deposit category' }
+          ]
+        })
+        .populate('renter', 'profile phone email');
+    } catch (error) {
+      console.error('❌ Error creating paid order:', error);
+      throw new Error('Không thể tạo đơn thuê với thanh toán: ' + error.message);
+    }
+  }
+
+  /**
+   * Process payment for order based on payment method
+   */
+  async processPaymentForOrder(masterOrderId, paymentData) {
+    const { method, amount, transactionId } = paymentData;
+    console.log(`💳 Processing ${method} payment for order:`, masterOrderId);
+    console.log('💰 Amount:', amount);
+
+    try {
+      switch (method) {
+        case 'WALLET':
+          return await this.processWalletPayment(masterOrderId, paymentData);
+
+        case 'BANK_TRANSFER':
+        case 'PAYOS':
+          return await this.processPayOSPayment(masterOrderId, paymentData);
+
+        case 'COD':
+          return await this.processCODPayment(masterOrderId, paymentData);
+
+        default:
+          throw new Error(`Unsupported payment method: ${method}`);
+      }
+    } catch (error) {
+      console.error(`❌ Payment processing failed for ${method}:`, error);
+      // For wallet payment failures, we want to throw the error to stop order creation
+      if (method === 'WALLET') {
+        throw error;
+      }
+
+      // For other payment methods, return failed status
+      return {
+        transactionId: transactionId,
+        method: method,
+        amount: amount,
+        status: 'FAILED',
+        processedAt: new Date(),
+        error: error.message
+      };
+    }
+  }
+
+  /**
+   * Process wallet payment - deduct from user wallet
+   */
+  async processWalletPayment(masterOrderId, paymentData) {
+    const { transactionId, amount } = paymentData;
+
+    try {
+      console.log('💳 Processing wallet payment - deducting from user wallet');
+      console.log('💰 Amount to deduct:', amount);
+
+      // Get master order to find user
+      const MasterOrder = require('../models/MasterOrder');
+      const User = require('../models/User');
+      const Wallet = require('../models/Wallet');
+
+      const masterOrder = await MasterOrder.findById(masterOrderId).populate('renter');
+      if (!masterOrder) {
+        throw new Error('Không tìm thấy đơn hàng');
+      }
+
+      const userId = masterOrder.renter._id;
+      console.log('👤 Processing payment for user:', userId);
+
+      // Get user's wallet
+      const user = await User.findById(userId).populate('wallet');
+      if (!user || !user.wallet) {
+        throw new Error('Không tìm thấy ví của người dùng');
+      }
+
+      const wallet = user.wallet;
+      console.log('💳 Current wallet balance:', wallet.balance.available);
+
+      // Check if wallet has sufficient balance
+      if (wallet.balance.available < amount) {
+        throw new Error(
+          `Ví không đủ số dư. Số dư hiện tại: ${wallet.balance.available.toLocaleString('vi-VN')}đ, cần: ${amount.toLocaleString('vi-VN')}đ`
+        );
+      }
+
+      // Deduct amount from wallet
+      wallet.balance.available -= amount;
+      await wallet.save();
+
+      console.log('✅ Wallet payment successful');
+      console.log('💳 New wallet balance:', wallet.balance.available);
+
+      return {
+        transactionId: transactionId,
+        method: 'WALLET',
+        amount: amount,
+        status: 'SUCCESS',
+        processedAt: new Date(),
+        paymentDetails: {
+          previousBalance: wallet.balance.available + amount,
+          newBalance: wallet.balance.available,
+          deductedAmount: amount,
+          walletId: wallet._id,
+          message: 'Thanh toán từ ví thành công'
+        }
+      };
+    } catch (error) {
+      console.error('❌ Wallet payment failed:', error.message);
+      throw error; // Re-throw để createPaidOrderFromCart có thể xử lý
+    }
+  }
+
+  /**
+   * Process PayOS payment - bank transfer or QR code
+   */
+  async processPayOSPayment(masterOrderId, paymentData) {
+    const { transactionId, amount, method } = paymentData;
+
+    console.log(`💳 Processing PayOS payment (${method})`);
+
+    // TODO: Integrate with PayOS API
+    // Mock PayOS payment processing
+    const payosResult = {
+      paymentUrl: `https://payos.vn/payment/${transactionId}`,
+      qrCode: `data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==`,
+      status: 'SUCCESS'
+    };
+
+    return {
+      transactionId: transactionId,
+      method: method,
+      amount: amount,
+      status: 'SUCCESS',
+      processedAt: new Date(),
+      paymentDetails: {
+        payosResult: payosResult,
+        message: `Thanh toán ${method} qua PayOS thành công`
+      }
+    };
+  }
+
+  /**
+   * Process COD payment - cash on delivery
+   */
+  async processCODPayment(masterOrderId, paymentData) {
+    const { transactionId, amount } = paymentData;
+
+    console.log('💵 Processing COD payment - no immediate payment required');
+
+    return {
+      transactionId: transactionId,
+      method: 'COD',
+      amount: amount,
+      status: 'PENDING',
+      processedAt: new Date(),
+      paymentDetails: {
+        message: 'Thanh toán khi nhận hàng',
+        note: 'Khách hàng sẽ thanh toán bằng tiền mặt khi nhận sản phẩm'
+      }
+    };
+  }
+
+  /**
+   * Process refund when order is rejected by owner
+   */
+  async processRefundForRejectedOrder(masterOrderId, subOrderId, rejectionReason) {
+    try {
+      console.log('💸 Processing refund for rejected order:', {
+        masterOrderId,
+        subOrderId,
+        rejectionReason
+      });
+
+      const masterOrder = await MasterOrder.findById(masterOrderId).populate([
+        'renter',
+        { path: 'subOrders', populate: { path: 'products.product' } }
+      ]);
+
+      if (!masterOrder) {
+        throw new Error('Không tìm thấy đơn hàng để hoàn tiền');
+      }
+
+      // Check if all suborders are rejected
+      const allSubOrdersRejected = await SubOrder.find({
+        masterOrder: masterOrderId,
+        status: { $ne: 'OWNER_REJECTED' }
+      });
+
+      if (allSubOrdersRejected.length === 0) {
+        // All suborders rejected - full refund
+        console.log('💸 All suborders rejected - processing full refund');
+
+        const refundAmount = masterOrder.paymentInfo?.amount || masterOrder.totalAmount || 0;
+
+        // Mock refund processing - in real app, integrate with payment/wallet service
+        const refundResult = {
+          refundId: `REF_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
+          amount: refundAmount,
+          method: masterOrder.paymentMethod,
+          status: 'SUCCESS',
+          processedAt: new Date(),
+          reason: 'Owner rejected all orders'
+        };
+
+        // Update master order status
+        masterOrder.status = 'REFUNDED';
+        masterOrder.refundInfo = refundResult;
+        await masterOrder.save();
+
+        console.log('✅ Full refund processed successfully:', refundResult);
+      } else {
+        // Partial refund for specific suborder
+        console.log('💸 Partial refund for specific suborder');
+
+        const rejectedSubOrder = await SubOrder.findById(subOrderId).populate('products.product');
+        let partialRefundAmount = 0;
+
+        // Calculate refund amount for rejected suborder
+        rejectedSubOrder.products.forEach((item) => {
+          const product = item.product;
+          const rental = (product.pricing?.dailyRate || product.price || 0) * item.quantity;
+          const deposit =
+            (product.pricing?.deposit?.amount || product.deposit || 0) * item.quantity;
+          partialRefundAmount += rental + deposit;
+        });
+
+        // Add shipping cost
+        if (rejectedSubOrder.shipping?.fee) {
+          partialRefundAmount += rejectedSubOrder.shipping.fee;
+        }
+
+        const refundResult = {
+          refundId: `REF_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
+          amount: partialRefundAmount,
+          method: masterOrder.paymentMethod,
+          status: 'SUCCESS',
+          processedAt: new Date(),
+          reason: `Owner rejected suborder: ${rejectionReason}`
+        };
+
+        // Add to refund history
+        if (!masterOrder.refundHistory) {
+          masterOrder.refundHistory = [];
+        }
+        masterOrder.refundHistory.push(refundResult);
+        await masterOrder.save();
+
+        console.log('✅ Partial refund processed successfully:', refundResult);
+      }
+    } catch (error) {
+      console.error('❌ Error processing refund:', error);
+      throw new Error('Không thể xử lý hoàn tiền: ' + error.message);
     }
   }
 
@@ -241,6 +577,10 @@ class RentalOrderService {
         notes
       };
       subOrder.status = 'OWNER_CONFIRMED';
+
+      // Auto-generate contract when owner confirms
+      await subOrder.save();
+      await this.generateContractForSubOrder(subOrderId);
     } else if (status === 'REJECTED') {
       subOrder.ownerConfirmation = {
         status: 'OWNER_REJECTED',
@@ -249,9 +589,18 @@ class RentalOrderService {
         notes
       };
       subOrder.status = 'OWNER_REJECTED';
-    }
 
-    await subOrder.save();
+      await subOrder.save();
+
+      // Process refund for rejected order
+      await this.processRefundForRejectedOrder(
+        subOrder.masterOrder._id,
+        subOrderId,
+        rejectionReason
+      );
+    } else {
+      await subOrder.save();
+    }
 
     // Kiểm tra tất cả SubOrder đã được xác nhận chưa
     await this.checkAllSubOrdersConfirmed(subOrder.masterOrder._id);
@@ -263,9 +612,28 @@ class RentalOrderService {
    * Bước 5: Tạo hợp đồng điện tử
    */
   async generateContract(masterOrderId) {
-    const masterOrder = await MasterOrder.findOne({
+    console.log('🔍 Generating contract for MasterOrder ID:', masterOrderId);
+
+    // First, check if MasterOrder exists at all (without status filter)
+    let existingOrder = await MasterOrder.findById(masterOrderId).populate('subOrders');
+    console.log(
+      '🔍 MasterOrder exists:',
+      existingOrder
+        ? {
+            id: existingOrder._id,
+            status: existingOrder.status,
+            subOrdersCount: existingOrder.subOrders?.length,
+            subOrderStatuses: existingOrder.subOrders?.map((so) => ({
+              id: so._id,
+              status: so.status
+            }))
+          }
+        : 'DOES NOT EXIST'
+    );
+
+    let masterOrder = await MasterOrder.findOne({
       _id: masterOrderId,
-      status: 'READY_FOR_CONTRACT'
+      status: { $in: ['DRAFT', 'PENDING_CONFIRMATION', 'READY_FOR_CONTRACT'] }
     }).populate([
       { path: 'renter', select: 'profile email' },
       {
@@ -274,8 +642,56 @@ class RentalOrderService {
       }
     ]);
 
+    console.log(
+      '📋 Found MasterOrder:',
+      masterOrder
+        ? {
+            id: masterOrder._id,
+            status: masterOrder.status,
+            subOrdersCount: masterOrder.subOrders?.length,
+            subOrderStatuses: masterOrder.subOrders?.map((so) => ({
+              id: so._id,
+              status: so.status
+            }))
+          }
+        : 'NOT FOUND'
+    );
+
     if (!masterOrder) {
       throw new Error('Đơn hàng không hợp lệ để tạo hợp đồng');
+    }
+
+    // Check if all SubOrders are confirmed
+    const allConfirmed = masterOrder.subOrders.every(
+      (subOrder) => subOrder.status === 'OWNER_CONFIRMED'
+    );
+
+    console.log('✅ SubOrders confirmation check:', {
+      allConfirmed,
+      subOrderStatuses: masterOrder.subOrders.map((so) => ({
+        id: so._id,
+        status: so.status,
+        isConfirmed: so.status === 'OWNER_CONFIRMED'
+      }))
+    });
+
+    if (!allConfirmed) {
+      const unconfirmedCount = masterOrder.subOrders.filter(
+        (so) => so.status !== 'OWNER_CONFIRMED'
+      ).length;
+      const confirmedCount = masterOrder.subOrders.filter(
+        (so) => so.status === 'OWNER_CONFIRMED'
+      ).length;
+      throw new Error(
+        `Chưa có đủ xác nhận từ tất cả chủ cho thuê. Đã xác nhận: ${confirmedCount}/${masterOrder.subOrders.length}`
+      );
+    }
+
+    // Update MasterOrder status if needed
+    if (masterOrder.status === 'PENDING_CONFIRMATION') {
+      masterOrder.status = 'READY_FOR_CONTRACT';
+      await masterOrder.save();
+      console.log('✅ MasterOrder status updated to READY_FOR_CONTRACT during contract generation');
     }
 
     const contracts = [];
@@ -284,7 +700,11 @@ class RentalOrderService {
     for (const subOrder of masterOrder.subOrders) {
       if (subOrder.status !== 'OWNER_CONFIRMED') continue;
 
+      const contractNumber = `CT${Date.now()}${Math.random().toString(36).substr(2, 4).toUpperCase()}`;
+      const totalAmount = subOrder.pricing.subtotalRental + subOrder.pricing.subtotalDeposit;
+
       const contract = new Contract({
+        contractNumber,
         order: subOrder._id, // Liên kết với SubOrder
         owner: subOrder.owner._id,
         renter: masterOrder.renter._id,
@@ -293,7 +713,8 @@ class RentalOrderService {
           startDate: masterOrder.rentalPeriod.startDate,
           endDate: masterOrder.rentalPeriod.endDate,
           rentalRate: subOrder.pricing.subtotalRental,
-          deposit: subOrder.pricing.subtotalDeposit
+          deposit: subOrder.pricing.subtotalDeposit,
+          totalAmount
         },
         status: 'PENDING_SIGNATURE'
       });
@@ -692,7 +1113,7 @@ class RentalOrderService {
           path: 'masterOrder',
           populate: {
             path: 'renter',
-            select: 'profile.fullName profile.phoneNumber email'
+            select: 'profile.firstName profile.lastName phone email'
           }
         })
         .populate({
@@ -732,7 +1153,7 @@ class RentalOrderService {
       const subOrder = await SubOrder.findOne({
         _id: subOrderId,
         owner: ownerId,
-        status: 'DRAFT'
+        status: 'PENDING_CONFIRMATION'
       });
 
       if (!subOrder) {
@@ -745,13 +1166,23 @@ class RentalOrderService {
 
       console.log('✅ SubOrder confirmed successfully');
 
+      // Auto-generate contract for this SubOrder
+      await this.generateContractForSubOrder(subOrder);
+
+      console.log('✅ Contract generated for confirmed SubOrder');
+
+      // Check if all SubOrders in the MasterOrder are confirmed
+      await this.checkAllSubOrdersConfirmed(subOrder.masterOrder);
+
+      console.log('✅ Checked MasterOrder status update');
+
       // Populate và trả về
       return await SubOrder.findById(subOrderId)
         .populate({
           path: 'masterOrder',
           populate: {
             path: 'renter',
-            select: 'profile.fullName profile.phoneNumber email'
+            select: 'profile.firstName profile.lastName phone email'
           }
         })
         .populate({
@@ -794,7 +1225,7 @@ class RentalOrderService {
           path: 'masterOrder',
           populate: {
             path: 'renter',
-            select: 'profile.fullName profile.phoneNumber email'
+            select: 'profile.firstName profile.lastName phone email'
           }
         })
         .populate({
@@ -803,6 +1234,119 @@ class RentalOrderService {
         });
     } catch (error) {
       console.error('❌ Error rejecting SubOrder:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Kiểm tra và cập nhật trạng thái MasterOrder nếu tất cả SubOrders đã được xác nhận
+   */
+  async checkAllSubOrdersConfirmed(masterOrderId) {
+    try {
+      const masterOrder = await MasterOrder.findById(masterOrderId).populate('subOrders');
+
+      if (!masterOrder) {
+        throw new Error('Không tìm thấy MasterOrder');
+      }
+
+      // Check if all SubOrders are confirmed
+      const allConfirmed = masterOrder.subOrders.every(
+        (subOrder) => subOrder.status === 'OWNER_CONFIRMED'
+      );
+
+      if (allConfirmed && masterOrder.status === 'PENDING_CONFIRMATION') {
+        masterOrder.status = 'READY_FOR_CONTRACT';
+        await masterOrder.save();
+        console.log('✅ MasterOrder status updated to READY_FOR_CONTRACT');
+      }
+
+      return masterOrder;
+    } catch (error) {
+      console.error('❌ Error checking SubOrders status:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Tự động tạo contract cho SubOrder đã được confirm
+   */
+  async generateContractForSubOrder(subOrder) {
+    try {
+      // Populate MasterOrder để lấy thông tin cần thiết
+      const populatedSubOrder = await SubOrder.findById(subOrder._id)
+        .populate({
+          path: 'masterOrder',
+          populate: { path: 'renter', select: 'profile email' }
+        })
+        .populate('owner products.product');
+
+      if (!populatedSubOrder) {
+        throw new Error('Không tìm thấy SubOrder');
+      }
+
+      // Generate contract number và calculate total amount
+      const contractNumber = `CT${Date.now()}${Math.random().toString(36).substr(2, 4).toUpperCase()}`;
+      const totalAmount =
+        populatedSubOrder.pricing.subtotalRental + populatedSubOrder.pricing.subtotalDeposit;
+
+      // Create contract
+      const contract = new Contract({
+        contractNumber,
+        order: populatedSubOrder._id,
+        owner: populatedSubOrder.owner._id,
+        renter: populatedSubOrder.masterOrder.renter._id,
+        product: populatedSubOrder.products[0].product._id,
+        terms: {
+          startDate: populatedSubOrder.masterOrder.rentalPeriod.startDate,
+          endDate: populatedSubOrder.masterOrder.rentalPeriod.endDate,
+          rentalRate: populatedSubOrder.pricing.subtotalRental,
+          deposit: populatedSubOrder.pricing.subtotalDeposit,
+          totalAmount
+        },
+        status: 'PENDING_SIGNATURE'
+      });
+
+      await contract.save();
+
+      // Update SubOrder với contract reference
+      populatedSubOrder.contract = contract._id;
+      await populatedSubOrder.save();
+
+      console.log('✅ Contract created for SubOrder:', contract.contractNumber);
+      return contract;
+    } catch (error) {
+      console.error('❌ Error generating contract for SubOrder:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Cập nhật phương thức thanh toán cho MasterOrder
+   */
+  async updatePaymentMethod(masterOrderId, paymentMethod) {
+    console.log('💳 Updating payment method for MasterOrder:', masterOrderId, 'to:', paymentMethod);
+
+    try {
+      const masterOrder = await MasterOrder.findById(masterOrderId);
+
+      if (!masterOrder) {
+        throw new Error('Không tìm thấy đơn hàng');
+      }
+
+      // Validate payment method
+      const validMethods = ['WALLET', 'BANK_TRANSFER', 'PAYOS'];
+      if (!validMethods.includes(paymentMethod)) {
+        throw new Error('Phương thức thanh toán không hợp lệ');
+      }
+
+      masterOrder.paymentMethod = paymentMethod;
+      await masterOrder.save();
+
+      console.log('✅ Payment method updated successfully');
+
+      return masterOrder;
+    } catch (error) {
+      console.error('❌ Error updating payment method:', error);
       throw error;
     }
   }

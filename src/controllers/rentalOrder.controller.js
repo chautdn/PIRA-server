@@ -3,7 +3,7 @@ const MasterOrder = require('../models/MasterOrder');
 const SubOrder = require('../models/SubOrder');
 const Contract = require('../models/Contract');
 const { SuccessResponse } = require('../core/success');
-const { BadRequestError, NotFoundError, ForbiddenError } = require('../core/error');
+const { BadRequest, NotFoundError, ForbiddenError } = require('../core/error');
 
 class RentalOrderController {
   /**
@@ -20,7 +20,7 @@ class RentalOrderController {
 
       // Validation
       if (!rentalPeriod || !rentalPeriod.startDate || !rentalPeriod.endDate) {
-        throw new BadRequestError('Thời gian thuê không hợp lệ');
+        throw new BadRequest('Thời gian thuê không hợp lệ');
       }
 
       // For DELIVERY method, need either streetAddress or coordinates
@@ -36,13 +36,13 @@ class RentalOrderController {
         });
 
         if (!hasAddress && !hasCoordinates) {
-          throw new BadRequestError('Vui lòng nhập địa chỉ giao hàng hoặc chọn vị trí trên bản đồ');
+          throw new BadRequest('Vui lòng nhập địa chỉ giao hàng hoặc chọn vị trí trên bản đồ');
         }
       } else if (deliveryMethod === 'DELIVERY' && !deliveryAddress) {
-        throw new BadRequestError('Thiếu thông tin địa chỉ giao hàng');
+        throw new BadRequest('Thiếu thông tin địa chỉ giao hàng');
       }
       if (!['PICKUP', 'DELIVERY'].includes(deliveryMethod)) {
-        throw new BadRequestError('Hình thức nhận hàng không hợp lệ');
+        throw new BadRequest('Hình thức nhận hàng không hợp lệ');
       }
 
       // Kiểm tra ngày thuê hợp lệ
@@ -51,11 +51,11 @@ class RentalOrderController {
       const now = new Date();
 
       if (startDate < now) {
-        throw new BadRequestError('Ngày bắt đầu thuê phải từ hôm nay trở đi');
+        throw new BadRequest('Ngày bắt đầu thuê phải từ hôm nay trở đi');
       }
 
       if (endDate <= startDate) {
-        throw new BadRequestError('Ngày kết thúc phải sau ngày bắt đầu');
+        throw new BadRequest('Ngày kết thúc phải sau ngày bắt đầu');
       }
 
       const masterOrder = await RentalOrderService.createDraftOrderFromCart(userId, {
@@ -80,6 +80,49 @@ class RentalOrderController {
   }
 
   /**
+   * Bước 1b: Tạo đơn thuê với thanh toán (renter pays upfront)
+   * POST /api/rental-orders/create-paid
+   */
+  async createPaidOrder(req, res) {
+    try {
+      const userId = req.user.id;
+      const { rentalPeriod, deliveryAddress, deliveryMethod, paymentMethod, totalAmount } =
+        req.body;
+
+      console.log('📥 POST /api/rental-orders/create-paid');
+      console.log('📋 Request body:', JSON.stringify(req.body, null, 2));
+
+      // Tạo đơn thuê với thanh toán
+      const masterOrder = await RentalOrderService.createPaidOrderFromCart(userId, {
+        rentalPeriod,
+        deliveryAddress,
+        deliveryMethod,
+        paymentMethod,
+        totalAmount
+      });
+
+      if (!masterOrder) {
+        throw new Error('Không nhận được dữ liệu đơn hàng từ service');
+      }
+
+      console.log('✅ Created paid order successfully:', masterOrder._id);
+
+      return new SuccessResponse({
+        message: 'Tạo đơn thuê với thanh toán thành công',
+        metadata: {
+          masterOrder
+        }
+      }).send(res);
+    } catch (error) {
+      console.error('❌ Error in createPaidOrder controller:', error);
+      return res.status(400).json({
+        success: false,
+        message: error.message || 'Không thể tạo đơn thuê với thanh toán'
+      });
+    }
+  }
+
+  /**
    * Bước 2: Xác nhận đơn hàng và chuyển sang chờ thanh toán
    * POST /api/rental-orders/:masterOrderId/confirm
    */
@@ -97,7 +140,7 @@ class RentalOrderController {
         }
       }).send(res);
     } catch (error) {
-      throw new BadRequestError(error.message);
+      throw new BadRequest(error.message);
     }
   }
 
@@ -130,7 +173,7 @@ class RentalOrderController {
         }
       }).send(res);
     } catch (error) {
-      throw new BadRequestError(error.message);
+      throw new BadRequest(error.message);
     }
   }
 
@@ -145,11 +188,11 @@ class RentalOrderController {
       const { status, notes, rejectionReason } = req.body;
 
       if (!['CONFIRMED', 'REJECTED'].includes(status)) {
-        throw new BadRequestError('Trạng thái xác nhận không hợp lệ');
+        throw new BadRequest('Trạng thái xác nhận không hợp lệ');
       }
 
       if (status === 'REJECTED' && !rejectionReason) {
-        throw new BadRequestError('Vui lòng cung cấp lý do từ chối');
+        throw new BadRequest('Vui lòng cung cấp lý do từ chối');
       }
 
       const subOrder = await RentalOrderService.ownerConfirmOrder(subOrderId, userId, {
@@ -165,7 +208,7 @@ class RentalOrderController {
         }
       }).send(res);
     } catch (error) {
-      throw new BadRequestError(error.message);
+      throw new BadRequest(error.message);
     }
   }
 
@@ -186,7 +229,7 @@ class RentalOrderController {
         }
       }).send(res);
     } catch (error) {
-      throw new BadRequestError(error.message);
+      throw new BadRequest(error.message);
     }
   }
 
@@ -213,7 +256,7 @@ class RentalOrderController {
         }
       }).send(res);
     } catch (error) {
-      throw new BadRequestError(error.message);
+      throw new BadRequest(error.message);
     }
   }
 
@@ -235,7 +278,7 @@ class RentalOrderController {
         .populate({
           path: 'subOrders',
           populate: [
-            { path: 'owner', select: 'profile.fullName profile.phone' },
+            { path: 'owner', select: 'profile.firstName profile.phone' },
             { path: 'products.product', select: 'name images price' }
           ]
         })
@@ -258,7 +301,7 @@ class RentalOrderController {
         }
       }).send(res);
     } catch (error) {
-      throw new BadRequestError(error.message);
+      throw new BadRequest(error.message);
     }
   }
 
@@ -303,7 +346,7 @@ class RentalOrderController {
         }
       }).send(res);
     } catch (error) {
-      throw new BadRequestError(error.message);
+      throw new BadRequest(error.message);
     }
   }
 
@@ -347,7 +390,7 @@ class RentalOrderController {
         }
       }).send(res);
     } catch (error) {
-      throw new BadRequestError(error.message);
+      throw new BadRequest(error.message);
     }
   }
 
@@ -436,7 +479,7 @@ class RentalOrderController {
         }
       }).send(res);
     } catch (error) {
-      throw new BadRequestError(error.message);
+      throw new BadRequest(error.message);
     }
   }
 
@@ -450,15 +493,15 @@ class RentalOrderController {
 
       // Enhanced validation
       if (!ownerAddress || !deliveryAddress) {
-        throw new BadRequestError('Thiếu thông tin địa chỉ');
+        throw new BadRequest('Thiếu thông tin địa chỉ');
       }
 
       if (!ownerAddress.streetAddress) {
-        throw new BadRequestError('Thiếu địa chỉ chủ cho thuê');
+        throw new BadRequest('Thiếu địa chỉ chủ cho thuê');
       }
 
       if (!deliveryAddress.streetAddress) {
-        throw new BadRequestError('Thiếu địa chỉ giao hàng');
+        throw new BadRequest('Thiếu địa chỉ giao hàng');
       }
 
       // Debug log
@@ -479,7 +522,7 @@ class RentalOrderController {
         }
       }).send(res);
     } catch (error) {
-      throw new BadRequestError(error.message);
+      throw new BadRequest(error.message);
     }
   }
 
@@ -563,7 +606,7 @@ class RentalOrderController {
       console.log('💬 Reason:', reason);
 
       if (!reason || !reason.trim()) {
-        throw new BadRequestError('Vui lòng nhập lý do từ chối');
+        throw new BadRequest('Vui lòng nhập lý do từ chối');
       }
 
       const subOrder = await RentalOrderService.rejectSubOrder(subOrderId, ownerId, reason);
@@ -579,6 +622,39 @@ class RentalOrderController {
       return res.status(400).json({
         success: false,
         message: error.message || 'Không thể từ chối yêu cầu thuê'
+      });
+    }
+  }
+
+  /**
+   * Cập nhật phương thức thanh toán
+   * PUT /api/rental-orders/:masterOrderId/payment-method
+   */
+  async updatePaymentMethod(req, res) {
+    try {
+      const { masterOrderId } = req.params;
+      const { paymentMethod } = req.body;
+
+      console.log('📥 PUT /api/rental-orders/:masterOrderId/payment-method');
+      console.log('📋 MasterOrder ID:', masterOrderId);
+      console.log('💳 Payment Method:', paymentMethod);
+
+      const masterOrder = await RentalOrderService.updatePaymentMethod(
+        masterOrderId,
+        paymentMethod
+      );
+
+      return new SuccessResponse({
+        message: 'Cập nhật phương thức thanh toán thành công',
+        metadata: {
+          masterOrder
+        }
+      }).send(res);
+    } catch (error) {
+      console.error('❌ Error in updatePaymentMethod:', error);
+      return res.status(400).json({
+        success: false,
+        message: error.message || 'Không thể cập nhật phương thức thanh toán'
       });
     }
   }

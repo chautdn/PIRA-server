@@ -112,7 +112,7 @@ const masterOrderSchema = new mongoose.Schema(
 
     paymentMethod: {
       type: String,
-      enum: ['WALLET', 'BANK_TRANSFER', 'PAYOS']
+      enum: ['WALLET', 'BANK_TRANSFER', 'PAYOS', 'COD']
     },
 
     // Thông tin thanh toán

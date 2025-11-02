@@ -73,6 +73,19 @@ const signContractValidation = [
 router.post('/create-draft', createDraftOrderValidation, RentalOrderController.createDraftOrder);
 
 /**
+ * Bước 1b: Tạo đơn thuê với thanh toán (renter pays upfront)
+ * POST /api/rental-orders/create-paid
+ */
+const createPaidOrderValidation = [
+  ...createDraftOrderValidation,
+  body('paymentMethod')
+    .isIn(['WALLET', 'BANK_TRANSFER', 'PAYOS', 'COD'])
+    .withMessage('Phương thức thanh toán không hợp lệ'),
+  body('totalAmount').isFloat({ min: 0 }).withMessage('Tổng tiền không hợp lệ')
+];
+router.post('/create-paid', createPaidOrderValidation, RentalOrderController.createPaidOrder);
+
+/**
  * Bước 2: Xác nhận đơn hàng
  * POST /api/rental-orders/:masterOrderId/confirm
  */
@@ -259,6 +272,19 @@ router.post(
     validateRequest
   ],
   RentalOrderController.rejectSubOrder
+);
+
+// PUT /api/rental-orders/:masterOrderId/payment-method - Cập nhật phương thức thanh toán
+router.put(
+  '/:masterOrderId/payment-method',
+  [
+    param('masterOrderId').isMongoId().withMessage('ID MasterOrder không hợp lệ'),
+    body('paymentMethod')
+      .isIn(['WALLET', 'BANK_TRANSFER', 'PAYOS'])
+      .withMessage('Phương thức thanh toán không hợp lệ'),
+    validateRequest
+  ],
+  RentalOrderController.updatePaymentMethod
 );
 
 // Register routes
