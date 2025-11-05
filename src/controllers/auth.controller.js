@@ -81,6 +81,11 @@ const authController = {
   loginUser: async (req, res) => {
     try {
       const { email, password } = req.body;
+
+      if (!email || !password) {
+        return responseUtils.error(res, 'Email và mật khẩu là bắt buộc', 400);
+      }
+
       const result = await authService.loginUser(email, password);
 
       // Set refresh token cookie
@@ -116,12 +121,17 @@ const authController = {
         return responseUtils.error(res, 'Google ID token is required', 400);
       }
 
+      // Validate Google Client ID
+      if (!process.env.GOOGLE_CLIENT_ID) {
+        return responseUtils.error(res, 'Google authentication not configured', 500);
+      }
+
       const result = await authService.googleSignIn(idToken);
 
       res.cookie('refreshToken', result.refreshToken, {
         httpOnly: true,
         secure: process.env.NODE_ENV === 'production',
-        sameSite: 'strict',
+        sameSite: process.env.NODE_ENV === 'production' ? 'strict' : 'lax',
         maxAge: 365 * 24 * 60 * 60 * 1000
       });
 

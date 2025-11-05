@@ -49,7 +49,14 @@ const userSchema = new mongoose.Schema(
       dateOfBirth: Date,
       gender: {
         type: String,
-        enum: ['MALE', 'FEMALE', 'OTHER']
+        required: false,
+        validate: {
+          validator: function (v) {
+            // Allow null, undefined, empty string, or valid enum values
+            return !v || v === '' || ['MALE', 'FEMALE', 'OTHER'].includes(v);
+          },
+          message: 'Gender must be MALE, FEMALE, OTHER, or empty'
+        }
       }
     },
 
@@ -166,6 +173,15 @@ userSchema.index({ role: 1, status: 1 });
 userSchema.index({ 'verification.emailVerified': 1 });
 userSchema.index({ 'cccd.isVerified': 1 });
 userSchema.index({ 'cccd.cccdNumber': 1 });
+
+// Clean up empty strings before saving
+userSchema.pre('save', function (next) {
+  // Clean up profile.gender - convert empty string to undefined
+  if (this.profile && this.profile.gender === '') {
+    this.profile.gender = undefined;
+  }
+  next();
+});
 
 // Hash password before saving
 userSchema.pre('save', async function (next) {
