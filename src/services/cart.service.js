@@ -25,7 +25,7 @@ class CartService {
     const requestEnd = new Date(endDate);
 
     for (const cart of carts) {
-      const cartItem = cart.items.find(item => item.product.toString() === productId);
+      const cartItem = cart.items.find((item) => item.product.toString() === productId);
       if (!cartItem || !cartItem.rental?.startDate || !cartItem.rental?.endDate) {
         continue;
       }
@@ -39,7 +39,7 @@ class CartService {
       }
     }
 
-    const available = (totalStock - inCartCount) > 0;
+    const available = totalStock - inCartCount > 0;
     const availableCount = totalStock - inCartCount;
 
     return {
@@ -47,7 +47,9 @@ class CartService {
       inCartCount,
       availableCount: Math.max(0, availableCount),
       totalStock,
-      reason: available ? null : `Sản phẩm đã hết cho khung thời gian này. Có ${inCartCount} người đang đặt.`
+      reason: available
+        ? null
+        : `Sản phẩm đã hết cho khung thời gian này. Có ${inCartCount} người đang đặt.`
     };
   }
 
@@ -62,7 +64,7 @@ class CartService {
     }
 
     const totalStock = product.availability?.quantity || 0;
-    
+
     // Get number of days in month
     const daysInMonth = new Date(year, month + 1, 0).getDate();
     const availability = {};
@@ -73,16 +75,16 @@ class CartService {
       const checkDate = new Date(year, month, day);
       const today = new Date();
       today.setHours(0, 0, 0, 0);
-      
+
       // Only check if date is in past
       const isPast = checkDate < today;
-      
+
       availability[dateStr] = {
         available: !isPast && totalStock > 0,
         availableCount: totalStock,
         bookedCount: 0, // Not tracking for soft reservation
         totalStock,
-        status: isPast ? 'unavailable' : (totalStock > 0 ? 'available' : 'unavailable')
+        status: isPast ? 'unavailable' : totalStock > 0 ? 'available' : 'unavailable'
       };
     }
 
@@ -95,7 +97,11 @@ class CartService {
   async getCart(userId) {
     let cart = await Cart.findOne({ user: userId }).populate({
       path: 'items.product',
-      select: 'title images pricing availability status'
+      select: 'title images pricing availability status owner',
+      populate: {
+        path: 'owner',
+        select: 'profile.firstName email phone address'
+      }
     });
 
     if (!cart) {
@@ -104,7 +110,7 @@ class CartService {
     }
 
     // Filter out items with deleted products
-    cart.items = cart.items.filter(item => item.product);
+    cart.items = cart.items.filter((item) => item.product);
 
     return cart;
   }
@@ -125,16 +131,14 @@ class CartService {
 
     // Check stock availability
     const availableStock = product.availability?.quantity || 0;
-    
+
     let cart = await Cart.findOne({ user: userId });
     if (!cart) {
       cart = await Cart.create({ user: userId, items: [] });
     }
 
     // Find existing item in cart
-    const existingItemIndex = cart.items.findIndex(
-      item => item.product.toString() === productId
-    );
+    const existingItemIndex = cart.items.findIndex((item) => item.product.toString() === productId);
 
     let newQuantity = quantity;
     if (existingItemIndex > -1) {
@@ -187,11 +191,15 @@ class CartService {
     }
 
     await cart.save();
-    
+
     // Populate and return
     await cart.populate({
       path: 'items.product',
-      select: 'title images pricing availability status'
+      select: 'title images pricing availability status owner',
+      populate: {
+        path: 'owner',
+        select: 'profile.firstName email phone address'
+      }
     });
 
     // Add warning to response if exists
@@ -215,9 +223,7 @@ class CartService {
       throw new Error('Giỏ hàng không tồn tại');
     }
 
-    const itemIndex = cart.items.findIndex(
-      item => item.product.toString() === productId
-    );
+    const itemIndex = cart.items.findIndex((item) => item.product.toString() === productId);
 
     if (itemIndex === -1) {
       throw new Error('Sản phẩm không có trong giỏ hàng');
@@ -239,7 +245,11 @@ class CartService {
 
     await cart.populate({
       path: 'items.product',
-      select: 'title images pricing availability status'
+      select: 'title images pricing availability status owner',
+      populate: {
+        path: 'owner',
+        select: 'profile.firstName email phone address'
+      }
     });
 
     return cart;
@@ -254,9 +264,7 @@ class CartService {
       throw new Error('Giỏ hàng không tồn tại');
     }
 
-    const itemIndex = cart.items.findIndex(
-      item => item.product.toString() === productId
-    );
+    const itemIndex = cart.items.findIndex((item) => item.product.toString() === productId);
 
     if (itemIndex === -1) {
       throw new Error('Sản phẩm không có trong giỏ hàng');
@@ -267,7 +275,11 @@ class CartService {
 
     await cart.populate({
       path: 'items.product',
-      select: 'title images pricing availability status'
+      select: 'title images pricing availability status owner',
+      populate: {
+        path: 'owner',
+        select: 'profile.firstName email phone address'
+      }
     });
 
     return cart;
@@ -282,15 +294,17 @@ class CartService {
       throw new Error('Giỏ hàng không tồn tại');
     }
 
-    cart.items = cart.items.filter(
-      item => item.product.toString() !== productId
-    );
+    cart.items = cart.items.filter((item) => item.product.toString() !== productId);
 
     await cart.save();
 
     await cart.populate({
       path: 'items.product',
-      select: 'title images pricing availability status'
+      select: 'title images pricing availability status owner',
+      populate: {
+        path: 'owner',
+        select: 'profile.firstName email phone address'
+      }
     });
 
     return cart;
@@ -323,7 +337,7 @@ class CartService {
     // Merge local cart with server cart
     for (const localItem of localCartItems) {
       const productId = localItem.product._id || localItem.product;
-      
+
       // Validate product and stock
       const product = await Product.findById(productId);
       if (!product || product.status !== 'ACTIVE') {
@@ -337,15 +351,12 @@ class CartService {
 
       // Check if item already exists in cart
       const existingItemIndex = cart.items.findIndex(
-        item => item.product.toString() === productId
+        (item) => item.product.toString() === productId
       );
 
       if (existingItemIndex > -1) {
         // Update quantity (take max of local and server)
-        const newQuantity = Math.max(
-          cart.items[existingItemIndex].quantity,
-          quantity
-        );
+        const newQuantity = Math.max(cart.items[existingItemIndex].quantity, quantity);
         cart.items[existingItemIndex].quantity = Math.min(newQuantity, availableStock);
         cart.items[existingItemIndex].rental = localItem.rental;
       } else {
@@ -366,7 +377,11 @@ class CartService {
 
     await cart.populate({
       path: 'items.product',
-      select: 'title images pricing availability status'
+      select: 'title images pricing availability status owner',
+      populate: {
+        path: 'owner',
+        select: 'profile.firstName email phone address'
+      }
     });
 
     return cart;
@@ -381,7 +396,7 @@ class CartService {
 
     for (const item of cart.items) {
       const product = await Product.findById(item.product._id);
-      
+
       if (!product) {
         errors.push({
           productId: item.product._id,
@@ -416,4 +431,3 @@ class CartService {
 }
 
 module.exports = new CartService();
-
