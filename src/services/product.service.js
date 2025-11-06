@@ -71,14 +71,28 @@ const productService = {
       filter.$or = searchConditions;
     }
 
-    // Category filter - FIXED: Handle mapping from frontend IDs
+    // Category filter - CORRECTED: Handle both category and subCategory fields in Product
+    let categoryConditions = null;
     if (category && category.trim()) {
-      // First, debug what categories exist in database
-      const allCategories = await Category.find({}).select('_id name');
-
       if (category.match(/^[0-9a-fA-F]{24}$/)) {
-        // Valid ObjectID
-        filter.category = category;
+        // Valid ObjectID - check if it's a parent or subcategory
+        const categoryDoc = await Category.findById(category);
+        if (categoryDoc) {
+          if (categoryDoc.level === 0) {
+            // Parent category - find products that have this as main category
+            // OR have subcategories that belong to this parent
+            const subcategoryIds = await Category.find({
+              parentCategory: categoryDoc._id
+            }).distinct('_id');
+            categoryConditions = [
+              { category: categoryDoc._id }, // Products directly in parent category
+              { subCategory: { $in: subcategoryIds } } // Products in subcategories
+            ];
+          } else {
+            // Subcategory - filter by subCategory field specifically
+            filter.subCategory = category;
+          }
+        }
       } else {
         // Map frontend fake IDs to real category names
         const categoryMapping = {
@@ -97,9 +111,20 @@ const productService = {
         });
 
         if (categoryDoc) {
-          filter.category = categoryDoc._id;
-        } else {
-          // Don't add filter if category not found - show all products
+          if (categoryDoc.level === 0) {
+            // Parent category - find products that have this as main category
+            // OR have subcategories that belong to this parent
+            const subcategoryIds = await Category.find({
+              parentCategory: categoryDoc._id
+            }).distinct('_id');
+            categoryConditions = [
+              { category: categoryDoc._id }, // Products directly in parent category
+              { subCategory: { $in: subcategoryIds } } // Products in subcategories
+            ];
+          } else {
+            // Subcategory - filter by subCategory field specifically
+            filter.subCategory = categoryDoc._id;
+          }
         }
       }
     }
@@ -116,7 +141,7 @@ const productService = {
     // The frontend uses slug-like values (e.g. 'hai-chau'), while DB stores
     // the Vietnamese display names (e.g. 'Hải Châu'). Map common slugs to
     // display names so regex matches correctly.
-    const rawLocation = (location || filters.district || '') || '';
+    const rawLocation = location || filters.district || '' || '';
     let locationValue = String(rawLocation).trim();
     if (locationValue) {
       const districtMapping = {
@@ -139,12 +164,39 @@ const productService = {
         { 'location.address.district': { $regex: locationValue, $options: 'i' } }
       ];
 
-      // Handle $or conflicts properly
+      // Handle $or conflicts properly with both category and location conditions
+      const existingOrConditions = [];
+
+      // Add category conditions if exist
+      if (categoryConditions) {
+        existingOrConditions.push({ $or: categoryConditions });
+      }
+
+      // Add search conditions if exist
       if (filter.$or) {
-        filter.$and = [{ $or: filter.$or }, { $or: locationConditions }];
+        existingOrConditions.push({ $or: filter.$or });
         delete filter.$or;
+      }
+
+      // Add location conditions
+      existingOrConditions.push({ $or: locationConditions });
+
+      // Combine all conditions with $and
+      if (existingOrConditions.length > 1) {
+        filter.$and = existingOrConditions;
       } else {
         filter.$or = locationConditions;
+      }
+    }
+
+    // Apply category conditions if no location filter was applied
+    if (categoryConditions && !locationValue) {
+      // Handle $or conflicts with search conditions
+      if (filter.$or) {
+        filter.$and = [{ $or: filter.$or }, { $or: categoryConditions }];
+        delete filter.$or;
+      } else {
+        filter.$or = categoryConditions;
       }
     }
 
@@ -186,9 +238,11 @@ const productService = {
     }
 
     try {
+
       const [products, total] = await Promise.all([
         Product.find(filter)
           .populate('category', 'name slug')
+          .populate('subCategory', 'name slug')
           .populate('owner', 'email profile.firstName profile.lastName trustScore')
           .populate('currentPromotion', 'tier startDate endDate isActive')
           .sort(sortOptions)
