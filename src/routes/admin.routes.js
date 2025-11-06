@@ -28,8 +28,11 @@ router.patch('/users/bulk-update', adminController.bulkUpdateUsers);
 
 // ========== PRODUCT MANAGEMENT ==========
 router.get('/products', adminController.getAllProducts);
+router.get('/products/:productId', adminController.getProductById);
+router.patch('/products/:productId/status', adminController.updateProductStatus);
 router.patch('/products/:productId/approve', adminController.approveProduct);
 router.patch('/products/:productId/reject', adminController.rejectProduct);
+router.delete('/products/:productId', adminController.deleteProduct);
 
 // ========== CATEGORY MANAGEMENT ==========
 router.get('/categories', adminController.getAllCategories);

@@ -159,6 +159,102 @@ class AdminController {
     }
   }
 
+  async getProductById(req, res) {
+    console.log('=== Admin Controller getProductById ===');
+    console.log('Request params:', req.params);
+    console.log('Request URL:', req.originalUrl);
+    console.log('Request method:', req.method);
+    
+    try {
+      const { productId } = req.params;
+      console.log('Extracted productId from params:', productId);
+      console.log('ProductId type:', typeof productId);
+      console.log('ProductId length:', productId?.length);
+      
+      const product = await adminService.getProductById(productId);
+      console.log('Service returned product successfully');
+      console.log('Product title:', product?.title);
+      
+      return responseUtils.success(res, product, 'Lấy thông tin sản phẩm thành công');
+    } catch (error) {
+      console.error('=== Admin Controller getProductById ERROR ===');
+      console.error('Error message:', error.message);
+      console.error('Error stack:', error.stack);
+      console.error('===========================================');
+      
+      // Handle specific errors with appropriate status codes
+      if (error.message === 'ID sản phẩm không hợp lệ') {
+        return responseUtils.error(res, error.message, 400);
+      } else if (error.message === 'Không tìm thấy sản phẩm') {
+        return responseUtils.error(res, error.message, 404);
+      } else {
+        return responseUtils.error(res, error.message, 500);
+      }
+    }
+  }
+
+  async updateProductStatus(req, res) {
+    console.log('=== Admin Controller updateProductStatus ===');
+    console.log('Request params:', req.params);
+    console.log('Request body:', req.body);
+    
+    try {
+      const { productId } = req.params;
+      const { status } = req.body;
+      const adminId = req.user.id;
+      
+      console.log('Updating product status:', { productId, status, adminId });
+      
+      const product = await adminService.updateProductStatus(productId, status, adminId);
+      console.log('Product status updated successfully');
+      
+      return responseUtils.success(res, product, `Cập nhật trạng thái sản phẩm thành công`);
+    } catch (error) {
+      console.error('=== Admin Controller updateProductStatus ERROR ===');
+      console.error('Error message:', error.message);
+      console.error('===============================================');
+      
+      if (error.message === 'ID sản phẩm không hợp lệ') {
+        return responseUtils.error(res, error.message, 400);
+      } else if (error.message === 'Không tìm thấy sản phẩm') {
+        return responseUtils.error(res, error.message, 404);
+      } else if (error.message.includes('Trạng thái không hợp lệ')) {
+        return responseUtils.error(res, error.message, 400);
+      } else {
+        return responseUtils.error(res, error.message, 500);
+      }
+    }
+  }
+
+  async deleteProduct(req, res) {
+    console.log('=== Admin Controller deleteProduct ===');
+    console.log('Request params:', req.params);
+    
+    try {
+      const { productId } = req.params;
+      const adminId = req.user.id;
+      
+      console.log('Deleting product:', { productId, adminId });
+      
+      await adminService.deleteProduct(productId, adminId);
+      console.log('Product deleted successfully');
+      
+      return responseUtils.success(res, null, 'Xóa sản phẩm thành công');
+    } catch (error) {
+      console.error('=== Admin Controller deleteProduct ERROR ===');
+      console.error('Error message:', error.message);
+      console.error('=========================================');
+      
+      if (error.message === 'ID sản phẩm không hợp lệ') {
+        return responseUtils.error(res, error.message, 400);
+      } else if (error.message === 'Không tìm thấy sản phẩm') {
+        return responseUtils.error(res, error.message, 404);
+      } else {
+        return responseUtils.error(res, error.message, 500);
+      }
+    }
+  }
+
   async approveProduct(req, res) {
     try {
       const { productId } = req.params;

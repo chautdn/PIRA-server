@@ -417,7 +417,7 @@ class AdminService {
 
     if (search) {
       query.$or = [
-        { name: { $regex: search, $options: 'i' } },
+        { title: { $regex: search, $options: 'i' } },
         { description: { $regex: search, $options: 'i' } }
       ];
     }
@@ -430,8 +430,8 @@ class AdminService {
 
     const [products, total] = await Promise.all([
       Product.find(query)
-        .populate('owner', 'profile.firstName profile.lastName email')
-        .populate('category', 'name')
+        .populate('owner', 'fullName username email phone profile')
+        .populate('category', 'name slug')
         .sort({ createdAt: -1 })
         .skip(skip)
         .limit(parseInt(limit)),
@@ -447,6 +447,170 @@ class AdminService {
         limit: parseInt(limit)
       }
     };
+  }
+
+  async getProductById(productId) {
+    console.log('=== Admin Service getProductById ===');
+    console.log('ProductId received:', productId);
+    console.log('ProductId type:', typeof productId);
+    
+    // Validate productId
+    if (!productId) {
+      console.log('ProductId is missing');
+      throw new Error('ID sản phẩm không hợp lệ');
+    }
+
+    const mongoose = require('mongoose');
+    if (!mongoose.Types.ObjectId.isValid(productId)) {
+      console.log('ProductId is not a valid ObjectId:', productId);
+      throw new Error('ID sản phẩm không hợp lệ');
+    }
+
+    try {
+      console.log('Searching for product in database...');
+      const product = await Product.findById(productId)
+        .populate('owner', 'fullName username email phone profile createdAt')
+        .populate('category', 'name slug description')
+        .populate('subCategory', 'name slug description')
+        .lean(); // Convert to plain object for better performance
+
+      console.log('Database query completed');
+      console.log('Product found:', !!product);
+      
+      if (!product) {
+        console.log('Product not found in database');
+        throw new Error('Không tìm thấy sản phẩm');
+      }
+
+      console.log('Product data retrieved successfully');
+      console.log('Product title:', product.title);
+      console.log('Product status:', product.status);
+      console.log('Product owner:', product.owner?.email);
+      
+      return product;
+    } catch (error) {
+      console.error('=== Admin Service getProductById ERROR ===');
+      console.error('Error during database query:', error.message);
+      console.error('Error stack:', error.stack);
+      console.error('========================================');
+      
+      if (error.message === 'Không tìm thấy sản phẩm') {
+        throw error;
+      }
+      
+      throw new Error('Lỗi khi truy xuất dữ liệu sản phẩm');
+    }
+  }
+
+  async updateProductStatus(productId, status, adminId) {
+    console.log('=== Admin Service updateProductStatus ===');
+    console.log('Input params:', { productId, status, adminId });
+    
+    // Validate productId
+    if (!productId) {
+      throw new Error('ID sản phẩm không hợp lệ');
+    }
+
+    const mongoose = require('mongoose');
+    if (!mongoose.Types.ObjectId.isValid(productId)) {
+      throw new Error('ID sản phẩm không hợp lệ');
+    }
+
+    // Validate status
+    const validStatuses = ['DRAFT', 'PENDING', 'ACTIVE', 'RENTED', 'INACTIVE', 'SUSPENDED'];
+    if (!validStatuses.includes(status)) {
+      throw new Error(`Trạng thái không hợp lệ. Trạng thái hợp lệ: ${validStatuses.join(', ')}`);
+    }
+
+    try {
+      const updateData = { 
+        status,
+        updatedAt: new Date()
+      };
+
+      // Add moderation info based on status
+      if (status === 'ACTIVE') {
+        updateData['moderation.approvedBy'] = adminId;
+        updateData['moderation.approvedAt'] = new Date();
+      } else if (status === 'SUSPENDED') {
+        updateData['moderation.suspendedBy'] = adminId;
+        updateData['moderation.suspendedAt'] = new Date();
+      }
+
+      console.log('Updating product with data:', updateData);
+      
+      const product = await Product.findByIdAndUpdate(
+        productId,
+        updateData,
+        { new: true, runValidators: true }
+      )
+      .populate('owner', 'fullName username email phone')
+      .populate('category', 'name slug');
+
+      if (!product) {
+        throw new Error('Không tìm thấy sản phẩm');
+      }
+
+      console.log('Product status updated successfully:', product.status);
+      return product;
+    } catch (error) {
+      console.error('Error updating product status:', error.message);
+      
+      if (error.message === 'Không tìm thấy sản phẩm') {
+        throw error;
+      }
+      
+      throw new Error('Lỗi khi cập nhật trạng thái sản phẩm');
+    }
+  }
+
+  async deleteProduct(productId, adminId) {
+    console.log('=== Admin Service deleteProduct ===');
+    console.log('Input params:', { productId, adminId });
+    
+    // Validate productId
+    if (!productId) {
+      throw new Error('ID sản phẩm không hợp lệ');
+    }
+
+    const mongoose = require('mongoose');
+    if (!mongoose.Types.ObjectId.isValid(productId)) {
+      throw new Error('ID sản phẩm không hợp lệ');
+    }
+
+    try {
+      // Check if product exists
+      const product = await Product.findById(productId);
+      if (!product) {
+        throw new Error('Không tìm thấy sản phẩm');
+      }
+
+      console.log('Product found, proceeding with deletion');
+      console.log('Product title:', product.title);
+
+      // Soft delete by setting deletedAt
+      const deletedProduct = await Product.findByIdAndUpdate(
+        productId,
+        { 
+          deletedAt: new Date(),
+          'moderation.deletedBy': adminId,
+          'moderation.deletedAt': new Date(),
+          status: 'INACTIVE'
+        },
+        { new: true }
+      );
+
+      console.log('Product soft deleted successfully');
+      return deletedProduct;
+    } catch (error) {
+      console.error('Error deleting product:', error.message);
+      
+      if (error.message === 'Không tìm thấy sản phẩm') {
+        throw error;
+      }
+      
+      throw new Error('Lỗi khi xóa sản phẩm');
+    }
   }
 
   async approveProduct(productId, adminId) {
