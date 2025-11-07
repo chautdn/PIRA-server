@@ -350,6 +350,22 @@ class AdminController {
     }
   }
 
+  async updateOrderStatus(req, res) {
+    try {
+      const { orderId } = req.params;
+      const { status } = req.body;
+
+      if (!status) {
+        return responseUtils.error(res, 'Trạng thái đơn hàng là bắt buộc', 400);
+      }
+
+      const result = await adminService.updateOrderStatus(orderId, status);
+      return responseUtils.success(res, result, 'Cập nhật trạng thái đơn hàng thành công');
+    } catch (error) {
+      return responseUtils.error(res, error.message, 500);
+    }
+  }
+
   // ========== SYSTEM SETTINGS ==========
   async getSystemSettings(req, res) {
     try {
@@ -414,29 +430,6 @@ class AdminController {
 
       await adminService.deleteCategory(categoryId, adminId);
       return responseUtils.success(res, null, 'Xóa danh mục thành công');
-    } catch (error) {
-      return responseUtils.error(res, error.message, 500);
-    }
-  }
-
-  // ========== ORDER MANAGEMENT ==========
-  async getAllOrders(req, res) {
-    try {
-      const { page = 1, limit = 10, status, search } = req.query;
-      const filters = { page, limit, status, search };
-      
-      const result = await adminService.getAllOrders(filters);
-      return responseUtils.success(res, result, 'Lấy danh sách đơn hàng thành công');
-    } catch (error) {
-      return responseUtils.error(res, error.message, 500);
-    }
-  }
-
-  async getOrderById(req, res) {
-    try {
-      const { orderId } = req.params;
-      const order = await adminService.getOrderById(orderId);
-      return responseUtils.success(res, order, 'Lấy thông tin đơn hàng thành công');
     } catch (error) {
       return responseUtils.error(res, error.message, 500);
     }

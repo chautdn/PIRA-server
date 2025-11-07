@@ -705,52 +705,141 @@ class AdminService {
 
   // ========== ORDER MANAGEMENT ==========
   async getAllOrders(filters) {
-    const { page = 1, limit = 10, status, search } = filters;
-    
-    let query = {};
+    try {
+      console.log('getAllOrders called with filters:', filters);
+      
+      const { page = 1, limit = 10, status, search, paymentStatus, sortBy = 'createdAt', sortOrder = 'desc' } = filters;
+      
+      // First, check if we have any orders at all
+      const totalOrdersCount = await Order.countDocuments();
+      console.log('Total orders in database:', totalOrdersCount);
+      
+      let query = {};
 
-    if (status && status !== 'all') {
-      query.status = status;
-    }
-
-    if (search) {
-      query.orderNumber = { $regex: search, $options: 'i' };
-    }
-
-    const skip = (page - 1) * limit;
-
-    const [orders, total] = await Promise.all([
-      Order.find(query)
-        .populate('user', 'profile.firstName profile.lastName email')
-        .populate('items.product', 'name images price')
-        .sort({ createdAt: -1 })
-        .skip(skip)
-        .limit(parseInt(limit)),
-      Order.countDocuments(query)
-    ]);
-
-    return {
-      orders,
-      pagination: {
-        currentPage: parseInt(page),
-        totalPages: Math.ceil(total / limit),
-        totalOrders: total,
-        limit: parseInt(limit)
+      // Filter by status
+      if (status && status !== '' && status !== 'all') {
+        query.status = status;
       }
-    };
+
+      // Filter by payment status
+      if (paymentStatus && paymentStatus !== '' && paymentStatus !== 'all') {
+        query.paymentStatus = paymentStatus;
+      }
+
+      // Search by order number or customer info
+      if (search && search.trim() !== '') {
+        query.$or = [
+          { orderNumber: { $regex: search.trim(), $options: 'i' } },
+          // We'll populate and filter after if needed
+        ];
+      }
+
+      console.log('Query:', query);
+
+      const skip = (page - 1) * limit;
+      const sortOptions = {};
+      sortOptions[sortBy] = sortOrder === 'desc' ? -1 : 1;
+
+      console.log('Sort options:', sortOptions);
+      console.log('Skip:', skip, 'Limit:', limit);
+
+      // Try to get orders without populate first to debug
+      const ordersBasic = await Order.find(query)
+        .sort(sortOptions)
+        .skip(skip)
+        .limit(parseInt(limit));
+
+      console.log('Orders found (basic):', ordersBasic.length);
+
+      const [orders, total] = await Promise.all([
+        Order.find(query)
+          .populate('renter', 'fullName name email phone')
+          .populate('owner', 'fullName name email phone')
+          .populate('product', 'name images pricing category')
+          .sort(sortOptions)
+          .skip(skip)
+          .limit(parseInt(limit)),
+        Order.countDocuments(query)
+      ]);
+
+      console.log('Orders found (with populate):', orders.length);
+      console.log('Total count:', total);
+
+      return {
+        success: true,
+        data: {
+          orders,
+          total,
+          totalPages: Math.ceil(total / limit),
+          currentPage: parseInt(page),
+          limit: parseInt(limit)
+        }
+      };
+    } catch (error) {
+      console.error('Error in getAllOrders service:', error);
+      console.error('Stack trace:', error.stack);
+      throw new Error(`Lỗi khi lấy danh sách đơn hàng: ${error.message}`);
+    }
   }
 
   async getOrderById(orderId) {
-    const order = await Order.findById(orderId)
-      .populate('user', 'profile.firstName profile.lastName email phone')
-      .populate('items.product', 'name images price category')
-      .populate('items.product.category', 'name');
+    try {
+      const order = await Order.findById(orderId)
+        .populate('renter', 'fullName name email phone')
+        .populate('owner', 'fullName name email phone')
+        .populate('product', 'name images pricing category');
 
-    if (!order) {
-      throw new Error('Không tìm thấy đơn hàng');
+      if (!order) {
+        throw new Error('Không tìm thấy đơn hàng');
+      }
+
+      return {
+        success: true,
+        data: order
+      };
+    } catch (error) {
+      console.error('Error in getOrderById service:', error);
+      throw new Error(`Lỗi khi lấy thông tin đơn hàng: ${error.message}`);
     }
+  }
 
-    return order;
+  async updateOrderStatus(orderId, newStatus) {
+    try {
+      const validStatuses = [
+        'PENDING', 'CONFIRMED', 'PAID', 'SHIPPED', 
+        'DELIVERED', 'ACTIVE', 'RETURNED', 'COMPLETED', 'CANCELLED'
+      ];
+
+      if (!validStatuses.includes(newStatus)) {
+        throw new Error('Trạng thái đơn hàng không hợp lệ');
+      }
+
+      const order = await Order.findById(orderId);
+      if (!order) {
+        throw new Error('Không tìm thấy đơn hàng');
+      }
+
+      order.status = newStatus;
+      
+      // Update timestamps based on status
+      if (newStatus === 'CONFIRMED' && !order.confirmedAt) {
+        order.confirmedAt = new Date();
+      }
+      if (newStatus === 'COMPLETED' && !order.completedAt) {
+        order.completedAt = new Date();
+      }
+
+      await order.save();
+
+      return {
+        success: true,
+        data: order,
+        message: 'Cập nhật trạng thái đơn hàng thành công'
+      };
+    } catch (error) {
+      console.error('Error in updateOrderStatus service:', error);
+      throw new Error(`Lỗi khi cập nhật trạng thái đơn hàng: ${error.message}`);
+    }
   }
 
   // ========== REPORT MANAGEMENT ==========

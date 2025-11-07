@@ -43,6 +43,7 @@ router.delete('/categories/:categoryId', adminController.deleteCategory);
 // ========== ORDER MANAGEMENT ==========
 router.get('/orders', adminController.getAllOrders);
 router.get('/orders/:orderId', adminController.getOrderById);
+router.patch('/orders/:orderId/status', adminController.updateOrderStatus);
 
 // ========== REPORT MANAGEMENT ==========
 router.get('/reports', adminController.getAllReports);
