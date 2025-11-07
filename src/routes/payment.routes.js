@@ -107,6 +107,16 @@ router.get('/transactions', validatePagination, paymentController.getTransaction
 
 router.get('/wallet/balance', paymentController.getWalletBalance);
 
+// Order payment endpoints
+router.post('/order', paymentLimiter, validateAmount, paymentController.createOrderPaymentSession);
+
+router.post(
+  '/wallet/deduct',
+  paymentLimiter,
+  validateAmount,
+  paymentController.processWalletPayment
+);
+
 // Register routes
 const { registerRoute } = require('./register.routes');
 registerRoute('/payment', router);

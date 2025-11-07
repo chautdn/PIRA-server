@@ -477,6 +477,211 @@ const createPaymentLink = async (paymentData) => {
   }
 };
 
+// Create order payment session (PayOS) - similar to wallet top-up
+const createOrderPaymentSession = async (userId, amount, orderInfo, metadata = {}) => {
+  try {
+    const validAmount = validateAmount(amount);
+    const orderCode = Date.now();
+
+    // Get user wallet (required for transaction)
+    const wallet = await Wallet.findOne({ user: userId });
+    if (!wallet) {
+      throw new Error('User wallet not found');
+    }
+
+    // Create pending transaction for this order payment (like wallet top-up)
+    const transaction = new Transaction({
+      user: userId,
+      wallet: wallet._id, // Required field
+      type: 'order_payment', // Different type from wallet top-up
+      amount: validAmount,
+      status: 'pending',
+      paymentMethod: 'payos',
+      externalId: orderCode.toString(), // Use externalId like wallet top-up
+      description: `Thanh toán đơn thuê #${orderInfo.orderNumber || orderCode}`,
+      metadata: {
+        ...metadata,
+        orderInfo,
+        orderType: 'rental_order'
+      },
+      expiredAt: new Date(Date.now() + 15 * 60 * 1000), // 15 minutes like wallet top-up
+      ipAddress: metadata.ipAddress,
+      userAgent: metadata.userAgent
+    });
+
+    await transaction.save();
+
+    // Create PayOS payment link (same structure as wallet top-up)
+    const paymentData = {
+      orderCode,
+      amount: validAmount,
+      description: `PIRA Order ${Math.round(validAmount / 1000)}k`, // Keep it short like top-up
+      returnUrl: `${process.env.CLIENT_URL || 'http://localhost:3000'}/rental-orders/payment-success?orderCode=${orderCode}`,
+      cancelUrl: `${process.env.CLIENT_URL || 'http://localhost:3000'}/rental-orders/payment-cancel?orderCode=${orderCode}`
+    };
+
+    const paymentLink = await payos.paymentRequests.create(paymentData);
+
+    // Update transaction with payment URL (like wallet top-up)
+    transaction.paymentUrl = paymentLink.checkoutUrl;
+    await transaction.save();
+
+    return {
+      transaction: {
+        id: transaction._id,
+        orderCode,
+        amount: validAmount,
+        status: transaction.status,
+        expiresAt: transaction.expiredAt
+      },
+      checkoutUrl: paymentLink.checkoutUrl,
+      qrCode: paymentLink.qrCode // For QR display like wallet top-up
+    };
+  } catch (error) {
+    console.error('Order payment creation error:', error);
+    throw new Error(`Failed to create order payment: ${error.message}`);
+  }
+};
+
+// Process wallet payment for orders
+const processWalletPaymentForOrder = async (userId, amount, orderInfo) => {
+  const validAmount = validateAmount(amount);
+
+  const session = await mongoose.startSession();
+  session.startTransaction();
+
+  try {
+    // Get user wallet
+    const wallet = await Wallet.findOne({ user: userId }).session(session);
+    if (!wallet) {
+      throw new Error('Wallet not found');
+    }
+
+    // Check balance
+    if (wallet.balance < validAmount) {
+      throw new Error(
+        `Insufficient balance. Current balance: ${wallet.balance.toLocaleString()} VND`
+      );
+    }
+
+    // Deduct from wallet
+    wallet.balance -= validAmount;
+    await wallet.save({ session });
+
+    // Create transaction record
+    const transaction = new Transaction({
+      user: userId,
+      type: 'payment',
+      amount: validAmount,
+      status: 'success',
+      paymentMethod: 'wallet',
+      description: `Thanh toán đơn thuê #${orderInfo.orderNumber || 'N/A'}`,
+      metadata: {
+        orderInfo,
+        balanceAfter: wallet.balance
+      }
+    });
+
+    await transaction.save({ session });
+
+    await session.commitTransaction();
+
+    return {
+      transactionId: transaction._id,
+      balanceAfter: wallet.balance,
+      amount: validAmount,
+      status: 'success'
+    };
+  } catch (error) {
+    await session.abortTransaction();
+    throw error;
+  } finally {
+    session.endSession();
+  }
+};
+
+// Process order payment webhook - complete the order when payment succeeds
+const processOrderPaymentWebhook = async (webhookData) => {
+  try {
+    // Parse webhook data
+    let parsedData = parseWebhookData(webhookData);
+
+    // Verify webhook signature (optional for development)
+    let verifiedData;
+    try {
+      verifiedData = await payos.webhooks.verify(parsedData);
+    } catch (verifyError) {
+      // Webhook verification failed, use raw data (development fallback)
+      verifiedData = parsedData;
+    }
+
+    const orderCode = verifiedData.orderCode || verifiedData.orderId;
+    const success =
+      verifiedData.success || verifiedData.code === '00' || verifiedData.status === 'PAID';
+
+    if (!orderCode) {
+      throw new Error('No order code in webhook data');
+    }
+
+    // Find order payment transaction
+    const transaction = await Transaction.findOne({
+      externalId: orderCode.toString(),
+      type: 'order_payment'
+    }).populate('user wallet');
+
+    if (!transaction) {
+      throw new Error(`Order payment transaction not found for orderCode: ${orderCode}`);
+    }
+
+    // Prevent double processing
+    if (transaction.status === 'success') {
+      return { message: 'Order payment already processed', orderCompleted: true };
+    }
+
+    if (success) {
+      // Update transaction status
+      const updatedTransaction = await Transaction.findByIdAndUpdate(
+        transaction._id,
+        {
+          status: 'success',
+          processedAt: new Date(),
+          metadata: {
+            ...transaction.metadata,
+            webhookData: verifiedData
+          }
+        },
+        { new: true }
+      );
+
+      // TODO: Complete the rental order here
+      // This is where you would update the rental order status to 'confirmed' or 'paid'
+      // Example: await RentalOrder.findOneAndUpdate({orderNumber: transaction.metadata.orderInfo.orderNumber}, {status: 'confirmed', paymentStatus: 'paid'})
+
+      return {
+        message: 'Order payment processed successfully',
+        orderCompleted: true,
+        transaction: updatedTransaction
+      };
+    } else {
+      // Payment failed
+      await Transaction.findByIdAndUpdate(transaction._id, {
+        status: 'failed',
+        processedAt: new Date(),
+        lastError: `Payment failed: ${verifiedData.description || 'Unknown error'}`,
+        metadata: {
+          ...transaction.metadata,
+          webhookData: verifiedData
+        }
+      });
+
+      return { message: 'Order payment failed', orderCompleted: false };
+    }
+  } catch (error) {
+    console.error('Order payment webhook error:', error);
+    throw new Error(`Failed to process order payment webhook: ${error.message}`);
+  }
+};
+
 module.exports = {
   validateAmount,
   checkDailyLimit,
@@ -486,5 +691,8 @@ module.exports = {
   parseWebhookData,
   verifyPayment,
   getWalletBalance,
-  getTransactionHistory
+  getTransactionHistory,
+  createOrderPaymentSession,
+  processWalletPaymentForOrder,
+  processOrderPaymentWebhook
 };

@@ -376,15 +376,15 @@ exports.incrementHelpfulness = async (req, res) => {
 		review.helpfulness = review.helpfulness || { helpful: 0, notHelpful: 0 };
 		review.likedBy = review.likedBy || [];
 
+		// Handle toggling/helpfulness for review or a nested response
 		if (target === 'response') {
-			// find the response by id if provided, otherwise use the last nested response
+			// find the response by id if provided, otherwise pick the last leaf response
 			let resp = null;
 			if (responseId) {
 				const found = findResponseRecursive(review.responses || [], responseId);
 				if (!found) return res.status(404).json({ message: 'Không tìm thấy phản hồi' });
 				resp = found.response;
 			} else {
-				// fallback to last leaf response
 				let arr = review.responses || [];
 				if (!arr.length) return res.status(404).json({ message: 'Không tìm thấy phản hồi' });
 				let current = arr[arr.length - 1];
@@ -397,7 +397,8 @@ exports.incrementHelpfulness = async (req, res) => {
 			// ensure response helpfulness and likedBy exist
 			resp.helpfulness = resp.helpfulness || { helpful: 0, notHelpful: 0 };
 			resp.likedBy = resp.likedBy || [];
-					if (type === 'helpful') {
+
+			if (type === 'helpful') {
 				if (!actor) {
 					resp.helpfulness.helpful = (resp.helpfulness.helpful || 0) + 1;
 				} else {
@@ -410,12 +411,12 @@ exports.incrementHelpfulness = async (req, res) => {
 						resp.helpfulness.helpful = Math.max(0, (resp.helpfulness.helpful || 0) - 1);
 					}
 				}
-					} else {
-						resp.helpfulness.notHelpful = (resp.helpfulness.notHelpful || 0) + 1;
-					}
-				} else {
+			} else {
+				resp.helpfulness.notHelpful = (resp.helpfulness.notHelpful || 0) + 1;
+			}
+		} else {
+			// operate on top-level review
 			if (type === 'helpful') {
-				// ensure likedBy array exists
 				review.likedBy = review.likedBy || [];
 				if (!actor) {
 					review.helpfulness.helpful = (review.helpfulness.helpful || 0) + 1;
@@ -432,7 +433,7 @@ exports.incrementHelpfulness = async (req, res) => {
 			} else {
 				review.helpfulness.notHelpful = (review.helpfulness.notHelpful || 0) + 1;
 			}
-			}
+		}
 
 		await review.save();
 		return res.json({ data: review });
