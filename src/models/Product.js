@@ -95,35 +95,48 @@ const productSchema = new mongoose.Schema(
     },
 
     // Location
-    location: {
-      address: {
-        streetAddress: String,
-        ward: String,
-        district: String,
-        city: String,
-        province: String
-      },
-      coordinates: {
-        latitude: Number,
-        longitude: Number
-      },
-      deliveryOptions: {
-        pickup: {
-          type: Boolean,
-          default: true
+      location: {
+        address: {
+          streetAddress: String,
+          ward: String,
+          district: String,
+          city: String,
+          province: String
         },
-        delivery: {
-          type: Boolean,
-          default: true
-        },
-        deliveryFee: {
-          type: Number,
-          default: 0
+        coordinates: {
+          latitude: Number,
+          longitude: Number
         }
-      }
-    },
+      },
 
-    // Status & Availability
+      // Shipping Methods
+      shippingMethods: [{
+        type: {
+          type: String,
+          enum: ['PLATFORM', 'OWNER'],
+          required: true
+        },
+        enabled: {
+          type: Boolean,
+          default: true
+        },
+        fee: {
+          type: Number,
+          min: 0,
+          default: 0
+        },
+        details: {
+          // For owner shipping
+          instructions: String,
+          estimatedDuration: Number, // in hours
+          restrictions: [String],
+          // For platform shipping
+          serviceLevel: {
+            type: String,
+            enum: ['STANDARD', 'EXPRESS', 'SAME_DAY'],
+          }
+        }
+      }],    // Status & Availability
     status: {
       type: String,
       enum: ['DRAFT', 'PENDING', 'ACTIVE', 'RENTED', 'INACTIVE', 'SUSPENDED'],
