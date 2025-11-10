@@ -753,9 +753,9 @@ class AdminService {
 
       const [orders, total] = await Promise.all([
         Order.find(query)
-          .populate('renter', 'fullName name email phone')
-          .populate('owner', 'fullName name email phone')
-          .populate('product', 'name images pricing category')
+          .populate('renter', 'fullName name email phone address profile cccd')
+          .populate('owner', 'fullName name email phone address profile cccd')
+          .populate('product', 'name title images pricing category')
           .sort(sortOptions)
           .skip(skip)
           .limit(parseInt(limit)),
@@ -785,9 +785,9 @@ class AdminService {
   async getOrderById(orderId) {
     try {
       const order = await Order.findById(orderId)
-        .populate('renter', 'fullName name email phone')
-        .populate('owner', 'fullName name email phone')
-        .populate('product', 'name images pricing category');
+        .populate('renter', 'fullName name email phone address profile cccd')
+        .populate('owner', 'fullName name email phone address profile cccd')
+        .populate('product', 'name title images pricing category');
 
       if (!order) {
         throw new Error('Không tìm thấy đơn hàng');

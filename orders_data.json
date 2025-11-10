@@ -1,0 +1,440 @@
+[
+  {
+    "orderNumber": "ORD24111000001",
+    "renter": "64b7f9a3c8e4d6f7a8b9c0d1",
+    "owner": "64b7f9a3c8e4d6f7a8b9c0d2",
+    "product": "64b7f9a3c8e4d6f7a8b9c0d3",
+    "rental": {
+      "startDate": "2024-11-12T08:00:00.000Z",
+      "endDate": "2024-11-15T18:00:00.000Z",
+      "duration": {
+        "value": 3,
+        "unit": "DAY"
+      }
+    },
+    "pricing": {
+      "rentalRate": 400000,
+      "subtotal": 1200000,
+      "deposit": 800000,
+      "deliveryFee": 80000,
+      "total": 2080000
+    },
+    "delivery": {
+      "method": "DELIVERY",
+      "address": {
+        "streetAddress": "123 Nguyễn Văn Cừ",
+        "ward": "Phường 4",
+        "district": "Quận 5",
+        "city": "Thành phố Hồ Chí Minh",
+        "province": "TP. Hồ Chí Minh"
+      },
+      "contactPhone": "0901234567"
+    },
+    "status": "PENDING",
+    "paymentStatus": "PENDING",
+    "notes": "Thuê máy quay để quay phim sự kiện",
+    "createdAt": "2024-11-10T08:30:00.000Z",
+    "updatedAt": "2024-11-10T08:30:00.000Z"
+  },
+  {
+    "orderNumber": "ORD24111000002",
+    "renter": "64b7f9a3c8e4d6f7a8b9c0d4",
+    "owner": "64b7f9a3c8e4d6f7a8b9c0d5",
+    "product": "64b7f9a3c8e4d6f7a8b9c0d6",
+    "rental": {
+      "startDate": "2024-11-14T10:00:00.000Z",
+      "endDate": "2024-11-21T10:00:00.000Z",
+      "duration": {
+        "value": 1,
+        "unit": "WEEK"
+      }
+    },
+    "pricing": {
+      "rentalRate": 500000,
+      "subtotal": 3500000,
+      "deposit": 1500000,
+      "deliveryFee": 100000,
+      "total": 5100000
+    },
+    "delivery": {
+      "method": "PICKUP",
+      "contactPhone": "0912345678"
+    },
+    "status": "CONFIRMED",
+    "paymentStatus": "PAID",
+    "notes": "Khách hàng đến lấy trực tiếp",
+    "confirmedAt": "2024-11-10T10:15:00.000Z",
+    "createdAt": "2024-11-10T09:45:00.000Z",
+    "updatedAt": "2024-11-10T10:15:00.000Z"
+  },
+  {
+    "orderNumber": "ORD24111000003",
+    "renter": "64b7f9a3c8e4d6f7a8b9c0d7",
+    "owner": "64b7f9a3c8e4d6f7a8b9c0d8",
+    "product": "64b7f9a3c8e4d6f7a8b9c0d9",
+    "rental": {
+      "startDate": "2024-11-08T08:00:00.000Z",
+      "endDate": "2024-11-10T20:00:00.000Z",
+      "actualStartDate": "2024-11-08T08:30:00.000Z",
+      "actualEndDate": "2024-11-10T19:45:00.000Z",
+      "duration": {
+        "value": 2,
+        "unit": "DAY"
+      }
+    },
+    "pricing": {
+      "rentalRate": 350000,
+      "subtotal": 700000,
+      "deposit": 600000,
+      "deliveryFee": 60000,
+      "total": 1360000
+    },
+    "delivery": {
+      "method": "DELIVERY",
+      "address": {
+        "streetAddress": "456 Lê Lợi",
+        "ward": "Phường Bến Nghé",
+        "district": "Quận 1",
+        "city": "Thành phố Hồ Chí Minh",
+        "province": "TP. Hồ Chí Minh"
+      },
+      "contactPhone": "0923456789"
+    },
+    "status": "COMPLETED",
+    "paymentStatus": "PAID",
+    "notes": "Đơn hàng hoàn thành thành công",
+    "confirmedAt": "2024-11-07T16:20:00.000Z",
+    "completedAt": "2024-11-10T20:00:00.000Z",
+    "createdAt": "2024-11-07T15:30:00.000Z",
+    "updatedAt": "2024-11-10T20:00:00.000Z"
+  },
+  {
+    "orderNumber": "ORD24111000004",
+    "renter": "64b7f9a3c8e4d6f7a8b9c0e0",
+    "owner": "64b7f9a3c8e4d6f7a8b9c0e1",
+    "product": "64b7f9a3c8e4d6f7a8b9c0e2",
+    "rental": {
+      "startDate": "2024-11-05T10:00:00.000Z",
+      "endDate": "2024-11-07T18:00:00.000Z",
+      "actualStartDate": "2024-11-05T10:15:00.000Z",
+      "actualEndDate": "2024-11-07T17:45:00.000Z",
+      "duration": {
+        "value": 2,
+        "unit": "DAY"
+      }
+    },
+    "pricing": {
+      "rentalRate": 600000,
+      "subtotal": 1200000,
+      "deposit": 1000000,
+      "deliveryFee": 90000,
+      "total": 2290000
+    },
+    "delivery": {
+      "method": "DELIVERY",
+      "address": {
+        "streetAddress": "789 Trần Hưng Đạo",
+        "ward": "Phường 5",
+        "district": "Quận 5",
+        "city": "Thành phố Hồ Chí Minh",
+        "province": "TP. Hồ Chí Minh"
+      },
+      "contactPhone": "0934567890"
+    },
+    "status": "RETURNED",
+    "paymentStatus": "PAID",
+    "notes": "Thiết bị đã được trả về đầy đủ",
+    "confirmedAt": "2024-11-04T14:00:00.000Z",
+    "completedAt": "2024-11-07T18:30:00.000Z",
+    "createdAt": "2024-11-04T13:15:00.000Z",
+    "updatedAt": "2024-11-07T18:30:00.000Z"
+  },
+  {
+    "orderNumber": "ORD24111000005",
+    "renter": "64b7f9a3c8e4d6f7a8b9c0e3",
+    "owner": "64b7f9a3c8e4d6f7a8b9c0e4",
+    "product": "64b7f9a3c8e4d6f7a8b9c0e5",
+    "rental": {
+      "startDate": "2024-11-16T09:00:00.000Z",
+      "endDate": "2024-12-16T09:00:00.000Z",
+      "duration": {
+        "value": 1,
+        "unit": "MONTH"
+      }
+    },
+    "pricing": {
+      "rentalRate": 800000,
+      "subtotal": 24000000,
+      "deposit": 3000000,
+      "deliveryFee": 150000,
+      "total": 27150000
+    },
+    "delivery": {
+      "method": "DELIVERY",
+      "address": {
+        "streetAddress": "321 Nguyễn Thị Minh Khai",
+        "ward": "Phường Đa Kao",
+        "district": "Quận 1",
+        "city": "Thành phố Hồ Chí Minh",
+        "province": "TP. Hồ Chí Minh"
+      },
+      "contactPhone": "0945678901"
+    },
+    "status": "PAID",
+    "paymentStatus": "PAID",
+    "notes": "Thuê dài hạn cho dự án phim",
+    "confirmedAt": "2024-11-09T11:30:00.000Z",
+    "createdAt": "2024-11-09T10:00:00.000Z",
+    "updatedAt": "2024-11-09T11:30:00.000Z"
+  },
+  {
+    "orderNumber": "ORD24111000006",
+    "renter": "64b7f9a3c8e4d6f7a8b9c0e6",
+    "owner": "64b7f9a3c8e4d6f7a8b9c0e7",
+    "product": "64b7f9a3c8e4d6f7a8b9c0e8",
+    "rental": {
+      "startDate": "2024-11-11T16:00:00.000Z",
+      "endDate": "2024-11-13T12:00:00.000Z",
+      "duration": {
+        "value": 2,
+        "unit": "DAY"
+      }
+    },
+    "pricing": {
+      "rentalRate": 250000,
+      "subtotal": 500000,
+      "deposit": 400000,
+      "deliveryFee": 50000,
+      "total": 950000
+    },
+    "delivery": {
+      "method": "PICKUP",
+      "contactPhone": "0956789012"
+    },
+    "status": "ACTIVE",
+    "paymentStatus": "PAID",
+    "notes": "Thiết bị đang được sử dụng",
+    "confirmedAt": "2024-11-09T09:00:00.000Z",
+    "createdAt": "2024-11-09T08:20:00.000Z",
+    "updatedAt": "2024-11-11T16:30:00.000Z"
+  },
+  {
+    "orderNumber": "ORD24110900007",
+    "renter": "64b7f9a3c8e4d6f7a8b9c0e9",
+    "owner": "64b7f9a3c8e4d6f7a8b9c0f0",
+    "product": "64b7f9a3c8e4d6f7a8b9c0f1",
+    "rental": {
+      "startDate": "2024-11-07T13:00:00.000Z",
+      "endDate": "2024-11-09T13:00:00.000Z",
+      "actualStartDate": "2024-11-07T13:30:00.000Z",
+      "duration": {
+        "value": 2,
+        "unit": "DAY"
+      }
+    },
+    "pricing": {
+      "rentalRate": 450000,
+      "subtotal": 900000,
+      "deposit": 700000,
+      "deliveryFee": 75000,
+      "total": 1675000
+    },
+    "delivery": {
+      "method": "DELIVERY",
+      "address": {
+        "streetAddress": "654 Võ Văn Tần",
+        "ward": "Phường 6",
+        "district": "Quận 3",
+        "city": "Thành phố Hồ Chí Minh",
+        "province": "TP. Hồ Chí Minh"
+      },
+      "contactPhone": "0967890123"
+    },
+    "status": "DELIVERED",
+    "paymentStatus": "PAID",
+    "notes": "Đã giao thiết bị đến khách hàng",
+    "confirmedAt": "2024-11-06T15:45:00.000Z",
+    "createdAt": "2024-11-06T14:30:00.000Z",
+    "updatedAt": "2024-11-07T14:00:00.000Z"
+  },
+  {
+    "orderNumber": "ORD24110900008",
+    "renter": "64b7f9a3c8e4d6f7a8b9c0f2",
+    "owner": "64b7f9a3c8e4d6f7a8b9c0f3",
+    "product": "64b7f9a3c8e4d6f7a8b9c0f4",
+    "rental": {
+      "startDate": "2024-11-12T15:00:00.000Z",
+      "endDate": "2024-11-14T15:00:00.000Z",
+      "duration": {
+        "value": 2,
+        "unit": "DAY"
+      }
+    },
+    "pricing": {
+      "rentalRate": 320000,
+      "subtotal": 640000,
+      "deposit": 500000,
+      "deliveryFee": 40000,
+      "total": 1180000
+    },
+    "delivery": {
+      "method": "PICKUP",
+      "contactPhone": "0978901234"
+    },
+    "status": "SHIPPED",
+    "paymentStatus": "PAID",
+    "notes": "Sẵn sàng để khách hàng đến lấy",
+    "confirmedAt": "2024-11-08T12:00:00.000Z",
+    "createdAt": "2024-11-08T11:15:00.000Z",
+    "updatedAt": "2024-11-10T16:30:00.000Z"
+  },
+  {
+    "orderNumber": "ORD24110900009",
+    "renter": "64b7f9a3c8e4d6f7a8b9c0f5",
+    "owner": "64b7f9a3c8e4d6f7a8b9c0f6",
+    "product": "64b7f9a3c8e4d6f7a8b9c0f7",
+    "rental": {
+      "startDate": "2024-11-10T15:00:00.000Z",
+      "endDate": "2024-11-12T15:00:00.000Z",
+      "duration": {
+        "value": 2,
+        "unit": "DAY"
+      }
+    },
+    "pricing": {
+      "rentalRate": 280000,
+      "subtotal": 560000,
+      "deposit": 400000,
+      "deliveryFee": 35000,
+      "total": 995000
+    },
+    "delivery": {
+      "method": "DELIVERY",
+      "address": {
+        "streetAddress": "147 Pasteur",
+        "ward": "Phường 6",
+        "district": "Quận 1",
+        "city": "Thành phố Hồ Chí Minh",
+        "province": "TP. Hồ Chí Minh"
+      },
+      "contactPhone": "0989012345"
+    },
+    "status": "CANCELLED",
+    "paymentStatus": "REFUNDED",
+    "notes": "Khách hàng hủy do thay đổi lịch trình",
+    "cancellation": {
+      "cancelledBy": "64b7f9a3c8e4d6f7a8b9c0f5",
+      "cancelledAt": "2024-11-09T09:30:00.000Z",
+      "reason": "Thay đổi lịch trình, không cần thiết bị nữa"
+    },
+    "createdAt": "2024-11-08T13:45:00.000Z",
+    "updatedAt": "2024-11-09T09:30:00.000Z"
+  },
+  {
+    "orderNumber": "ORD24110800010",
+    "renter": "64b7f9a3c8e4d6f7a8b9c0f8",
+    "owner": "64b7f9a3c8e4d6f7a8b9c0f9",
+    "product": "64b7f9a3c8e4d6f7a8b9c1a0",
+    "rental": {
+      "startDate": "2024-11-18T08:00:00.000Z",
+      "endDate": "2024-11-25T08:00:00.000Z",
+      "duration": {
+        "value": 1,
+        "unit": "WEEK"
+      }
+    },
+    "pricing": {
+      "rentalRate": 650000,
+      "subtotal": 4550000,
+      "deposit": 2000000,
+      "deliveryFee": 120000,
+      "total": 6670000
+    },
+    "delivery": {
+      "method": "DELIVERY",
+      "address": {
+        "streetAddress": "258 Cống Quỳnh",
+        "ward": "Phường Phạm Ngũ Lão",
+        "district": "Quận 1",
+        "city": "Thành phố Hồ Chí Minh",
+        "province": "TP. Hồ Chí Minh"
+      },
+      "contactPhone": "0990123456"
+    },
+    "status": "PENDING",
+    "paymentStatus": "PENDING",
+    "notes": "Đặt trước cho sự kiện tuần tới",
+    "createdAt": "2024-11-08T16:00:00.000Z",
+    "updatedAt": "2024-11-08T16:00:00.000Z"
+  },
+  {
+    "orderNumber": "ORD24110800011",
+    "renter": "64b7f9a3c8e4d6f7a8b9c1a1",
+    "owner": "64b7f9a3c8e4d6f7a8b9c1a2",
+    "product": "64b7f9a3c8e4d6f7a8b9c1a3",
+    "rental": {
+      "startDate": "2024-11-09T12:00:00.000Z",
+      "endDate": "2024-11-11T12:00:00.000Z",
+      "actualStartDate": "2024-11-09T12:20:00.000Z",
+      "duration": {
+        "value": 2,
+        "unit": "DAY"
+      }
+    },
+    "pricing": {
+      "rentalRate": 380000,
+      "subtotal": 760000,
+      "deposit": 600000,
+      "deliveryFee": 70000,
+      "total": 1430000
+    },
+    "delivery": {
+      "method": "DELIVERY",
+      "address": {
+        "streetAddress": "369 Hai Bà Trưng",
+        "ward": "Phường 8",
+        "district": "Quận 3",
+        "city": "Thành phố Hồ Chí Minh",
+        "province": "TP. Hồ Chí Minh"
+      },
+      "contactPhone": "0901234567"
+    },
+    "status": "ACTIVE",
+    "paymentStatus": "PAID",
+    "notes": "Thiết bị đang được sử dụng cho dự án",
+    "confirmedAt": "2024-11-08T18:30:00.000Z",
+    "createdAt": "2024-11-08T17:45:00.000Z",
+    "updatedAt": "2024-11-09T12:20:00.000Z"
+  },
+  {
+    "orderNumber": "ORD24110800012",
+    "renter": "64b7f9a3c8e4d6f7a8b9c1a4",
+    "owner": "64b7f9a3c8e4d6f7a8b9c1a5",
+    "product": "64b7f9a3c8e4d6f7a8b9c1a6",
+    "rental": {
+      "startDate": "2024-11-15T14:00:00.000Z",
+      "endDate": "2024-11-17T20:00:00.000Z",
+      "duration": {
+        "value": 2,
+        "unit": "DAY"
+      }
+    },
+    "pricing": {
+      "rentalRate": 420000,
+      "subtotal": 840000,
+      "deposit": 650000,
+      "deliveryFee": 85000,
+      "total": 1575000
+    },
+    "delivery": {
+      "method": "PICKUP",
+      "contactPhone": "0912345678"
+    },
+    "status": "CONFIRMED",
+    "paymentStatus": "PARTIALLY_PAID",
+    "notes": "Đã thanh toán một phần, cần hoàn tất",
+    "confirmedAt": "2024-11-08T20:15:00.000Z",
+    "createdAt": "2024-11-08T19:30:00.000Z",
+    "updatedAt": "2024-11-08T20:15:00.000Z"
+  }
+]
