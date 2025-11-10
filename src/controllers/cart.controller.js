@@ -15,7 +15,7 @@ class CartController {
    */
   getCart = asyncHandler(async (req, res) => {
     const cart = await cartService.getCart(req.user._id);
-    
+
     new SuccessResponse(cart, 'Lấy giỏ hàng thành công').send(res);
   });
 
@@ -31,12 +31,7 @@ class CartController {
       throw new BadRequest('Product ID là bắt buộc');
     }
 
-    const cart = await cartService.addToCart(
-      req.user._id,
-      productId,
-      quantity,
-      rental
-    );
+    const cart = await cartService.addToCart(req.user._id, productId, quantity, rental);
 
     new SuccessResponse(cart, 'Đã thêm sản phẩm vào giỏ hàng').send(res);
   });
@@ -54,11 +49,7 @@ class CartController {
       throw new BadRequest('Số lượng không hợp lệ');
     }
 
-    const cart = await cartService.updateQuantity(
-      req.user._id,
-      productId,
-      quantity
-    );
+    const cart = await cartService.updateQuantity(req.user._id, productId, quantity);
 
     new SuccessResponse(cart, 'Đã cập nhật số lượng').send(res);
   });
@@ -76,11 +67,7 @@ class CartController {
       throw new BadRequest('Thông tin thuê là bắt buộc');
     }
 
-    const cart = await cartService.updateRental(
-      req.user._id,
-      productId,
-      rental
-    );
+    const cart = await cartService.updateRental(req.user._id, productId, rental);
 
     new SuccessResponse(cart, 'Đã cập nhật thông tin thuê').send(res);
   });
@@ -139,7 +126,7 @@ class CartController {
   });
 
   /**
-   * @desc Check product availability for dates
+   * @desc Check product availability for dates (basic validation only)
    * @route POST /api/cart/check-availability
    * @access Public
    */
@@ -180,7 +167,28 @@ class CartController {
 
     new SuccessResponse(result, 'Lấy thông tin thành công').send(res);
   });
+
+  /**
+   * @desc Validate cart availability against real bookings
+   * @route POST /api/cart/validate-availability
+   * @access Private
+   */
+  validateCartAvailability = asyncHandler(async (req, res) => {
+    const cartValidationService = require('../services/cartValidation.service');
+
+    const result = await cartValidationService.validateCartItems(req.user._id);
+    const suggestions = result.hasInvalidItems
+      ? await cartValidationService.getSuggestionsForInvalidItems(req.user._id)
+      : [];
+
+    new SuccessResponse(
+      {
+        ...result,
+        suggestions
+      },
+      result.message
+    ).send(res);
+  });
 }
 
 module.exports = new CartController();
-

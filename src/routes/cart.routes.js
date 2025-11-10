@@ -26,6 +26,9 @@ router.post('/sync', cartController.syncCart);
 // Validate cart
 router.post('/validate', cartController.validateCart);
 
+// Validate cart against real bookings
+router.post('/validate-availability', cartController.validateCartAvailability);
+
 // Update quantity
 router.put('/:productId', cartController.updateQuantity);
 
@@ -45,4 +48,3 @@ router.delete('/', cartController.clearCart);
 registerRoute('/cart', router);
 
 module.exports = router;
-

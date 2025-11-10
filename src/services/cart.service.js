@@ -4,57 +4,118 @@ const Product = require('../models/Product');
 class CartService {
   /**
    * Check if product is available for rental dates
-   * Returns: { available: boolean, inCartCount: number, reason: string }
+   * Returns: { available: boolean, reason: string, availableCount: number }
    */
   async checkDateAvailability(productId, startDate, endDate, excludeUserId = null) {
     const product = await Product.findById(productId);
     if (!product) {
-      return { available: false, inCartCount: 0, reason: 'Sản phẩm không tồn tại' };
+      return { available: false, reason: 'Sản phẩm không tồn tại' };
     }
 
     const totalStock = product.availability?.quantity || 0;
 
-    // Get all carts that have this product with overlapping dates
-    const carts = await Cart.find({
-      'items.product': productId,
-      ...(excludeUserId && { user: { $ne: excludeUserId } })
+    // Check if dates are valid (not in the past)
+    const now = new Date();
+    const startDateObj = new Date(startDate);
+    const endDateObj = new Date(endDate);
+
+    // Kiểm tra thời gian: trước 12h trưa có thể chọn hôm nay, sau 12h phải chọn ngày mai
+    const minStartDate = new Date();
+    if (now.getHours() >= 12) {
+      minStartDate.setDate(minStartDate.getDate() + 1);
+    }
+    minStartDate.setHours(0, 0, 0, 0);
+
+    let reason = null;
+    if (totalStock <= 0) {
+      reason = 'Sản phẩm hiện không có sẵn';
+    } else if (startDateObj < minStartDate) {
+      const timeMessage =
+        now.getHours() >= 12
+          ? 'Sau 12h trưa, ngày bắt đầu phải từ ngày mai trở đi'
+          : 'Ngày bắt đầu phải từ hôm nay trở đi';
+      reason = timeMessage;
+    } else if (endDateObj <= startDateObj) {
+      reason = 'Ngày kết thúc phải sau ngày bắt đầu';
+    }
+
+    // Check confirmed bookings with buffer day logic
+    const SubOrder = require('../models/SubOrder');
+
+    // Add 1 day buffer after rental end date for inspection
+    const extendedStartDate = new Date(startDateObj);
+    extendedStartDate.setDate(extendedStartDate.getDate() - 1);
+
+    const extendedEndDate = new Date(endDateObj);
+    extendedEndDate.setDate(extendedEndDate.getDate() + 1);
+
+    const overlappingOrders = await SubOrder.find({
+      'products.product': productId,
+      status: { $in: ['CONFIRMED', 'PICKED_UP', 'IN_USE', 'RETURNED'] }, // Include returned for buffer
+      $or: [
+        {
+          // Order overlaps with requested period (including buffer)
+          'rentalPeriod.startDate': { $lte: extendedEndDate },
+          'rentalPeriod.endDate': { $gte: extendedStartDate }
+        }
+      ]
     });
 
-    let inCartCount = 0;
-    const requestStart = new Date(startDate);
-    const requestEnd = new Date(endDate);
+    // Calculate minimum available quantity across all requested days
+    let minAvailableCount = totalStock;
 
-    for (const cart of carts) {
-      const cartItem = cart.items.find((item) => item.product.toString() === productId);
-      if (!cartItem || !cartItem.rental?.startDate || !cartItem.rental?.endDate) {
-        continue;
+    // Check each day in the requested period to find the minimum availability
+    for (let d = new Date(startDateObj); d <= endDateObj; d.setDate(d.getDate() + 1)) {
+      let dailyBookedQuantity = 0;
+
+      for (const order of overlappingOrders) {
+        const orderStart = new Date(order.rentalPeriod.startDate);
+        const orderEnd = new Date(order.rentalPeriod.endDate);
+
+        // Add buffer day after rental end
+        const orderEndWithBuffer = new Date(orderEnd);
+        orderEndWithBuffer.setDate(orderEndWithBuffer.getDate() + 1);
+
+        // Check if current day conflicts with this order (including buffer)
+        if (d >= orderStart && d <= orderEndWithBuffer) {
+          const productInOrder = order.products.find((p) => p.product.toString() === productId);
+          if (productInOrder) {
+            dailyBookedQuantity += productInOrder.quantity;
+          }
+        }
       }
 
-      const cartStart = new Date(cartItem.rental.startDate);
-      const cartEnd = new Date(cartItem.rental.endDate);
+      // Calculate available count for this specific day
+      const dailyAvailableCount = Math.max(0, totalStock - dailyBookedQuantity);
 
-      // Check if dates overlap
-      if (requestStart <= cartEnd && requestEnd >= cartStart) {
-        inCartCount += cartItem.quantity;
+      // Track the minimum availability across all days
+      minAvailableCount = Math.min(minAvailableCount, dailyAvailableCount);
+
+      // If any day has 0 availability, we can break early
+      if (minAvailableCount === 0) {
+        break;
       }
     }
 
-    const available = totalStock - inCartCount > 0;
-    const availableCount = totalStock - inCartCount;
+    const availableCount = minAvailableCount;
+    const maxBookedQuantity = totalStock - availableCount;
+    const available = availableCount > 0 && !reason;
+
+    if (!reason && availableCount === 0) {
+      reason = 'Sản phẩm đã được đặt hết cho khung thời gian này';
+    }
 
     return {
       available,
-      inCartCount,
-      availableCount: Math.max(0, availableCount),
       totalStock,
-      reason: available
-        ? null
-        : `Sản phẩm đã hết cho khung thời gian này. Có ${inCartCount} người đang đặt.`
+      availableCount,
+      bookedQuantity: maxBookedQuantity,
+      reason
     };
   }
 
   /**
-   * Get availability for entire month (based on total stock only)
+   * Get availability for entire month (checking real confirmed bookings)
    * Returns object with dates as keys and availability info as values
    */
   async getMonthAvailability(productId, year, month) {
@@ -65,26 +126,75 @@ class CartService {
 
     const totalStock = product.availability?.quantity || 0;
 
+    // Get confirmed bookings for this month
+    const SubOrder = require('../models/SubOrder');
+    const monthStart = new Date(year, month, 1);
+    const monthEnd = new Date(year, month + 1, 0);
+
+    const confirmedOrders = await SubOrder.find({
+      'products.product': productId,
+      status: { $in: ['CONFIRMED', 'PICKED_UP', 'IN_USE'] },
+      $or: [
+        {
+          'rentalPeriod.startDate': {
+            $gte: monthStart,
+            $lte: monthEnd
+          }
+        },
+        {
+          'rentalPeriod.endDate': {
+            $gte: monthStart,
+            $lte: monthEnd
+          }
+        },
+        {
+          'rentalPeriod.startDate': { $lte: monthStart },
+          'rentalPeriod.endDate': { $gte: monthEnd }
+        }
+      ]
+    });
+
     // Get number of days in month
     const daysInMonth = new Date(year, month + 1, 0).getDate();
     const availability = {};
 
-    // All days have same availability (no booking check for soft reservation)
+    // Check availability for each day
     for (let day = 1; day <= daysInMonth; day++) {
       const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
       const checkDate = new Date(year, month, day);
       const today = new Date();
       today.setHours(0, 0, 0, 0);
 
-      // Only check if date is in past
+      // Check if date is in past
       const isPast = checkDate < today;
 
+      // Calculate booked quantity for this specific date (with buffer day)
+      let bookedQuantity = 0;
+      for (const order of confirmedOrders) {
+        const orderStart = new Date(order.rentalPeriod.startDate);
+        const orderEnd = new Date(order.rentalPeriod.endDate);
+
+        // Add 1 day buffer after rental end for inspection
+        const orderEndWithBuffer = new Date(orderEnd);
+        orderEndWithBuffer.setDate(orderEndWithBuffer.getDate() + 1);
+
+        // Check if this date falls within the rental period (including buffer)
+        if (checkDate >= orderStart && checkDate <= orderEndWithBuffer) {
+          const productInOrder = order.products.find((p) => p.product.toString() === productId);
+          if (productInOrder) {
+            bookedQuantity += productInOrder.quantity;
+          }
+        }
+      }
+
+      const availableCount = Math.max(0, totalStock - bookedQuantity);
+
       availability[dateStr] = {
-        available: !isPast && totalStock > 0,
-        availableCount: totalStock,
-        bookedCount: 0, // Not tracking for soft reservation
+        available: !isPast && availableCount > 0,
+        availableCount,
+        bookedQuantity,
         totalStock,
-        status: isPast ? 'unavailable' : totalStock > 0 ? 'available' : 'unavailable'
+        status: isPast ? 'past' : availableCount > 0 ? 'available' : 'booked'
       };
     }
 
@@ -137,15 +247,19 @@ class CartService {
       cart = await Cart.create({ user: userId, items: [] });
     }
 
-    // Find existing item in cart
+    // Check if product already exists in cart (simple check by productId only)
     const existingItemIndex = cart.items.findIndex((item) => item.product.toString() === productId);
 
-    let newQuantity = quantity;
+    // If product already exists in cart, throw error
     if (existingItemIndex > -1) {
-      newQuantity = cart.items[existingItemIndex].quantity + quantity;
+      throw new Error(
+        'Sản phẩm đã có trong giỏ hàng, vui lòng chọn lại ngày và số lượng từ giỏ hàng'
+      );
     }
 
-    // Validate total quantity against stock
+    const newQuantity = quantity;
+
+    // Validate quantity against stock (simple validation since only one item per product)
     if (newQuantity > availableStock) {
       throw new Error(`Chỉ còn ${availableStock} sản phẩm trong kho`);
     }
@@ -164,31 +278,27 @@ class CartService {
         throw new Error(dateCheck.reason);
       }
 
-      // Add warning if stock is running low
-      if (dateCheck.availableCount <= 2 && dateCheck.inCartCount > 0) {
-        availabilityWarning = `⚠️ Chỉ còn ${dateCheck.availableCount} sản phẩm cho ngày này. Có ${dateCheck.inCartCount} người khác đang đặt.`;
+      // Check if requested quantity is available for the selected dates
+      if (newQuantity > dateCheck.availableCount) {
+        throw new Error(`Chỉ còn ${dateCheck.availableCount} sản phẩm cho thời gian này`);
+      }
+
+      // Add warning if availability is limited
+      if (dateCheck.availableCount <= 5) {
+        availabilityWarning = `Còn ${dateCheck.availableCount} sản phẩm cho thời gian này`;
       }
     }
 
-    if (existingItemIndex > -1) {
-      // Update existing item
-      cart.items[existingItemIndex].quantity = newQuantity;
-      if (rental) {
-        cart.items[existingItemIndex].rental = rental;
+    // Add new item (no update logic since product can only exist once)
+    cart.items.push({
+      product: productId,
+      quantity: newQuantity,
+      rental: rental || {
+        startDate: null,
+        endDate: null,
+        duration: 1
       }
-      cart.items[existingItemIndex].addedAt = new Date();
-    } else {
-      // Add new item
-      cart.items.push({
-        product: productId,
-        quantity: newQuantity,
-        rental: rental || {
-          startDate: null,
-          endDate: null,
-          duration: 1
-        }
-      });
-    }
+    });
 
     await cart.save();
 
@@ -237,7 +347,7 @@ class CartService {
 
     const availableStock = product.availability?.quantity || 0;
     if (quantity > availableStock) {
-      throw new Error(`Chỉ còn ${availableStock} sản phẩm trong kho`);
+      throw new Error(`Chỉ còn ${availableStock} sản phẩm trong kho này thôi`);
     }
 
     cart.items[itemIndex].quantity = quantity;
@@ -268,6 +378,25 @@ class CartService {
 
     if (itemIndex === -1) {
       throw new Error('Sản phẩm không có trong giỏ hàng');
+    }
+
+    // Validate rental dates if provided
+    if (rental?.startDate && rental?.endDate) {
+      const dateCheck = await this.checkDateAvailability(
+        productId,
+        rental.startDate,
+        rental.endDate,
+        userId
+      );
+
+      if (!dateCheck.available) {
+        throw new Error(dateCheck.reason);
+      }
+
+      const currentQuantity = cart.items[itemIndex].quantity;
+      if (currentQuantity > dateCheck.availableCount) {
+        throw new Error(`Chỉ còn ${dateCheck.availableCount} sản phẩm cho thời gian này`);
+      }
     }
 
     cart.items[itemIndex].rental = rental;
