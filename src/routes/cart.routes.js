@@ -29,14 +29,20 @@ router.post('/validate', cartController.validateCart);
 // Validate cart against real bookings
 router.post('/validate-availability', cartController.validateCartAvailability);
 
-// Update quantity
+// Update quantity (legacy - works with first item of productId)
 router.put('/:productId', cartController.updateQuantity);
 
 // Update rental dates
 router.put('/:productId/rental', cartController.updateRental);
 
-// Remove item
+// Update quantity by itemId (new - for multiple items per product)
+router.put('/item/:itemId', cartController.updateQuantityByItemId);
+
+// Remove item by productId (removes all items with this productId)
 router.delete('/:productId', cartController.removeItem);
+
+// Remove item by itemId (removes specific item)
+router.delete('/item/:itemId', cartController.removeItemById);
 
 // Clear cart
 router.delete('/', cartController.clearCart);

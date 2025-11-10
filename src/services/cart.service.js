@@ -247,21 +247,47 @@ class CartService {
       cart = await Cart.create({ user: userId, items: [] });
     }
 
-    // Check if product already exists in cart (simple check by productId only)
-    const existingItemIndex = cart.items.findIndex((item) => item.product.toString() === productId);
-
-    // If product already exists in cart, throw error
-    if (existingItemIndex > -1) {
-      throw new Error(
-        'Sản phẩm đã có trong giỏ hàng, vui lòng chọn lại ngày và số lượng từ giỏ hàng'
-      );
-    }
-
+    // Always create separate cart items - no merging
+    // But we need to validate overlapping periods don't exceed stock
     const newQuantity = quantity;
 
-    // Validate quantity against stock (simple validation since only one item per product)
-    if (newQuantity > availableStock) {
-      throw new Error(`Chỉ còn ${availableStock} sản phẩm trong kho`);
+    // Calculate total quantity of overlapping periods in cart for validation
+    let cartQuantityForPeriod = 0;
+    if (rental?.startDate && rental?.endDate) {
+      cartQuantityForPeriod = cart.items.reduce((total, item) => {
+        // Check all items for this product with overlapping rental periods
+        if (
+          item.product.toString() === productId &&
+          item.rental?.startDate &&
+          item.rental?.endDate
+        ) {
+          const itemStart = new Date(item.rental.startDate);
+          const itemEnd = new Date(item.rental.endDate);
+          const requestStart = new Date(rental.startDate);
+          const requestEnd = new Date(rental.endDate);
+
+          // Add buffer days
+          const itemEndWithBuffer = new Date(itemEnd);
+          itemEndWithBuffer.setDate(itemEndWithBuffer.getDate() + 1);
+
+          const requestEndWithBuffer = new Date(requestEnd);
+          requestEndWithBuffer.setDate(requestEndWithBuffer.getDate() + 1);
+
+          // Check if periods overlap
+          if (requestStart <= itemEndWithBuffer && requestEndWithBuffer >= itemStart) {
+            return total + item.quantity;
+          }
+        }
+        return total;
+      }, 0);
+    }
+
+    // Validate total quantity against stock (including existing overlapping items)
+    const totalQuantityForPeriod = cartQuantityForPeriod + newQuantity;
+    if (totalQuantityForPeriod > availableStock) {
+      throw new Error(
+        `Tổng số lượng cho thời gian này không được vượt quá ${availableStock} cái (đã có ${cartQuantityForPeriod} cái trong giỏ hàng cho thời gian overlap)`
+      );
     }
 
     // Check date availability if rental dates provided
@@ -278,9 +304,12 @@ class CartService {
         throw new Error(dateCheck.reason);
       }
 
-      // Check if requested quantity is available for the selected dates
-      if (newQuantity > dateCheck.availableCount) {
-        throw new Error(`Chỉ còn ${dateCheck.availableCount} sản phẩm cho thời gian này`);
+      // Check if total quantity (including cart items) is available for the selected dates
+      const availableAfterCart = Math.max(0, dateCheck.availableCount - cartQuantityForPeriod);
+      if (newQuantity > availableAfterCart) {
+        throw new Error(
+          `Chỉ còn ${availableAfterCart} sản phẩm cho thời gian này (đã có ${cartQuantityForPeriod} cái trong giỏ hàng cho thời gian overlap)`
+        );
       }
 
       // Add warning if availability is limited
@@ -289,7 +318,8 @@ class CartService {
       }
     }
 
-    // Add new item (no update logic since product can only exist once)
+    // Always add new item - no merging even if dates overlap
+    // Each rental period is separate cart item
     cart.items.push({
       product: productId,
       quantity: newQuantity,
@@ -321,11 +351,11 @@ class CartService {
   }
 
   /**
-   * Update item quantity
+   * Update item quantity by itemId
    */
-  async updateQuantity(userId, productId, quantity) {
+  async updateQuantityByItemId(userId, itemId, quantity) {
     if (quantity < 1) {
-      return this.removeItem(userId, productId);
+      return this.removeItemById(userId, itemId);
     }
 
     const cart = await Cart.findOne({ user: userId });
@@ -333,21 +363,76 @@ class CartService {
       throw new Error('Giỏ hàng không tồn tại');
     }
 
-    const itemIndex = cart.items.findIndex((item) => item.product.toString() === productId);
+    const itemIndex = cart.items.findIndex((item) => item._id.toString() === itemId);
 
     if (itemIndex === -1) {
-      throw new Error('Sản phẩm không có trong giỏ hàng');
+      throw new Error('Item không có trong giỏ hàng');
     }
 
-    // Validate stock
-    const product = await Product.findById(productId);
+    const item = cart.items[itemIndex];
+    const product = await Product.findById(item.product);
     if (!product) {
       throw new Error('Sản phẩm không tồn tại');
     }
 
     const availableStock = product.availability?.quantity || 0;
-    if (quantity > availableStock) {
-      throw new Error(`Chỉ còn ${availableStock} sản phẩm trong kho này thôi`);
+
+    // Calculate overlapping cart quantities (excluding current item)
+    let cartQuantityForPeriod = 0;
+    if (item.rental?.startDate && item.rental?.endDate) {
+      cartQuantityForPeriod = cart.items.reduce((total, cartItem, index) => {
+        if (
+          cartItem.product.toString() === item.product.toString() &&
+          index !== itemIndex &&
+          cartItem.rental?.startDate &&
+          cartItem.rental?.endDate
+        ) {
+          const itemStart = new Date(cartItem.rental.startDate);
+          const itemEnd = new Date(cartItem.rental.endDate);
+          const currentStart = new Date(item.rental.startDate);
+          const currentEnd = new Date(item.rental.endDate);
+
+          // Add buffer days
+          const itemEndWithBuffer = new Date(itemEnd);
+          itemEndWithBuffer.setDate(itemEndWithBuffer.getDate() + 1);
+
+          const currentEndWithBuffer = new Date(currentEnd);
+          currentEndWithBuffer.setDate(currentEndWithBuffer.getDate() + 1);
+
+          // Check if periods overlap
+          if (currentStart <= itemEndWithBuffer && currentEndWithBuffer >= itemStart) {
+            return total + cartItem.quantity;
+          }
+        }
+        return total;
+      }, 0);
+    }
+
+    // Validate total quantity
+    const totalQuantityForPeriod = cartQuantityForPeriod + quantity;
+    if (totalQuantityForPeriod > availableStock) {
+      throw new Error(
+        `Tổng số lượng cho thời gian này không được vượt quá ${availableStock} cái (đã có ${cartQuantityForPeriod} cái trong giỏ hàng)`
+      );
+    }
+
+    // Check date availability
+    if (item.rental?.startDate && item.rental?.endDate) {
+      const dateCheck = await this.checkDateAvailability(
+        item.product,
+        item.rental.startDate,
+        item.rental.endDate,
+        userId
+      );
+
+      if (!dateCheck.available) {
+        throw new Error(dateCheck.reason);
+      }
+
+      const availableAfterCart = Math.max(0, dateCheck.availableCount - cartQuantityForPeriod);
+      if (quantity > availableAfterCart) {
+        throw new Error(`Chỉ còn ${availableAfterCart} sản phẩm cho thời gian này`);
+      }
     }
 
     cart.items[itemIndex].quantity = quantity;
@@ -363,6 +448,26 @@ class CartService {
     });
 
     return cart;
+  }
+
+  /**
+   * Update item quantity (legacy method - kept for backward compatibility)
+   */
+  async updateQuantity(userId, productId, quantity) {
+    // This method now works with the first item found with this productId
+    // For multiple items with same product, use updateQuantityByItemId instead
+
+    const cart = await Cart.findOne({ user: userId });
+    if (!cart) {
+      throw new Error('Giỏ hàng không tồn tại');
+    }
+
+    const item = cart.items.find((item) => item.product.toString() === productId);
+    if (!item) {
+      throw new Error('Sản phẩm không có trong giỏ hàng');
+    }
+
+    return this.updateQuantityByItemId(userId, item._id.toString(), quantity);
   }
 
   /**
@@ -415,7 +520,37 @@ class CartService {
   }
 
   /**
-   * Remove item from cart
+   * Remove item from cart by itemId
+   */
+  async removeItemById(userId, itemId) {
+    const cart = await Cart.findOne({ user: userId });
+    if (!cart) {
+      throw new Error('Giỏ hàng không tồn tại');
+    }
+
+    const initialLength = cart.items.length;
+    cart.items = cart.items.filter((item) => item._id.toString() !== itemId);
+
+    if (cart.items.length === initialLength) {
+      throw new Error('Item không có trong giỏ hàng');
+    }
+
+    await cart.save();
+
+    await cart.populate({
+      path: 'items.product',
+      select: 'title images pricing availability status owner',
+      populate: {
+        path: 'owner',
+        select: 'profile.firstName email phone address'
+      }
+    });
+
+    return cart;
+  }
+
+  /**
+   * Remove item from cart by productId (removes ALL items with this productId)
    */
   async removeItem(userId, productId) {
     const cart = await Cart.findOne({ user: userId });

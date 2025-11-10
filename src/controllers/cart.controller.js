@@ -73,6 +73,37 @@ class CartController {
   });
 
   /**
+   * @desc Update item quantity by itemId
+   * @route PUT /api/cart/item/:itemId
+   * @access Private
+   */
+  updateQuantityByItemId = asyncHandler(async (req, res) => {
+    const { itemId } = req.params;
+    const { quantity } = req.body;
+
+    if (!quantity || quantity < 0) {
+      throw new BadRequest('Số lượng không hợp lệ');
+    }
+
+    const cart = await cartService.updateQuantityByItemId(req.user._id, itemId, quantity);
+
+    new SuccessResponse(cart, 'Đã cập nhật số lượng').send(res);
+  });
+
+  /**
+   * @desc Remove item from cart by itemId
+   * @route DELETE /api/cart/item/:itemId
+   * @access Private
+   */
+  removeItemById = asyncHandler(async (req, res) => {
+    const { itemId } = req.params;
+
+    const cart = await cartService.removeItemById(req.user._id, itemId);
+
+    new SuccessResponse(cart, 'Đã xóa item khỏi giỏ hàng').send(res);
+  });
+
+  /**
    * @desc Remove item from cart
    * @route DELETE /api/cart/:productId
    * @access Private
