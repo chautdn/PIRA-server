@@ -1,130 +1,278 @@
 [
   {
-    "reporter": "674a1234567890abcdef0001",
+    "_id": {
+      "$oid": "691110001a2b3c4d5e6f7a01"
+    },
+    "reporter": {
+      "$oid": "68d4b53e3202ddb7f422f113"
+    },
     "reportType": "SPAM",
-    "reason": "Sản phẩm này được đăng lặp lại nhiều lần trong ngày",
-    "description": "Người bán đã đăng cùng một sản phẩm 5 lần với các tiêu đề khác nhau để spam trang chủ. Điều này làm ảnh hưởng đến trải nghiệm người dùng.",
-    "reportedItem": "674b1234567890abcdef0001",
+    "reason": "Sản phẩm được đăng lặp lại nhiều lần với cùng nội dung",
+    "description": "Tôi thấy có nhiều sản phẩm balo giống nhau được đăng bởi người dùng này. Có vẻ như spam để tăng khả năng hiển thị.",
+    "reportedItem": {
+      "$oid": "68d80f0208789a7a9d3f63ca"
+    },
     "status": "PENDING",
-    "createdAt": "2024-11-01T08:30:00.000Z",
-    "updatedAt": "2024-11-01T08:30:00.000Z"
+    "adminNotes": null,
+    "createdAt": {
+      "$date": "2025-11-11T10:30:00.000Z"
+    },
+    "updatedAt": {
+      "$date": "2025-11-11T10:30:00.000Z"
+    },
+    "__v": 0
   },
   {
-    "reporter": "674a1234567890abcdef0002",
+    "_id": {
+      "$oid": "691110001a2b3c4d5e6f7a02"
+    },
+    "reporter": {
+      "$oid": "68da04fb64922fc1dc4b4055"
+    },
     "reportType": "INAPPROPRIATE",
-    "reason": "Nội dung không phù hợp với quy định",
-    "description": "Sản phẩm có hình ảnh và mô tả không phù hợp với đối tượng người dùng chung. Có yếu tố nhạy cảm cần được xem xét.",
-    "reportedItem": "674b1234567890abcdef0002",
+    "reason": "Hình ảnh sản phẩm không phù hợp",
+    "description": "Hình ảnh máy ảnh có vẻ không phải sản phẩm thật, có thể là hình ảnh lấy từ internet",
+    "reportedItem": {
+      "$oid": "68d94cc0de89de7c7d76d950"
+    },
     "status": "REVIEWED",
-    "adminNotes": "Đã xác minh báo cáo, đang chờ xử lý",
-    "createdAt": "2024-11-02T14:15:00.000Z",
-    "updatedAt": "2024-11-02T16:20:00.000Z"
+    "adminNotes": "Đã kiểm tra, hình ảnh có dấu hiệu lấy từ nguồn khác",
+    "createdAt": {
+      "$date": "2025-11-10T14:20:00.000Z"
+    },
+    "updatedAt": {
+      "$date": "2025-11-11T08:15:00.000Z"
+    },
+    "__v": 0
   },
   {
-    "reporter": "674a1234567890abcdef0003",
+    "_id": {
+      "$oid": "691110001a2b3c4d5e6f7a03"
+    },
+    "reporter": {
+      "$oid": "68db413db9aa427c504e9894"
+    },
     "reportType": "HARASSMENT",
-    "reason": "Người bán có hành vi quấy rối trong tin nhắn",
-    "description": "Sau khi tôi từ chối mua hàng, người bán đã liên tục gửi tin nhắn với ngôn từ không phù hợp và có tính chất quấy rối.",
-    "reportedItem": "674b1234567890abcdef0003",
+    "reason": "Mô tả sản phẩm có từ ngữ không phù hợp",
+    "description": "Mô tả sản phẩm sử dụng từ 'trâu' và các từ ngữ không phù hợp với tính chất thương mại",
+    "reportedItem": {
+      "$oid": "68d93a0bc4db367846749c2e"
+    },
     "status": "RESOLVED",
-    "adminNotes": "Đã cảnh cáo người bán và tạm khóa tính năng chat 3 ngày",
-    "createdAt": "2024-11-03T10:45:00.000Z",
-    "updatedAt": "2024-11-04T09:30:00.000Z"
+    "adminNotes": "Đã yêu cầu chủ sản phẩm chỉnh sửa mô tả",
+    "createdAt": {
+      "$date": "2025-11-09T16:45:00.000Z"
+    },
+    "updatedAt": {
+      "$date": "2025-11-10T12:30:00.000Z"
+    },
+    "__v": 0
   },
   {
-    "reporter": "674a1234567890abcdef0004",
+    "_id": {
+      "$oid": "691110001a2b3c4d5e6f7a04"
+    },
+    "reporter": {
+      "$oid": "68f110aad4b9326bbab6e6ff"
+    },
     "reportType": "OTHER",
-    "reason": "Sản phẩm giả mạo thương hiệu",
-    "description": "Đây là sản phẩm nhái thương hiệu Apple nhưng người bán quảng cáo như hàng chính hãng. Có thể gây nhầm lẫn cho người mua.",
-    "reportedItem": "674b1234567890abcdef0004",
+    "reason": "Giá thuê không hợp lý",
+    "description": "iPhone 15 Pro Max cho thuê 200k/ngày trong khi tiền cọc 15 triệu, có vẻ như lừa đảo",
+    "reportedItem": {
+      "$oid": "68d80cc908789a7a9d3f61e0"
+    },
     "status": "PENDING",
-    "createdAt": "2024-11-04T16:20:00.000Z",
-    "updatedAt": "2024-11-04T16:20:00.000Z"
+    "adminNotes": null,
+    "createdAt": {
+      "$date": "2025-11-11T09:20:00.000Z"
+    },
+    "updatedAt": {
+      "$date": "2025-11-11T09:20:00.000Z"
+    },
+    "__v": 0
   },
   {
-    "reporter": "674a1234567890abcdef0005",
+    "_id": {
+      "$oid": "691110001a2b3c4d5e6f7a05"
+    },
+    "reporter": {
+      "$oid": "68df31d514046acb99e81923"
+    },
     "reportType": "SPAM",
-    "reason": "Đăng tin bán hàng không liên quan",
-    "description": "Người dùng này đăng tin bán dịch vụ tài chính trong mục bán điện thoại. Nội dung hoàn toàn không phù hợp với danh mục.",
-    "reportedItem": "674b1234567890abcdef0005",
-    "status": "DISMISSED",
-    "adminNotes": "Sau khi xem xét, sản phẩm đã được chuyển đúng danh mục",
-    "createdAt": "2024-11-05T11:00:00.000Z",
-    "updatedAt": "2024-11-05T14:30:00.000Z"
-  },
-  {
-    "reporter": "674a1234567890abcdef0006",
-    "reportType": "INAPPROPRIATE",
-    "reason": "Hình ảnh không phù hợp",
-    "description": "Sản phẩm có hình ảnh phản cảm, không phù hợp với chuẩn mực chung của nền tảng.",
-    "reportedItem": "674b1234567890abcdef0006",
+    "reason": "Sản phẩm đã bị xóa nhưng vẫn hiển thị",
+    "description": "Giày trekking này đã bị đánh dấu DELETED và INACTIVE nhưng vẫn xuất hiện trong kết quả tìm kiếm",
+    "reportedItem": {
+      "$oid": "68f1117fca394b6884f1bd97"
+    },
     "status": "REVIEWED",
-    "adminNotes": "Đã yêu cầu người bán thay đổi hình ảnh",
-    "createdAt": "2024-11-06T09:15:00.000Z",
-    "updatedAt": "2024-11-06T15:45:00.000Z"
+    "adminNotes": "Sản phẩm đã được ẩn khỏi tìm kiếm",
+    "createdAt": {
+      "$date": "2025-11-08T11:10:00.000Z"
+    },
+    "updatedAt": {
+      "$date": "2025-11-09T14:20:00.000Z"
+    },
+    "__v": 0
   },
   {
-    "reporter": "674a1234567890abcdef0007",
-    "reportType": "HARASSMENT",
-    "reason": "Lạm dụng hệ thống đánh giá",
-    "description": "Người bán này tạo nhiều tài khoản ảo để tự đánh giá 5 sao cho sản phẩm của mình và đánh giá 1 sao cho đối thủ.",
-    "reportedItem": "674b1234567890abcdef0007",
-    "status": "PENDING",
-    "createdAt": "2024-11-07T13:30:00.000Z",
-    "updatedAt": "2024-11-07T13:30:00.000Z"
-  },
-  {
-    "reporter": "674a1234567890abcdef0008",
-    "reportType": "OTHER",
-    "reason": "Vi phạm bản quyền",
-    "description": "Sản phẩm này sử dụng hình ảnh có bản quyền của tôi mà không xin phép. Đây là vi phạm sở hữu trí tuệ.",
-    "reportedItem": "674b1234567890abcdef0008",
+    "_id": {
+      "$oid": "691110001a2b3c4d5e6f7a06"
+    },
+    "reporter": {
+      "$oid": "68d3556d9b4c00cdfa1d9a63"
+    },
+    "reportType": "INAPPROPRIATE",
+    "reason": "Tên sản phẩm có từ khóa lạ",
+    "description": "Sản phẩm có tên 'toLowerCase' và 'ClarifaiService.checkNSFW' rất kỳ lạ, không phù hợp",
+    "reportedItem": {
+      "$oid": "68e14a9808c0fd97bc8b4676"
+    },
     "status": "RESOLVED",
-    "adminNotes": "Đã gỡ sản phẩm và cảnh cáo người bán về vi phạm bản quyền",
-    "createdAt": "2024-11-08T08:00:00.000Z",
-    "updatedAt": "2024-11-09T10:15:00.000Z"
+    "adminNotes": "Đã xóa sản phẩm do tên không hợp lệ",
+    "createdAt": {
+      "$date": "2025-11-07T13:30:00.000Z"
+    },
+    "updatedAt": {
+      "$date": "2025-11-08T10:45:00.000Z"
+    },
+    "__v": 0
   },
   {
-    "reporter": "674a1234567890abcdef0009",
+    "_id": {
+      "$oid": "691110001a2b3c4d5e6f7a07"
+    },
+    "reporter": {
+      "$oid": "68da04fb64922fc1dc4b4055"
+    },
+    "reportType": "OTHER",
+    "reason": "Sản phẩm không có thông tin liên hệ rõ ràng",
+    "description": "Máy ảnh này không có thông tin địa chỉ cụ thể, chỉ có '456 Lê Văn Việt, Quận 9' rất mơ hồ",
+    "reportedItem": {
+      "$oid": "68db9ac5fa4f20e8dedd6efb"
+    },
+    "status": "PENDING",
+    "adminNotes": null,
+    "createdAt": {
+      "$date": "2025-11-11T08:15:00.000Z"
+    },
+    "updatedAt": {
+      "$date": "2025-11-11T08:15:00.000Z"
+    },
+    "__v": 0
+  },
+  {
+    "_id": {
+      "$oid": "691110001a2b3c4d5e6f7a08"
+    },
+    "reporter": {
+      "$oid": "68d4b53e3202ddb7f422f113"
+    },
+    "reportType": "HARASSMENT",
+    "reason": "Mô tả có từ ngữ xúc phạm",
+    "description": "Sản phẩm có mô tả 'máy ảnh đẹp mới lạ cmm' sử dụng từ viết tắt không phù hợp",
+    "reportedItem": {
+      "$oid": "68dc84e9c7771494af1f9f21"
+    },
+    "status": "REVIEWED",
+    "adminNotes": "Đã liên hệ chủ sản phẩm để chỉnh sửa",
+    "createdAt": {
+      "$date": "2025-11-06T15:40:00.000Z"
+    },
+    "updatedAt": {
+      "$date": "2025-11-07T09:20:00.000Z"
+    },
+    "__v": 0
+  },
+  {
+    "_id": {
+      "$oid": "691110001a2b3c4d5e6f7a09"
+    },
+    "reporter": {
+      "$oid": "68db413db9aa427c504e9894"
+    },
     "reportType": "SPAM",
-    "reason": "Quảng cáo dịch vụ ngoài nền tảng",
-    "description": "Người bán không bán sản phẩm thật mà chỉ dụ dỗ người mua liên hệ qua các kênh khác để bán dịch vụ không liên quan.",
-    "reportedItem": "674b1234567890abcdef0009",
-    "status": "REVIEWED",
-    "adminNotes": "Đang xác minh thông tin với người bán",
-    "createdAt": "2024-11-09T17:45:00.000Z",
-    "updatedAt": "2024-11-10T08:20:00.000Z"
-  },
-  {
-    "reporter": "674a1234567890abcdef0010",
-    "reportType": "INAPPROPRIATE",
-    "reason": "Ngôn từ không phù hợp trong mô tả",
-    "description": "Mô tả sản phẩm có chứa từ ngữ thô tục và không phù hợp với chuẩn mực của nền tảng.",
-    "reportedItem": "674b1234567890abcdef0010",
+    "reason": "Cùng một người đăng quá nhiều sản phẩm tương tự",
+    "description": "Người dùng này đăng rất nhiều sản phẩm máy ảnh với cùng mô tả và hình ảnh gần giống nhau",
+    "reportedItem": {
+      "$oid": "68e610e2bf3bb8ae29a83e98"
+    },
     "status": "PENDING",
-    "createdAt": "2024-11-10T12:30:00.000Z",
-    "updatedAt": "2024-11-10T12:30:00.000Z"
+    "adminNotes": null,
+    "createdAt": {
+      "$date": "2025-11-11T11:00:00.000Z"
+    },
+    "updatedAt": {
+      "$date": "2025-11-11T11:00:00.000Z"
+    },
+    "__v": 0
   },
   {
-    "reporter": "674a1234567890abcdef0011",
-    "reportType": "HARASSMENT",
-    "reason": "Đe dọa và ép buộc mua hàng",
-    "description": "Người bán có hành vi đe dọa khi tôi thương lượng giá và ép buộc phải mua với giá họ đưa ra.",
-    "reportedItem": "674b1234567890abcdef0011",
-    "status": "DISMISSED",
-    "adminNotes": "Không đủ bằng chứng để chứng minh hành vi quấy rối",
-    "createdAt": "2024-11-11T07:15:00.000Z",
-    "updatedAt": "2024-11-11T11:45:00.000Z"
-  },
-  {
-    "reporter": "674a1234567890abcdef0012",
-    "reportType": "OTHER",
-    "reason": "Sản phẩm nguy hiểm cho sức khỏe",
-    "description": "Đây là sản phẩm thực phẩm chức năng không rõ nguồn gốc và có thể gây hại cho sức khỏe người sử dụng.",
-    "reportedItem": "674b1234567890abcdef0012",
+    "_id": {
+      "$oid": "691110001a2b3c4d5e6f7a10"
+    },
+    "reporter": {
+      "$oid": "68f110aad4b9326bbab6e6ff"
+    },
+    "reportType": "INAPPROPRIATE",
+    "reason": "Sản phẩm test không nên xuất hiện trên sản xuất",
+    "description": "Có nhiều sản phẩm có tên 'SP Test' với mô tả test, không phù hợp cho môi trường thật",
+    "reportedItem": {
+      "$oid": "68d7e2baf68751c8eee16ca5"
+    },
     "status": "RESOLVED",
-    "adminNotes": "Đã gỡ sản phẩm và yêu cầu người bán cung cấp giấy tờ chứng nhận an toàn",
-    "createdAt": "2024-11-11T15:20:00.000Z",
-    "updatedAt": "2024-11-11T18:30:00.000Z"
+    "adminNotes": "Đã xóa tất cả sản phẩm test",
+    "createdAt": {
+      "$date": "2025-11-05T10:20:00.000Z"
+    },
+    "updatedAt": {
+      "$date": "2025-11-06T16:30:00.000Z"
+    },
+    "__v": 0
+  },
+  {
+    "_id": {
+      "$oid": "691110001a2b3c4d5e6f7a11"
+    },
+    "reporter": {
+      "$oid": "68df31d514046acb99e81923"
+    },
+    "reportType": "OTHER",
+    "reason": "Thông tin sản phẩm không đầy đủ",
+    "description": "Balo này thiếu nhiều thông tin quan trọng như kích thước, chất liệu, thương hiệu",
+    "reportedItem": {
+      "$oid": "690305592d4e30fab1fdbc0e"
+    },
+    "status": "REVIEWED",
+    "adminNotes": "Đã yêu cầu bổ sung thông tin",
+    "createdAt": {
+      "$date": "2025-11-04T14:30:00.000Z"
+    },
+    "updatedAt": {
+      "$date": "2025-11-05T11:15:00.000Z"
+    },
+    "__v": 0
+  },
+  {
+    "_id": {
+      "$oid": "691110001a2b3c4d5e6f7a12"
+    },
+    "reporter": {
+      "$oid": "68d3556d9b4c00cdfa1d9a63"
+    },
+    "reportType": "SPAM",
+    "reason": "Sản phẩm trùng lặp trong hệ thống",
+    "description": "Có nhiều sản phẩm máy chiếu và flycam gần giống nhau từ cùng một người bán",
+    "reportedItem": {
+      "$oid": "690d589006d7ec8708b00b4e"
+    },
+    "status": "PENDING",
+    "adminNotes": null,
+    "createdAt": {
+      "$date": "2025-11-11T12:45:00.000Z"
+    },
+    "updatedAt": {
+      "$date": "2025-11-11T12:45:00.000Z"
+    },
+    "__v": 0
   }
 ]

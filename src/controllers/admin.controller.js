@@ -149,12 +149,34 @@ class AdminController {
   // ========== PRODUCT MANAGEMENT ==========
   async getAllProducts(req, res) {
     try {
-      const { page = 1, limit = 10, status, search, category } = req.query;
-      const filters = { page, limit, status, search, category };
+      const { 
+        page = 1, 
+        limit = 10, 
+        status, 
+        search, 
+        category, 
+        sortBy = 'createdAt', 
+        sortOrder = 'desc' 
+      } = req.query;
+      
+      const filters = { 
+        page, 
+        limit, 
+        status, 
+        search, 
+        category, 
+        sortBy, 
+        sortOrder 
+      };
+      
+      console.log('Admin getAllProducts - filters:', filters);
       
       const result = await adminService.getAllProducts(filters);
+      console.log('Admin getAllProducts - result pagination:', result.pagination);
+      
       return responseUtils.success(res, result, 'Lấy danh sách sản phẩm thành công');
     } catch (error) {
+      console.error('Admin getAllProducts - error:', error);
       return responseUtils.error(res, error.message, 500);
     }
   }
@@ -507,6 +529,44 @@ class AdminController {
       return responseUtils.success(res, updatedReport, 'Cập nhật trạng thái báo cáo thành công');
     } catch (error) {
       return responseUtils.error(res, error.message, 500);
+    }
+  }
+
+  async deleteReportedProduct(req, res) {
+    console.log('=== Admin Controller deleteReportedProduct ===');
+    console.log('Request params:', req.params);
+    console.log('Request body:', req.body);
+    
+    try {
+      const { reportId } = req.params;
+      const { productId } = req.body;
+      const adminId = req.user.id;
+      
+      console.log('Deleting reported product:', { reportId, productId, adminId });
+      
+      // Delete the product
+      await adminService.deleteProduct(productId, adminId);
+      
+      // Update report status to RESOLVED (this will trigger product deletion logic in service)
+      await adminService.updateReportStatus(reportId, 'RESOLVED', 'Sản phẩm đã bị xóa bởi admin');
+      
+      console.log('Product deleted and report updated successfully');
+      
+      return responseUtils.success(res, null, 'Xóa sản phẩm bị báo cáo thành công');
+    } catch (error) {
+      console.error('=== Admin Controller deleteReportedProduct ERROR ===');
+      console.error('Error message:', error.message);
+      console.error('=========================================');
+      
+      if (error.message === 'ID sản phẩm không hợp lệ') {
+        return responseUtils.error(res, error.message, 400);
+      } else if (error.message === 'Không tìm thấy sản phẩm') {
+        return responseUtils.error(res, error.message, 404);
+      } else if (error.message.includes('đơn hàng đang hoạt động')) {
+        return responseUtils.error(res, error.message, 400);
+      } else {
+        return responseUtils.error(res, error.message, 500);
+      }
     }
   }
 }

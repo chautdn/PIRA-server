@@ -51,6 +51,7 @@ router.patch('/orders/:orderId/status', adminController.updateOrderStatus);
 router.get('/reports', adminController.getAllReports);
 router.get('/reports/:reportId', adminController.getReportById);
 router.patch('/reports/:reportId/status', adminController.updateReportStatus);
+router.delete('/reports/:reportId/product', adminController.deleteReportedProduct);
 
 // ========== SYSTEM SETTINGS ==========
 router.get('/settings', adminController.getSystemSettings);

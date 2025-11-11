@@ -407,14 +407,16 @@ class AdminService {
 
   // ========== PRODUCT MANAGEMENT ==========
   async getAllProducts(filters) {
-    const { page = 1, limit = 10, status, search, category } = filters;
+    const { page = 1, limit = 10, status, search, category, sortBy = 'createdAt', sortOrder = 'desc' } = filters;
     
     let query = {};
 
+    // Filter by status
     if (status && status !== 'all') {
       query.status = status;
     }
 
+    // Filter by search term
     if (search) {
       query.$or = [
         { title: { $regex: search, $options: 'i' } },
@@ -422,31 +424,43 @@ class AdminService {
       ];
     }
 
+    // Filter by category
     if (category && category !== 'all') {
       query.category = category;
     }
 
-    const skip = (page - 1) * limit;
+    // Setup pagination
+    const skip = (parseInt(page) - 1) * parseInt(limit);
 
-    const [products, total] = await Promise.all([
-      Product.find(query)
-        .populate('owner', 'fullName username email phone profile')
-        .populate('category', 'name slug')
-        .sort({ createdAt: -1 })
-        .skip(skip)
-        .limit(parseInt(limit)),
-      Product.countDocuments(query)
-    ]);
+    // Setup sorting
+    const sortOptions = {};
+    sortOptions[sortBy] = sortOrder === 'desc' ? -1 : 1;
 
-    return {
-      products,
-      pagination: {
-        currentPage: parseInt(page),
-        totalPages: Math.ceil(total / limit),
-        totalProducts: total,
-        limit: parseInt(limit)
-      }
-    };
+    try {
+      const [products, total] = await Promise.all([
+        Product.find(query)
+          .populate('owner', 'fullName username email phone profile')
+          .populate('category', 'name slug level priority')
+          .populate('subCategory', 'name slug level priority')
+          .sort(sortOptions)
+          .skip(skip)
+          .limit(parseInt(limit)),
+        Product.countDocuments(query)
+      ]);
+
+      return {
+        products,
+        pagination: {
+          currentPage: parseInt(page),
+          totalPages: Math.ceil(total / parseInt(limit)),
+          totalProducts: total,
+          limit: parseInt(limit)
+        }
+      };
+    } catch (error) {
+      console.error('Error in getAllProducts:', error);
+      throw new Error(`Lỗi khi lấy danh sách sản phẩm: ${error.message}`);
+    }
   }
 
   async getProductById(productId) {
@@ -588,19 +602,10 @@ class AdminService {
       console.log('Product found, proceeding with deletion');
       console.log('Product title:', product.title);
 
-      // Soft delete by setting deletedAt
-      const deletedProduct = await Product.findByIdAndUpdate(
-        productId,
-        { 
-          deletedAt: new Date(),
-          'moderation.deletedBy': adminId,
-          'moderation.deletedAt': new Date(),
-          status: 'INACTIVE'
-        },
-        { new: true }
-      );
+      // Hard delete - remove from database permanently
+      const deletedProduct = await Product.findByIdAndDelete(productId);
 
-      console.log('Product soft deleted successfully');
+      console.log('Product permanently deleted from database');
       return deletedProduct;
     } catch (error) {
       console.error('Error deleting product:', error.message);
@@ -995,6 +1000,12 @@ class AdminService {
         throw new Error('Trạng thái không hợp lệ');
       }
 
+      // Find the report first to get the reported product
+      const report = await Report.findById(reportId).populate('reportedItem');
+      if (!report) {
+        throw new Error('Không tìm thấy báo cáo');
+      }
+
       const updateData = {
         status,
         updatedAt: new Date()
@@ -1004,16 +1015,46 @@ class AdminService {
         updateData.adminNotes = adminNotes;
       }
 
+      // Update report status
       const updatedReport = await Report.findByIdAndUpdate(
         reportId,
         updateData,
         { new: true }
       )
         .populate('reporter', 'fullName email avatar')
-        .populate('reportedItem', 'title images price status');
+        .populate('reportedItem', 'title images pricing status');
 
-      if (!updatedReport) {
-        throw new Error('Không tìm thấy báo cáo');
+      // Handle product status based on report status
+      const productId = report.reportedItem._id;
+      
+      switch (status) {
+        case 'PENDING':
+          // Keep product as is for pending reports
+          break;
+          
+        case 'REVIEWED':
+          // Set product to INACTIVE (hidden from frontend)
+          await Product.findByIdAndUpdate(productId, {
+            status: 'INACTIVE',
+            updatedAt: new Date()
+          });
+          console.log(`Product ${productId} set to INACTIVE due to report being REVIEWED`);
+          break;
+          
+        case 'RESOLVED':
+          // Delete product from database permanently
+          await Product.findByIdAndDelete(productId);
+          console.log(`Product ${productId} permanently deleted due to report being RESOLVED`);
+          break;
+          
+        case 'DISMISSED':
+          // Restore product to ACTIVE (show on frontend again)
+          await Product.findByIdAndUpdate(productId, {
+            status: 'ACTIVE',
+            updatedAt: new Date()
+          });
+          console.log(`Product ${productId} restored to ACTIVE due to report being DISMISSED`);
+          break;
       }
 
       return updatedReport;
@@ -1054,20 +1095,11 @@ class AdminService {
         throw new Error('Không thể xóa sản phẩm có đơn hàng đang hoạt động');
       }
 
-      // Soft delete - update status to DELETED and add deletion info
-      const deletedProduct = await Product.findByIdAndUpdate(
-        productId,
-        {
-          status: 'DELETED',
-          deletedAt: new Date(),
-          'moderation.deletedBy': adminId,
-          'moderation.deletedAt': new Date(),
-          updatedAt: new Date()
-        },
-        { new: true }
-      );
+      // Hard delete - remove from database permanently
+      // Note: This will also remove references in other collections
+      const deletedProduct = await Product.findByIdAndDelete(productId);
 
-      console.log('Product soft deleted successfully:', deletedProduct._id);
+      console.log('Product permanently deleted from database:', productId);
       return deletedProduct;
     } catch (error) {
       console.error('Error in deleteProduct service:', error.message);
