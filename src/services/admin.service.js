@@ -880,46 +880,6 @@ class AdminService {
     };
   }
 
-  async resolveReport(reportId, action, note, adminId) {
-    const validActions = ['DISMISS', 'WARNING', 'SUSPEND', 'BAN'];
-    if (!validActions.includes(action)) {
-      throw new Error('Hành động không hợp lệ');
-    }
-
-    const report = await Report.findByIdAndUpdate(
-      reportId,
-      { 
-        status: 'RESOLVED',
-        resolution: {
-          action,
-          note,
-          resolvedBy: adminId,
-          resolvedAt: new Date()
-        },
-        updatedAt: new Date()
-      },
-      { new: true }
-    ).populate('reporter', 'profile.firstName profile.lastName email')
-     .populate('reportedUser', 'profile.firstName profile.lastName email');
-
-    if (!report) {
-      throw new Error('Không tìm thấy báo cáo');
-    }
-
-    // Apply action to reported user if needed
-    if (report.reportedUser && ['SUSPEND', 'BAN'].includes(action)) {
-      await User.findByIdAndUpdate(
-        report.reportedUser._id,
-        { 
-          status: action === 'SUSPEND' ? 'SUSPENDED' : 'INACTIVE',
-          updatedAt: new Date()
-        }
-      );
-    }
-
-    return report;
-  }
-
   // ========== SYSTEM SETTINGS ==========
   async getSystemSettings() {
     // This would typically come from a Settings model
@@ -951,6 +911,168 @@ class AdminService {
       updatedBy: adminId,
       updatedAt: new Date()
     };
+  }
+
+  // ========== REPORT MANAGEMENT ==========
+  async getAllReports(filters) {
+    try {
+      const { page = 1, limit = 10, search, reportType, status } = filters;
+      const skip = (page - 1) * limit;
+      
+      // Build filter query
+      let query = {};
+      
+      if (search) {
+        query.$or = [
+          { reason: { $regex: search, $options: 'i' } },
+          { description: { $regex: search, $options: 'i' } },
+          { adminNotes: { $regex: search, $options: 'i' } }
+        ];
+      }
+      
+      if (reportType) {
+        query.reportType = reportType;
+      }
+      
+      if (status) {
+        query.status = status;
+      }
+
+      const [reports, total] = await Promise.all([
+        Report.find(query)
+          .populate('reporter', 'fullName email avatar')
+          .populate('reportedItem', 'title images price status')
+          .sort({ createdAt: -1 })
+          .skip(skip)
+          .limit(parseInt(limit)),
+        Report.countDocuments(query)
+      ]);
+
+      return {
+        reports,
+        pagination: {
+          currentPage: parseInt(page),
+          totalPages: Math.ceil(total / limit),
+          total,
+          limit: parseInt(limit)
+        }
+      };
+    } catch (error) {
+      throw new Error(`Lỗi khi lấy danh sách báo cáo: ${error.message}`);
+    }
+  }
+
+  async getReportById(reportId) {
+    try {
+      const report = await Report.findById(reportId)
+        .populate('reporter', 'fullName email avatar phone address')
+        .populate('reportedItem', 'title description images price status owner category')
+        .populate({
+          path: 'reportedItem',
+          populate: {
+            path: 'owner',
+            select: 'fullName email avatar phone'
+          }
+        })
+        .populate({
+          path: 'reportedItem',
+          populate: {
+            path: 'category',
+            select: 'name'
+          }
+        });
+
+      return report;
+    } catch (error) {
+      throw new Error(`Lỗi khi lấy chi tiết báo cáo: ${error.message}`);
+    }
+  }
+
+  async updateReportStatus(reportId, status, adminNotes) {
+    try {
+      const validStatuses = ['PENDING', 'REVIEWED', 'RESOLVED', 'DISMISSED'];
+      if (!validStatuses.includes(status)) {
+        throw new Error('Trạng thái không hợp lệ');
+      }
+
+      const updateData = {
+        status,
+        updatedAt: new Date()
+      };
+
+      if (adminNotes) {
+        updateData.adminNotes = adminNotes;
+      }
+
+      const updatedReport = await Report.findByIdAndUpdate(
+        reportId,
+        updateData,
+        { new: true }
+      )
+        .populate('reporter', 'fullName email avatar')
+        .populate('reportedItem', 'title images price status');
+
+      if (!updatedReport) {
+        throw new Error('Không tìm thấy báo cáo');
+      }
+
+      return updatedReport;
+    } catch (error) {
+      throw new Error(`Lỗi khi cập nhật trạng thái báo cáo: ${error.message}`);
+    }
+  }
+
+  // ========== PRODUCT MANAGEMENT ==========
+  async deleteProduct(productId, adminId) {
+    console.log('=== Admin Service deleteProduct ===');
+    console.log('Input params:', { productId, adminId });
+    
+    // Validate productId
+    if (!productId) {
+      throw new Error('ID sản phẩm không hợp lệ');
+    }
+
+    const mongoose = require('mongoose');
+    if (!mongoose.Types.ObjectId.isValid(productId)) {
+      throw new Error('ID sản phẩm không hợp lệ');
+    }
+
+    try {
+      const product = await Product.findById(productId);
+      
+      if (!product) {
+        throw new Error('Không tìm thấy sản phẩm');
+      }
+
+      // Check if product is currently rented or has active orders
+      const activeOrders = await Order.countDocuments({
+        product: productId,
+        status: { $in: ['PENDING', 'CONFIRMED', 'IN_PROGRESS'] }
+      });
+
+      if (activeOrders > 0) {
+        throw new Error('Không thể xóa sản phẩm có đơn hàng đang hoạt động');
+      }
+
+      // Soft delete - update status to DELETED and add deletion info
+      const deletedProduct = await Product.findByIdAndUpdate(
+        productId,
+        {
+          status: 'DELETED',
+          deletedAt: new Date(),
+          'moderation.deletedBy': adminId,
+          'moderation.deletedAt': new Date(),
+          updatedAt: new Date()
+        },
+        { new: true }
+      );
+
+      console.log('Product soft deleted successfully:', deletedProduct._id);
+      return deletedProduct;
+    } catch (error) {
+      console.error('Error in deleteProduct service:', error.message);
+      throw new Error(`Lỗi khi xóa sản phẩm: ${error.message}`);
+    }
   }
 }
 

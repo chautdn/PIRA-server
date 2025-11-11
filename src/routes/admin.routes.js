@@ -2,7 +2,9 @@ const express = require('express');
 const router = express.Router();
 const adminController = require('../controllers/admin.controller');
 const { authMiddleware } = require('../middleware/auth');
-const { requireRole } = require('../middleware/validation');
+const { 
+  requireRole
+} = require('../middleware/validation');
 const { registerRoute } = require('./register.routes');
 
 
@@ -47,7 +49,8 @@ router.patch('/orders/:orderId/status', adminController.updateOrderStatus);
 
 // ========== REPORT MANAGEMENT ==========
 router.get('/reports', adminController.getAllReports);
-router.patch('/reports/:reportId/resolve', adminController.resolveReport);
+router.get('/reports/:reportId', adminController.getReportById);
+router.patch('/reports/:reportId/status', adminController.updateReportStatus);
 
 // ========== SYSTEM SETTINGS ==========
 router.get('/settings', adminController.getSystemSettings);

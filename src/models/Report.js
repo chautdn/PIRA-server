@@ -12,7 +12,7 @@ const reportSchema = new mongoose.Schema(
       enum: ['SPAM', 'INAPPROPRIATE', 'HARASSMENT', 'OTHER'],
       required: true
     },
-    reson: {
+    reason: {
       type: String,
       trim: true,
       maxlength: 1000
@@ -24,7 +24,7 @@ const reportSchema = new mongoose.Schema(
     },
     reportedItem: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: 'product',
+      ref: 'Product',
       required: true
     },
     status: {

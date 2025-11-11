@@ -448,19 +448,6 @@ class AdminController {
     }
   }
 
-  async resolveReport(req, res) {
-    try {
-      const { reportId } = req.params;
-      const { action, note } = req.body;
-      const adminId = req.user.id;
-
-      const report = await adminService.resolveReport(reportId, action, note, adminId);
-      return responseUtils.success(res, report, 'Xử lý báo cáo thành công');
-    } catch (error) {
-      return responseUtils.error(res, error.message, 500);
-    }
-  }
-
   // ========== SYSTEM SETTINGS ==========
   async getSystemSettings(req, res) {
     try {
@@ -478,6 +465,46 @@ class AdminController {
 
       const settings = await adminService.updateSystemSettings(settingsData, adminId);
       return responseUtils.success(res, settings, 'Cập nhật cài đặt hệ thống thành công');
+    } catch (error) {
+      return responseUtils.error(res, error.message, 500);
+    }
+  }
+
+  // ========== REPORT MANAGEMENT ==========
+  async getAllReports(req, res) {
+    try {
+      const { page = 1, limit = 10, search, reportType, status } = req.query;
+      const filters = { page, limit, search, reportType, status };
+      
+      const result = await adminService.getAllReports(filters);
+      return responseUtils.success(res, result, 'Lấy danh sách báo cáo thành công');
+    } catch (error) {
+      return responseUtils.error(res, error.message, 500);
+    }
+  }
+
+  async getReportById(req, res) {
+    try {
+      const { reportId } = req.params;
+      const report = await adminService.getReportById(reportId);
+      
+      if (!report) {
+        return responseUtils.error(res, 'Không tìm thấy báo cáo', 404);
+      }
+      
+      return responseUtils.success(res, report, 'Lấy chi tiết báo cáo thành công');
+    } catch (error) {
+      return responseUtils.error(res, error.message, 500);
+    }
+  }
+
+  async updateReportStatus(req, res) {
+    try {
+      const { reportId } = req.params;
+      const { status, adminNotes } = req.body;
+      
+      const updatedReport = await adminService.updateReportStatus(reportId, status, adminNotes);
+      return responseUtils.success(res, updatedReport, 'Cập nhật trạng thái báo cáo thành công');
     } catch (error) {
       return responseUtils.error(res, error.message, 500);
     }
