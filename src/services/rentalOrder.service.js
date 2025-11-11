@@ -41,19 +41,63 @@ class RentalOrderService {
         if (!item.product.owner) {
           throw new Error('Thông tin chủ sở hữu sản phẩm không đầy đủ');
         }
+        // Kiểm tra rental period cho từng item
+        if (!item.rental || !item.rental.startDate || !item.rental.endDate) {
+          throw new Error(
+            `Sản phẩm "${item.product.title || item.product.name}" chưa có thời gian thuê`
+          );
+        }
+        // Kiểm tra thời gian hợp lệ
+        const startDate = new Date(item.rental.startDate);
+        const endDate = new Date(item.rental.endDate);
+        if (startDate >= endDate) {
+          throw new Error(
+            `Thời gian thuê không hợp lệ cho sản phẩm "${item.product.title || item.product.name}"`
+          );
+        }
+        if (startDate < new Date()) {
+          throw new Error(
+            `Thời gian bắt đầu thuê không thể trong quá khứ cho sản phẩm "${item.product.title || item.product.name}" "${startDate.toISOString().split('T')[0]}"`
+          );
+        }
       }
 
       // Nhóm sản phẩm theo chủ sở hữu
+      console.log(
+        '🛒 Original cart items:',
+        cart.items.map((item, index) => ({
+          index,
+          productId: item.product._id,
+          productName: item.product.title || item.product.name,
+          quantity: item.quantity,
+          rental: item.rental,
+          ownerId: item.product.owner._id
+        }))
+      );
+
       const productsByOwner = this.groupProductsByOwner(cart.items);
+
+      console.log(
+        '👥 Products grouped by owner:',
+        Object.keys(productsByOwner).map((ownerId) => ({
+          ownerId,
+          itemCount: productsByOwner[ownerId].length,
+          items: productsByOwner[ownerId].map((item, index) => ({
+            index,
+            productId: item.product._id,
+            quantity: item.quantity,
+            rental: item.rental
+          }))
+        }))
+      );
 
       // Tạo masterOrderNumber
       const orderNumber = `MO${Date.now()}${Math.random().toString(36).substr(2, 5).toUpperCase()}`;
 
-      // Tạo MasterOrder
+      // Tạo MasterOrder (rentalPeriod optional vì mỗi product có period riêng)
       const masterOrder = new MasterOrder({
         renter: renterId,
         masterOrderNumber: orderNumber,
-        rentalPeriod,
         deliveryAddress: {
           ...deliveryAddress,
           latitude: deliveryAddress.latitude || null,
@@ -75,20 +119,19 @@ class RentalOrderService {
         const owner = await User.findById(ownerId);
         if (!owner) continue;
 
-        // Tính toán giá cho sản phẩm
-        const processedProducts = this.calculateProductPricing(products, rentalPeriod);
+        // Tính toán giá cho sản phẩm (không cần pass master rentalPeriod)
+        const processedProducts = await this.calculateProductPricing(products);
 
         // Tạo subOrderNumber
         const subOrderNumber = `SO${Date.now()}${Math.random().toString(36).substr(2, 5).toUpperCase()}`;
 
-        // Tạo SubOrder
+        // Tạo SubOrder (không set rentalPeriod ở SubOrder level vì mỗi product có period riêng)
         const subOrder = new SubOrder({
           masterOrder: masterOrder._id,
           subOrderNumber: subOrderNumber,
           owner: ownerId,
           ownerAddress: owner.profile.address || {},
           products: processedProducts,
-          rentalPeriod,
           shipping: {
             method: deliveryMethod
           },
@@ -840,26 +883,102 @@ class RentalOrderService {
     return grouped;
   }
 
-  async calculateProductPricing(products, rentalPeriod) {
-    const startDate = new Date(rentalPeriod.startDate);
-    const endDate = new Date(rentalPeriod.endDate);
-    const durationDays = Math.ceil((endDate - startDate) / (1000 * 60 * 60 * 24));
+  async calculateProductPricing(products) {
+    console.log('🔍 calculateProductPricing input:', {
+      productsCount: products.length,
+      products: products.map((item, index) => ({
+        index,
+        productId: item.product._id || item.product,
+        quantity: item.quantity,
+        rental: item.rental
+      }))
+    });
 
-    return products.map((item) => {
+    return products.map((item, index) => {
       const product = item.product;
       const quantity = item.quantity;
 
-      const dailyRate = product.price;
-      const depositRate = product.deposit;
+      // Sử dụng rental period từ cart item - KHÔNG fallback về master period
+      if (!item.rental || !item.rental.startDate || !item.rental.endDate) {
+        console.error('❌ Cart item missing rental period:', item);
+        throw new Error('Cart item thiếu thông tin thời gian thuê');
+      }
+
+      const itemRentalPeriod = item.rental;
+      const startDate = new Date(itemRentalPeriod.startDate);
+      const endDate = new Date(itemRentalPeriod.endDate);
+      const durationDays = Math.ceil((endDate - startDate) / (1000 * 60 * 60 * 24));
+
+      console.log(`📊 Processing item ${index}:`, {
+        productId: product._id || product,
+        quantity,
+        itemRental: item.rental,
+        startDate: startDate.toISOString(),
+        endDate: endDate.toISOString(),
+        calculatedDuration: durationDays
+      });
+
+      // Debug product pricing structure
+      console.log(`💰 Product pricing debug:`, {
+        productId: product._id,
+        price: product.price,
+        deposit: product.deposit,
+        pricing: product.pricing,
+        fullProduct: product
+      });
+
+      // Try multiple ways to get pricing
+      const dailyRate =
+        product.price || product.pricing?.dailyRate || product.pricing?.rentalPrice || 0;
+
+      const depositRate =
+        product.deposit || product.pricing?.deposit?.amount || product.pricing?.depositAmount || 0;
+
+      console.log(`💵 Calculated rates:`, {
+        dailyRate,
+        depositRate,
+        quantity,
+        durationDays
+      });
 
       const totalRental = dailyRate * durationDays * quantity;
       const totalDeposit = depositRate * quantity;
+
+      console.log(`💸 Final amounts:`, {
+        totalRental,
+        totalDeposit
+      });
+
+      // Validation to prevent NaN
+      if (isNaN(dailyRate) || dailyRate < 0) {
+        throw new Error(`Invalid daily rate for product ${product._id}: ${dailyRate}`);
+      }
+      if (isNaN(depositRate) || depositRate < 0) {
+        throw new Error(`Invalid deposit rate for product ${product._id}: ${depositRate}`);
+      }
+      if (isNaN(totalRental) || totalRental < 0) {
+        throw new Error(`Invalid total rental for product ${product._id}: ${totalRental}`);
+      }
+      if (isNaN(totalDeposit) || totalDeposit < 0) {
+        throw new Error(`Invalid total deposit for product ${product._id}: ${totalDeposit}`);
+      }
 
       return {
         product: product._id,
         quantity,
         rentalRate: dailyRate,
         depositRate,
+        // Thêm rental period riêng cho từng item
+        rentalPeriod: {
+          startDate: itemRentalPeriod.startDate,
+          endDate: itemRentalPeriod.endDate,
+          duration: {
+            value: durationDays,
+            unit: 'DAY'
+          }
+        },
+        // Mặc định tất cả items đều PENDING khi tạo order
+        confirmationStatus: 'PENDING',
         totalRental,
         totalDeposit
       };
@@ -1035,42 +1154,7 @@ class RentalOrderService {
     return subOrder ? subOrder.masterOrder : null;
   }
 
-  /**
-   * Calculate product pricing for rental period
-   */
-  calculateProductPricing(products, rentalPeriod) {
-    const startDate = new Date(rentalPeriod.startDate);
-    const endDate = new Date(rentalPeriod.endDate);
-    const days = Math.ceil((endDate - startDate) / (1000 * 60 * 60 * 24)) || 1;
-
-    console.log(`📊 Calculating pricing for ${products.length} products over ${days} days`);
-
-    return products.map((item) => {
-      const dailyRate = item.product.pricing?.dailyRate || item.product.price || 0;
-      const depositAmount = item.product.pricing?.deposit?.amount || item.product.deposit || 0;
-
-      const totalRental = dailyRate * item.quantity * days;
-      const totalDeposit = depositAmount * item.quantity;
-
-      console.log(
-        `💰 Product ${item.product.title || item.product.name}: ${dailyRate}đ/day x ${item.quantity} x ${days} days = ${totalRental}đ`
-      );
-
-      return {
-        product: item.product._id,
-        quantity: item.quantity,
-        rentalRate: dailyRate,
-        depositRate: depositAmount,
-        totalRental,
-        totalDeposit,
-        rentalPeriod: {
-          startDate: startDate,
-          endDate: endDate,
-          days: days
-        }
-      };
-    });
-  }
+  // OLD METHOD REMOVED - using new async calculateProductPricing method
 
   /**
    * Group products by owner
