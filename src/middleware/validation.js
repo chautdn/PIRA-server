@@ -204,6 +204,68 @@ const validateReportStatusUpdate = [
   }
 ];
 
+// Report validation
+const validateCreateReport = [
+  body('reportType')
+    .notEmpty()
+    .withMessage('Loại báo cáo là bắt buộc')
+    .isIn(['SPAM', 'INAPPROPRIATE', 'HARASSMENT', 'OTHER'])
+    .withMessage('Loại báo cáo không hợp lệ'),
+  body('reportedItem')
+    .notEmpty()
+    .withMessage('Sản phẩm bị báo cáo là bắt buộc')
+    .isMongoId()
+    .withMessage('ID sản phẩm không hợp lệ'),
+  body('reason')
+    .optional()
+    .isLength({ max: 1000 })
+    .withMessage('Lý do không được quá 1000 ký tự'),
+  body('description')
+    .optional()
+    .isLength({ max: 2000 })
+    .withMessage('Mô tả không được quá 2000 ký tự'),
+  (req, res, next) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return responseUtils.error(res, 'Dữ liệu không hợp lệ', 400, errors.array());
+    }
+    next();
+  }
+];
+
+const validateReportId = [
+  param('reportId')
+    .isMongoId()
+    .withMessage('ID báo cáo không hợp lệ'),
+  (req, res, next) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return responseUtils.error(res, 'Dữ liệu không hợp lệ', 400, errors.array());
+    }
+    next();
+  }
+];
+
+const reportLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000, // 1 hour
+  max: 5, // 5 reports per hour per user
+  message: {
+    message: 'Bạn đã gửi quá nhiều báo cáo. Vui lòng thử lại sau 1 tiếng.'
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => {
+    // Use user ID if available (preferred for logged-in users)
+    if (req.user?.id) {
+      return `user:${req.user.id}`;
+    }
+    // Fallback to IP with proper IPv6 handling
+    return req.ip;
+  },
+  // Skip IPv6 validation since we're using user ID primarily
+  skip: (req) => false
+});
+
 module.exports = {
   validateRegister,
   validateLogin,
@@ -216,5 +278,9 @@ module.exports = {
   validateMessageId,
   validatePagination,
   chatMessageLimiter,
-  chatActionLimiter
+  chatActionLimiter,
+  // Report validation exports
+  validateCreateReport,
+  validateReportId,
+  reportLimiter
 };
