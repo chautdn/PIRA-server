@@ -30,7 +30,7 @@ const deleteUser = async (id) => {
   return user;
 };
 const getProfile = async (id) => {
-  const user = await User.findById(id);
+  const user = await User.findById(id).populate('wallet');
   if (!user) {
     throw new NotFoundError('User');
   }
@@ -114,149 +114,115 @@ const updateProfileByKyc = async (id) => {
   }
 };
 
-// ========== REPORT MANAGEMENT ==========
-const createReport = async (reportData, reporterId) => {
-  try {
-    console.log('=== User Service createReport ===');
-    console.log('Report data:', reportData);
-    console.log('Reporter ID:', reporterId);
-
-    // Validate required fields
-    const { reportType, reportedItem, reason, description } = reportData;
-    
-    if (!reportType) {
-      throw new ValidationError('Loại báo cáo là bắt buộc');
-    }
-    
-    if (!reportedItem) {
-      throw new ValidationError('Sản phẩm bị báo cáo là bắt buộc');
-    }
-
-    // Validate reportType
-    const validTypes = ['SPAM', 'INAPPROPRIATE', 'HARASSMENT', 'OTHER'];
-    if (!validTypes.includes(reportType)) {
-      throw new ValidationError('Loại báo cáo không hợp lệ');
-    }
-
-    // Check if product exists
-    const product = await Product.findById(reportedItem);
-    if (!product) {
-      throw new NotFoundError('Sản phẩm không tồn tại');
-    }
-
-    // Check if user already reported this product
-    const existingReport = await Report.findOne({
-      reporter: reporterId,
-      reportedItem: reportedItem,
-      status: { $in: ['PENDING', 'REVIEWED'] }
-    });
-
-    if (existingReport) {
-      throw new ValidationError('Bạn đã báo cáo sản phẩm này rồi');
-    }
-
-    // Create new report
-    const newReport = new Report({
-      reporter: reporterId,
-      reportType,
-      reason: reason || '',
-      description: description || '',
-      reportedItem,
-      status: 'PENDING',
-      createdAt: new Date(),
-      updatedAt: new Date()
-    });
-
-    const savedReport = await newReport.save();
-    
-    // Populate report for response
-    const populatedReport = await Report.findById(savedReport._id)
-      .populate('reporter', 'fullName email')
-      .populate('reportedItem', 'title images pricing status');
-
-    console.log('Report created successfully:', populatedReport._id);
-    return populatedReport;
-
-  } catch (error) {
-    console.error('Error creating report:', error);
-    if (error instanceof ValidationError || error instanceof NotFoundError) {
-      throw error;
-    }
-    throw new DatabaseError('Lỗi khi tạo báo cáo');
-  }
+// Bank Account Management
+const VIETNAMESE_BANKS = {
+  VCB: { name: 'Vietcombank', accountLength: [13, 14] },
+  TCB: { name: 'Techcombank', accountLength: [12, 19] },
+  BIDV: { name: 'BIDV', accountLength: [12, 14] },
+  VTB: { name: 'Vietinbank', accountLength: [12, 13] },
+  ACB: { name: 'ACB', accountLength: [9, 14] },
+  MB: { name: 'MB Bank', accountLength: [12, 13] },
+  TPB: { name: 'TPBank', accountLength: [10, 12] },
+  STB: { name: 'Sacombank', accountLength: [13, 16] },
+  VPB: { name: 'VPBank', accountLength: [12, 13] },
+  AGR: { name: 'Agribank', accountLength: [13, 14] },
+  EIB: { name: 'Eximbank', accountLength: [12, 16] },
+  MSB: { name: 'MSB', accountLength: [12, 13] },
+  SCB: { name: 'SCB', accountLength: [12, 13] },
+  SHB: { name: 'SHB', accountLength: [12, 13] },
+  OCB: { name: 'OCB', accountLength: [12, 14] }
 };
 
-const getUserReports = async (userId, filters = {}) => {
-  try {
-    console.log('=== User Service getUserReports ===');
-    console.log('User ID:', userId);
-    console.log('Filters:', filters);
-
-    const { page = 1, limit = 10, status } = filters;
-
-    // Build query
-    let query = { reporter: userId };
-    
-    if (status && status !== 'all') {
-      query.status = status;
-    }
-
-    const skip = (parseInt(page) - 1) * parseInt(limit);
-
-    const [reports, total] = await Promise.all([
-      Report.find(query)
-        .populate('reportedItem', 'title images pricing status owner')
-        .populate('reportedItem.owner', 'fullName email')
-        .sort({ createdAt: -1 })
-        .skip(skip)
-        .limit(parseInt(limit)),
-      Report.countDocuments(query)
-    ]);
-
-    return {
-      reports,
-      pagination: {
-        currentPage: parseInt(page),
-        totalPages: Math.ceil(total / parseInt(limit)),
-        total,
-        limit: parseInt(limit)
-      }
-    };
-
-  } catch (error) {
-    console.error('Error getting user reports:', error);
-    throw new DatabaseError('Lỗi khi lấy danh sách báo cáo');
+const validateBankAccount = (bankCode, accountNumber) => {
+  const bank = VIETNAMESE_BANKS[bankCode];
+  if (!bank) {
+    throw new ValidationError('Invalid bank code');
   }
+
+  const cleanNumber = accountNumber.replace(/[\s-]/g, '');
+  if (!/^\d+$/.test(cleanNumber)) {
+    throw new ValidationError('Account number must contain only digits');
+  }
+
+  const [minLen, maxLen] = bank.accountLength;
+  if (cleanNumber.length < minLen || cleanNumber.length > maxLen) {
+    throw new ValidationError(`${bank.name} account number must be ${minLen}-${maxLen} digits`);
+  }
+
+  return { bankName: bank.name, cleanNumber };
 };
 
-const getReportById = async (reportId, userId) => {
-  try {
-    console.log('=== User Service getReportById ===');
-    console.log('Report ID:', reportId);
-    console.log('User ID:', userId);
+const addBankAccount = async (userId, bankData) => {
+  const { bankCode, accountNumber, accountHolderName } = bankData;
 
-    // Find report and verify ownership
-    const report = await Report.findOne({
-      _id: reportId,
-      reporter: userId
-    })
-    .populate('reporter', 'fullName email')
-    .populate('reportedItem', 'title description images pricing status owner location')
-    .populate('reportedItem.owner', 'fullName email phone');
+  // Validate bank account
+  const { bankName, cleanNumber } = validateBankAccount(bankCode, accountNumber);
 
-    if (!report) {
-      throw new NotFoundError('Báo cáo không tồn tại hoặc bạn không có quyền xem');
-    }
-
-    return report;
-
-  } catch (error) {
-    console.error('Error getting report by ID:', error);
-    if (error instanceof NotFoundError) {
-      throw error;
-    }
-    throw new DatabaseError('Lỗi khi lấy chi tiết báo cáo');
+  // Validate account holder name
+  if (!accountHolderName || accountHolderName.trim().length < 2) {
+    throw new ValidationError('Account holder name is required');
   }
+
+  const user = await User.findById(userId);
+  if (!user) {
+    throw new NotFoundError('User not found');
+  }
+
+  // Update user with bank account info
+  user.bankAccount = {
+    bankCode,
+    bankName,
+    accountNumber: cleanNumber,
+    accountHolderName: accountHolderName.trim().toUpperCase(),
+    isVerified: false,
+    addedAt: new Date()
+  };
+
+  await user.save();
+  return user;
+};
+
+const updateBankAccount = async (userId, bankData) => {
+  const user = await User.findById(userId);
+  if (!user) {
+    throw new NotFoundError('User not found');
+  }
+
+  if (!user.bankAccount) {
+    throw new NotFoundError('No bank account found');
+  }
+
+  // Only allow updating account holder name
+  if (bankData.accountHolderName) {
+    if (bankData.accountHolderName.trim().length < 2) {
+      throw new ValidationError('Account holder name is required');
+    }
+    user.bankAccount.accountHolderName = bankData.accountHolderName.trim().toUpperCase();
+  }
+
+  await user.save();
+  return user;
+};
+
+const removeBankAccount = async (userId) => {
+  const user = await User.findById(userId);
+  if (!user) {
+    throw new NotFoundError('User not found');
+  }
+
+  user.bankAccount = undefined;
+  await user.save();
+
+  return { message: 'Bank account removed successfully' };
+};
+
+const getBankAccount = async (userId) => {
+  const user = await User.findById(userId).select('bankAccount');
+  if (!user) {
+    throw new NotFoundError('User not found');
+  }
+
+  return user.bankAccount || null;
 };
 
 module.exports = {
@@ -266,7 +232,9 @@ module.exports = {
   getProfile,
   updateProfile,
   updateProfileByKyc,
-  createReport,
-  getUserReports,
-  getReportById
+  addBankAccount,
+  updateBankAccount,
+  removeBankAccount,
+  getBankAccount,
+  VIETNAMESE_BANKS
 };

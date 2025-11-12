@@ -7,8 +7,6 @@ const {
 } = require('../middleware/validation');
 const { registerRoute } = require('./register.routes');
 
-
-
 router.use(authMiddleware.verifyToken);
 router.use(requireRole('ADMIN'));
 
@@ -16,7 +14,6 @@ router.use(requireRole('ADMIN'));
 router.get('/dashboard', adminController.getDashboard);
 
 // ========== TEST ROUTES ==========
-
 
 // ========== USER MANAGEMENT ==========
 router.get('/users', adminController.getAllUsers);

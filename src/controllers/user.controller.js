@@ -7,9 +7,11 @@ const {
   getProfile,
   updateProfile,
   updateProfileByKyc,
-  createReport,
-  getUserReports,
-  getReportById
+  addBankAccount,
+  updateBankAccount,
+  removeBankAccount,
+  getBankAccount,
+  VIETNAMESE_BANKS
 } = require('../services/user.service');
 
 exports.getUsers = async (req, res) => {
@@ -45,60 +47,55 @@ exports.updateProfileByKyc = async (req, res) => {
   }
 };
 
-// ========== REPORT MANAGEMENT ==========
-exports.createReport = async (req, res) => {
+// Bank Account Management
+exports.getBankAccount = async (req, res) => {
   try {
-    console.log('=== User Controller createReport ===');
-    console.log('Request body:', req.body);
-    console.log('User ID:', req.user.id);
-
-    const report = await createReport(req.body, req.user.id);
-    return responseUtils.success(res, report, 'Gửi báo cáo thành công');
+    const bankAccount = await getBankAccount(req.user.id);
+    return SuccessResponse.ok(res, { bankAccount }, 'Bank account retrieved successfully');
   } catch (error) {
-    console.error('Create report error:', error);
-    
-    if (error.name === 'ValidationError' || error.message.includes('bắt buộc') || error.message.includes('không hợp lệ')) {
-      return responseUtils.error(res, error.message, 400);
-    } else if (error.name === 'NotFoundError' || error.message.includes('không tồn tại')) {
-      return responseUtils.error(res, error.message, 404);
-    } else {
-      return responseUtils.error(res, 'Có lỗi xảy ra khi gửi báo cáo', 500);
-    }
+    return responseUtils.error(res, error.message, 400);
   }
 };
 
-exports.getUserReports = async (req, res) => {
+exports.addBankAccount = async (req, res) => {
   try {
-    console.log('=== User Controller getUserReports ===');
-    console.log('Query params:', req.query);
-    console.log('User ID:', req.user.id);
-
-    const { page = 1, limit = 10, status } = req.query;
-    const filters = { page, limit, status };
-
-    const result = await getUserReports(req.user.id, filters);
-    return responseUtils.success(res, result, 'Lấy danh sách báo cáo thành công');
+    const user = await addBankAccount(req.user.id, req.body);
+    return SuccessResponse.ok(
+      res,
+      { bankAccount: user.bankAccount },
+      'Bank account added successfully'
+    );
   } catch (error) {
-    console.error('Get user reports error:', error);
-    return responseUtils.error(res, 'Có lỗi xảy ra khi lấy danh sách báo cáo', 500);
+    return responseUtils.error(res, error.message, 400);
   }
 };
 
-exports.getReportById = async (req, res) => {
+exports.updateBankAccount = async (req, res) => {
   try {
-    console.log('=== User Controller getReportById ===');
-    console.log('Report ID:', req.params.reportId);
-    console.log('User ID:', req.user.id);
-
-    const report = await getReportById(req.params.reportId, req.user.id);
-    return responseUtils.success(res, report, 'Lấy chi tiết báo cáo thành công');
+    const user = await updateBankAccount(req.user.id, req.body);
+    return SuccessResponse.ok(
+      res,
+      { bankAccount: user.bankAccount },
+      'Bank account updated successfully'
+    );
   } catch (error) {
-    console.error('Get report by ID error:', error);
-    
-    if (error.name === 'NotFoundError' || error.message.includes('không tồn tại')) {
-      return responseUtils.error(res, error.message, 404);
-    } else {
-      return responseUtils.error(res, 'Có lỗi xảy ra khi lấy chi tiết báo cáo', 500);
-    }
+    return responseUtils.error(res, error.message, 400);
   }
+};
+
+exports.removeBankAccount = async (req, res) => {
+  try {
+    const result = await removeBankAccount(req.user.id);
+    return SuccessResponse.ok(res, result, 'Bank account removed successfully');
+  } catch (error) {
+    return responseUtils.error(res, error.message, 400);
+  }
+};
+
+exports.getVietnameseBanks = async (req, res) => {
+  const banks = Object.entries(VIETNAMESE_BANKS).map(([code, data]) => ({
+    code,
+    name: data.name
+  }));
+  return SuccessResponse.ok(res, { banks }, 'Vietnamese banks retrieved successfully');
 };

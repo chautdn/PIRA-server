@@ -49,7 +49,14 @@ const userSchema = new mongoose.Schema(
       dateOfBirth: Date,
       gender: {
         type: String,
-        enum: ['MALE', 'FEMALE', 'OTHER']
+        required: false,
+        validate: {
+          validator: function (v) {
+            // Allow null, undefined, empty string, or valid enum values
+            return !v || v === '' || ['MALE', 'FEMALE', 'OTHER'].includes(v);
+          },
+          message: 'Gender must be MALE, FEMALE, OTHER, or empty'
+        }
       }
     },
 
@@ -112,6 +119,46 @@ const userSchema = new mongoose.Schema(
       max: 1000
     },
 
+    // Bank Account Information (for withdrawals)
+    bankAccount: {
+      bankCode: {
+        type: String,
+        enum: [
+          'VCB',
+          'TCB',
+          'BIDV',
+          'VTB',
+          'ACB',
+          'MB',
+          'TPB',
+          'STB',
+          'VPB',
+          'AGR',
+          'EIB',
+          'MSB',
+          'SCB',
+          'SHB',
+          'OCB'
+        ]
+      },
+      bankName: String,
+      accountNumber: String,
+      accountHolderName: {
+        type: String,
+        uppercase: true
+      },
+      isVerified: {
+        type: Boolean,
+        default: false
+      },
+      addedAt: Date
+    },
+
+    wallet: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Wallet'
+    },
+
     lastLoginAt: Date,
     deletedAt: Date
   },
@@ -126,6 +173,15 @@ userSchema.index({ role: 1, status: 1 });
 userSchema.index({ 'verification.emailVerified': 1 });
 userSchema.index({ 'cccd.isVerified': 1 });
 userSchema.index({ 'cccd.cccdNumber': 1 });
+
+// Clean up empty strings before saving
+userSchema.pre('save', function (next) {
+  // Clean up profile.gender - convert empty string to undefined
+  if (this.profile && this.profile.gender === '') {
+    this.profile.gender = undefined;
+  }
+  next();
+});
 
 // Hash password before saving
 userSchema.pre('save', async function (next) {
@@ -146,5 +202,36 @@ userSchema.methods.toJSON = function () {
   delete userObject.password;
   return userObject;
 };
+
+// ADD: Create wallet when user is created
+userSchema.post('save', async function (doc) {
+  // Only create wallet for new users that don't already have one
+  if (this.isNew && !doc.wallet) {
+    try {
+      const Wallet = require('./Wallet');
+
+      // Create new wallet
+      const wallet = new Wallet({
+        user: doc._id,
+        balance: {
+          available: 0,
+          frozen: 0,
+          pending: 0
+        },
+        currency: 'VND',
+        status: 'ACTIVE'
+      });
+
+      await wallet.save();
+
+      // Update user document directly without triggering hooks
+      await mongoose.model('User').updateOne({ _id: doc._id }, { wallet: wallet._id });
+
+      console.log(`✅ Auto-created wallet ${wallet._id} for new user ${doc.email}`);
+    } catch (error) {
+      console.error('❌ Error auto-creating wallet for user:', doc.email, error.message);
+    }
+  }
+});
 
 module.exports = mongoose.models.User || mongoose.model('User', userSchema);

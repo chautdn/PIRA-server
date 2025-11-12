@@ -25,6 +25,11 @@ const io = new Server(server, {
 const chatGateway = new ChatGateway(io);
 global.chatGateway = chatGateway; // Make available globally
 
+// Initialize promotion cron job
+const { startPromotionCronJob, runImmediately } = require('./scripts/promotionCron');
+startPromotionCronJob();
+runImmediately(); // Run cleanup on startup
+
 // Log Socket.IO events for monitoring
 io.engine.on('connection_error', (err) => {
   console.error('Socket.IO connection error:', err);
@@ -34,6 +39,27 @@ io.engine.on('connection_error', (err) => {
 server.listen(PORT, () => {
   console.log(`Server running on http://localhost:${PORT}`);
   console.log('Socket.IO enabled for real-time chat');
+});
+
+// Handle server errors
+server.on('error', (error) => {
+  console.error('❌ Server error:', error);
+  if (error.code === 'EADDRINUSE') {
+    console.error(`Port ${PORT} is already in use`);
+    process.exit(1);
+  }
+});
+
+// Handle uncaught exceptions
+process.on('uncaughtException', (error) => {
+  console.error('❌ Uncaught Exception:', error);
+  process.exit(1);
+});
+
+// Handle unhandled rejections
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('❌ Unhandled Rejection at:', promise, 'reason:', reason);
+  process.exit(1);
 });
 
 module.exports = { app, server, io };

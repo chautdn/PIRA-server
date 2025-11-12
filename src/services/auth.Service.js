@@ -103,7 +103,7 @@ const authService = {
 
   // Login user
   loginUser: async (email, password) => {
-    const user = await User.findOne({ email });
+    const user = await User.findOne({ email }).populate('wallet');
 
     if (!user) {
       throw new Error('Tài khoản không tồn tại');
@@ -143,6 +143,10 @@ const authService = {
   // Google Sign In
   googleSignIn: async (idToken) => {
     try {
+      if (!process.env.GOOGLE_CLIENT_ID) {
+        throw new Error('GOOGLE_CLIENT_ID not configured in environment variables');
+      }
+
       const ticket = await googleClient.verifyIdToken({
         idToken,
         audience: process.env.GOOGLE_CLIENT_ID
@@ -154,15 +158,21 @@ const authService = {
       const name = payload['name'];
       const picture = payload['picture'];
 
-      let user = await User.findOne({ email });
+      let user = await User.findOne({ email }).populate('wallet');
 
       if (!user) {
+        // Prepare profile data without undefined/empty values
+        const profileData = {
+          firstName: name || email.split('@')[0]
+        };
+
+        if (picture) {
+          profileData.avatar = picture;
+        }
+
         user = new User({
           email,
-          profile: {
-            firstName: name || email.split('@')[0],
-            avatar: picture
-          },
+          profile: profileData,
           role: 'RENTER',
           status: 'ACTIVE',
           verification: {
@@ -174,13 +184,29 @@ const authService = {
           lastLoginAt: new Date()
         });
         await user.save();
+        // Populate wallet after creation
+        user = await User.findById(user._id).populate('wallet');
       } else {
+        // Update existing user without touching profile fields that might cause validation errors
+        const updateData = {
+          lastLoginAt: new Date()
+        };
+
         if (!user.verification.emailVerified) {
-          user.verification.emailVerified = true;
-          user.status = 'ACTIVE';
+          updateData['verification.emailVerified'] = true;
+          updateData.status = 'ACTIVE';
         }
-        user.lastLoginAt = new Date();
-        await user.save();
+
+        // Update avatar if provided and not already set
+        if (picture && !user.profile?.avatar) {
+          updateData['profile.avatar'] = picture;
+        }
+
+        // Use findByIdAndUpdate to avoid validation issues with existing data
+        user = await User.findByIdAndUpdate(user._id, updateData, {
+          new: true,
+          runValidators: false // Skip validation for existing data
+        }).populate('wallet');
       }
 
       const accessToken = jwtUtils.generateAccessToken(user);

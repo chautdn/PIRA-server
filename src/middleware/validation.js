@@ -179,98 +179,25 @@ const requireRole = (requiredRole) => {
   };
 };
 
-// ========== REPORT VALIDATIONS ==========
-const validateReportParams = [
-  param('reportId').isMongoId().withMessage('Report ID không hợp lệ'),
-  (req, res, next) => {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      return responseUtils.error(res, 'Dữ liệu không hợp lệ', 400, errors.array());
-    }
-    next();
+// Generic validation error handler
+const handleValidationErrors = (req, res, next) => {
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) {
+    return res.status(400).json({
+      success: false,
+      message: 'Validation failed',
+      errors: errors.array()
+    });
   }
-];
-
-const validateReportStatusUpdate = [
-  param('reportId').isMongoId().withMessage('Report ID không hợp lệ'),
-  body('status').isIn(['PENDING', 'REVIEWED', 'RESOLVED', 'DISMISSED']).withMessage('Trạng thái không hợp lệ'),
-  body('adminNotes').optional().isLength({ max: 1000 }).withMessage('Ghi chú không được vượt quá 1000 ký tự'),
-  (req, res, next) => {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      return responseUtils.error(res, 'Dữ liệu không hợp lệ', 400, errors.array());
-    }
-    next();
-  }
-];
-
-// Report validation
-const validateCreateReport = [
-  body('reportType')
-    .notEmpty()
-    .withMessage('Loại báo cáo là bắt buộc')
-    .isIn(['SPAM', 'INAPPROPRIATE', 'HARASSMENT', 'OTHER'])
-    .withMessage('Loại báo cáo không hợp lệ'),
-  body('reportedItem')
-    .notEmpty()
-    .withMessage('Sản phẩm bị báo cáo là bắt buộc')
-    .isMongoId()
-    .withMessage('ID sản phẩm không hợp lệ'),
-  body('reason')
-    .optional()
-    .isLength({ max: 1000 })
-    .withMessage('Lý do không được quá 1000 ký tự'),
-  body('description')
-    .optional()
-    .isLength({ max: 2000 })
-    .withMessage('Mô tả không được quá 2000 ký tự'),
-  (req, res, next) => {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      return responseUtils.error(res, 'Dữ liệu không hợp lệ', 400, errors.array());
-    }
-    next();
-  }
-];
-
-const validateReportId = [
-  param('reportId')
-    .isMongoId()
-    .withMessage('ID báo cáo không hợp lệ'),
-  (req, res, next) => {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      return responseUtils.error(res, 'Dữ liệu không hợp lệ', 400, errors.array());
-    }
-    next();
-  }
-];
-
-const reportLimiter = rateLimit({
-  windowMs: 60 * 60 * 1000, // 1 hour
-  max: 5, // 5 reports per hour per user
-  message: {
-    message: 'Bạn đã gửi quá nhiều báo cáo. Vui lòng thử lại sau 1 tiếng.'
-  },
-  standardHeaders: true,
-  legacyHeaders: false,
-  keyGenerator: (req) => {
-    // Use user ID if available (preferred for logged-in users)
-    if (req.user?.id) {
-      return `user:${req.user.id}`;
-    }
-    // Fallback to IP with proper IPv6 handling
-    return req.ip;
-  },
-  // Skip IPv6 validation since we're using user ID primarily
-  skip: (req) => false
-});
+  next();
+};
 
 module.exports = {
   validateRegister,
   validateLogin,
   authLimiter,
-  requireRole, // Add this
+  requireRole,
+  handleValidationErrors, // Add this
   // Chat validation exports
   validateConversation,
   validateMessage,
@@ -279,8 +206,19 @@ module.exports = {
   validatePagination,
   chatMessageLimiter,
   chatActionLimiter,
-  // Report validation exports
-  validateCreateReport,
-  validateReportId,
-  reportLimiter
+  validateRequest: (req, res, next) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({
+        success: false,
+        message: 'Dữ liệu không hợp lệ',
+        errors: errors.array().map((error) => ({
+          field: error.path,
+          message: error.msg,
+          value: error.value
+        }))
+      });
+    }
+    next();
+  }
 };

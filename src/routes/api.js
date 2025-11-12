@@ -21,14 +21,22 @@ router.get('/health', (req, res) => {
 require('./user.routes');
 require('./auth.routes');
 require('./chat.routes');
+require('./category.routes');
 require('./products.routes');
 require('./kyc.routes');
-require('./admin.routes'); // Thêm admin routes
+require('./ownerProduct.routes');
+require('./admin.routes');
+require('./payment.routes');
+require('./cart.routes');
+require('./rating.routes');
+require('./productPromotion.routes');
+require('./rentalOrder.routes');
 
-// Apply global async handler to router
-globalAsyncHandler(router);
+// Withdrawal routes
+const withdrawalRoutes = require('./withdrawal.routes');
+router.use('/withdrawals', withdrawalRoutes);
 
-// Register all routes from the registry
+// Register all routes from the registry FIRST
 getRoutes()?.forEach(({ path, router: moduleRouter }) => {
   if (!path || typeof path !== 'string') {
     throw new Error(`Invalid route path: ${path}`);
@@ -42,5 +50,8 @@ getRoutes()?.forEach(({ path, router: moduleRouter }) => {
 
   router.use(normalizedPath, moduleRouter);
 });
+
+// Apply global async handler to router AFTER registering routes
+// globalAsyncHandler(router); // COMMENTED OUT - Causing issues with requests hanging
 
 module.exports = router;

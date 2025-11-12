@@ -25,6 +25,7 @@ router.get('/featured', productController.getFeaturedProducts);
 // GET /api/products/:id - Get product by ID
 router.get('/:id', productController.getProductById);
 
+
 registerRoute('/products', router);
 
 module.exports = router;

@@ -12,8 +12,13 @@ const cookieParser = require('cookie-parser');
 
 const app = express();
 
-// Security middleware
-app.use(helmet());
+// Security middleware with Google OAuth support
+app.use(
+  helmet({
+    crossOriginOpenerPolicy: { policy: 'same-origin-allow-popups' },
+    crossOriginEmbedderPolicy: false
+  })
+);
 
 // CORS configuration for React frontend
 app.use(
@@ -35,6 +40,13 @@ app.use(
   })
 );
 
+// Additional security headers for Google OAuth
+app.use((req, res, next) => {
+  res.setHeader('Cross-Origin-Opener-Policy', 'same-origin-allow-popups');
+  res.setHeader('Cross-Origin-Embedder-Policy', 'unsafe-none');
+  next();
+});
+
 // Body parsing middleware
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
@@ -49,6 +61,12 @@ if (process.env.NODE_ENV === 'development') {
 } else {
   app.use(morgan('combined'));
 }
+
+// Debug middleware - log all requests
+app.use((req, res, next) => {
+  console.log(`📥 ${req.method} ${req.url}`);
+  next();
+});
 
 // Custom middleware for API responses
 app.use(successHandler);
