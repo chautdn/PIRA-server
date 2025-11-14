@@ -2,7 +2,9 @@ const express = require('express');
 const router = express.Router();
 const adminController = require('../controllers/admin.controller');
 const { authMiddleware } = require('../middleware/auth');
-const { requireRole } = require('../middleware/validation');
+const { 
+  requireRole
+} = require('../middleware/validation');
 const { registerRoute } = require('./register.routes');
 
 router.use(authMiddleware.verifyToken);
@@ -25,14 +27,17 @@ router.patch('/users/bulk-update', adminController.bulkUpdateUsers);
 
 // ========== PRODUCT MANAGEMENT ==========
 router.get('/products', adminController.getAllProducts);
+router.get('/products/:productId', adminController.getProductById);
+router.patch('/products/:productId/status', adminController.updateProductStatus);
 router.patch('/products/:productId/approve', adminController.approveProduct);
 router.patch('/products/:productId/reject', adminController.rejectProduct);
+router.delete('/products/:productId', adminController.deleteProduct);
 
 // ========== CATEGORY MANAGEMENT ==========
-router.get('/categories', adminController.getAllCategories);
-router.post('/categories', adminController.createCategory);
-router.put('/categories/:categoryId', adminController.updateCategory);
-router.delete('/categories/:categoryId', adminController.deleteCategory);
+// router.get('/categories', adminController.getAllCategories);
+// router.post('/categories', adminController.createCategory);
+// router.put('/categories/:categoryId', adminController.updateCategory);
+// router.delete('/categories/:categoryId', adminController.deleteCategory);
 
 // ========== ORDER MANAGEMENT ==========
 router.get('/orders', adminController.getAllOrders);
@@ -40,7 +45,8 @@ router.get('/orders/:orderId', adminController.getOrderById);
 
 // ========== REPORT MANAGEMENT ==========
 router.get('/reports', adminController.getAllReports);
-router.patch('/reports/:reportId/resolve', adminController.resolveReport);
+router.get('/reports/:reportId', adminController.getReportById);
+router.patch('/reports/:reportId/status', adminController.updateReportStatus);
 
 // ========== SYSTEM SETTINGS ==========
 router.get('/settings', adminController.getSystemSettings);

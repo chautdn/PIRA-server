@@ -150,6 +150,12 @@ const userSchema = new mongoose.Schema(
       isVerified: {
         type: Boolean,
         default: false
+        
+      },
+      status: {
+        type: String,
+        enum: ['PENDING', 'VERIFIED', 'REJECTED'],
+        default: 'PENDING'
       },
       addedAt: Date
     },
