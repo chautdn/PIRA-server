@@ -149,16 +149,39 @@ class AdminController {
   // ========== PRODUCT MANAGEMENT ==========
   async getAllProducts(req, res) {
     try {
-      const { page = 1, limit = 10, status, search, category } = req.query;
-      const filters = { page, limit, status, search, category };
+      const { 
+        page = 1, 
+        limit = 10, 
+        status, 
+        search, 
+        category, 
+        sortBy = 'createdAt', 
+        sortOrder = 'desc' 
+      } = req.query;
+      
+      const filters = { 
+        page, 
+        limit, 
+        status, 
+        search, 
+        category, 
+        sortBy, 
+        sortOrder 
+      };
+      
+      console.log('Admin getAllProducts - filters:', filters);
       
       const result = await adminService.getAllProducts(filters);
+      console.log('Admin getAllProducts - result pagination:', result.pagination);
+      
       return responseUtils.success(res, result, 'Lấy danh sách sản phẩm thành công');
     } catch (error) {
+      console.error('Admin getAllProducts - error:', error);
       return responseUtils.error(res, error.message, 500);
     }
   }
-async getProductById(req, res) {
+
+  async getProductById(req, res) {
     console.log('=== Admin Controller getProductById ===');
     console.log('Request params:', req.params);
     console.log('Request URL:', req.originalUrl);
@@ -253,6 +276,7 @@ async getProductById(req, res) {
       }
     }
   }
+
   async approveProduct(req, res) {
     try {
       const { productId } = req.params;
@@ -278,7 +302,52 @@ async getProductById(req, res) {
     }
   }
 
-  
+  // ========== CATEGORY MANAGEMENT ==========
+  async getAllCategories(req, res) {
+    try {
+      const categories = await adminService.getAllCategories();
+      return responseUtils.success(res, categories, 'Lấy danh sách danh mục thành công');
+    } catch (error) {
+      return responseUtils.error(res, error.message, 500);
+    }
+  }
+
+  async createCategory(req, res) {
+    try {
+      const categoryData = req.body;
+      const adminId = req.user.id;
+
+      const category = await adminService.createCategory(categoryData, adminId);
+      return responseUtils.success(res, category, 'Tạo danh mục thành công');
+    } catch (error) {
+      return responseUtils.error(res, error.message, 500);
+    }
+  }
+
+  async updateCategory(req, res) {
+    try {
+      const { categoryId } = req.params;
+      const updateData = req.body;
+      const adminId = req.user.id;
+
+      const category = await adminService.updateCategory(categoryId, updateData, adminId);
+      return responseUtils.success(res, category, 'Cập nhật danh mục thành công');
+    } catch (error) {
+      return responseUtils.error(res, error.message, 500);
+    }
+  }
+
+  async deleteCategory(req, res) {
+    try {
+      const { categoryId } = req.params;
+      const adminId = req.user.id;
+
+      await adminService.deleteCategory(categoryId, adminId);
+      return responseUtils.success(res, null, 'Xóa danh mục thành công');
+    } catch (error) {
+      return responseUtils.error(res, error.message, 500);
+    }
+  }
 
   // ========== ORDER MANAGEMENT ==========
   async getAllOrders(req, res) {
@@ -298,6 +367,22 @@ async getProductById(req, res) {
       const { orderId } = req.params;
       const order = await adminService.getOrderById(orderId);
       return responseUtils.success(res, order, 'Lấy thông tin đơn hàng thành công');
+    } catch (error) {
+      return responseUtils.error(res, error.message, 500);
+    }
+  }
+
+  async updateOrderStatus(req, res) {
+    try {
+      const { orderId } = req.params;
+      const { status } = req.body;
+
+      if (!status) {
+        return responseUtils.error(res, 'Trạng thái đơn hàng là bắt buộc', 400);
+      }
+
+      const result = await adminService.updateOrderStatus(orderId, status);
+      return responseUtils.success(res, result, 'Cập nhật trạng thái đơn hàng thành công');
     } catch (error) {
       return responseUtils.error(res, error.message, 500);
     }
@@ -324,7 +409,90 @@ async getProductById(req, res) {
       return responseUtils.error(res, error.message, 500);
     }
   }
-// ========== REPORT MANAGEMENT ==========
+
+  // ========== CATEGORY MANAGEMENT ==========
+  async getAllCategories(req, res) {
+    try {
+      const categories = await adminService.getAllCategories();
+      return responseUtils.success(res, categories, 'Lấy danh sách danh mục thành công');
+    } catch (error) {
+      return responseUtils.error(res, error.message, 500);
+    }
+  }
+
+  async createCategory(req, res) {
+    try {
+      const categoryData = req.body;
+      const adminId = req.user.id;
+
+      const category = await adminService.createCategory(categoryData, adminId);
+      return responseUtils.success(res, category, 'Tạo danh mục thành công');
+    } catch (error) {
+      return responseUtils.error(res, error.message, 500);
+    }
+  }
+
+  async updateCategory(req, res) {
+    try {
+      const { categoryId } = req.params;
+      const updateData = req.body;
+      const adminId = req.user.id;
+
+      const category = await adminService.updateCategory(categoryId, updateData, adminId);
+      return responseUtils.success(res, category, 'Cập nhật danh mục thành công');
+    } catch (error) {
+      return responseUtils.error(res, error.message, 500);
+    }
+  }
+
+  async deleteCategory(req, res) {
+    try {
+      const { categoryId } = req.params;
+      const adminId = req.user.id;
+
+      await adminService.deleteCategory(categoryId, adminId);
+      return responseUtils.success(res, null, 'Xóa danh mục thành công');
+    } catch (error) {
+      return responseUtils.error(res, error.message, 500);
+    }
+  }
+
+  // ========== REPORT MANAGEMENT ==========
+  async getAllReports(req, res) {
+    try {
+      const { page = 1, limit = 10, type, status } = req.query;
+      const filters = { page, limit, type, status };
+      
+      const result = await adminService.getAllReports(filters);
+      return responseUtils.success(res, result, 'Lấy danh sách báo cáo thành công');
+    } catch (error) {
+      return responseUtils.error(res, error.message, 500);
+    }
+  }
+
+  // ========== SYSTEM SETTINGS ==========
+  async getSystemSettings(req, res) {
+    try {
+      const settings = await adminService.getSystemSettings();
+      return responseUtils.success(res, settings, 'Lấy cài đặt hệ thống thành công');
+    } catch (error) {
+      return responseUtils.error(res, error.message, 500);
+    }
+  }
+
+  async updateSystemSettings(req, res) {
+    try {
+      const settingsData = req.body;
+      const adminId = req.user.id;
+
+      const settings = await adminService.updateSystemSettings(settingsData, adminId);
+      return responseUtils.success(res, settings, 'Cập nhật cài đặt hệ thống thành công');
+    } catch (error) {
+      return responseUtils.error(res, error.message, 500);
+    }
+  }
+
+  // ========== REPORT MANAGEMENT ==========
   async getAllReports(req, res) {
     try {
       const { page = 1, limit = 10, search, reportType, status } = req.query;
@@ -364,8 +532,43 @@ async getProductById(req, res) {
     }
   }
 
-
-  
-
+  async deleteReportedProduct(req, res) {
+    console.log('=== Admin Controller deleteReportedProduct ===');
+    console.log('Request params:', req.params);
+    console.log('Request body:', req.body);
+    
+    try {
+      const { reportId } = req.params;
+      const { productId } = req.body;
+      const adminId = req.user.id;
+      
+      console.log('Deleting reported product:', { reportId, productId, adminId });
+      
+      // Delete the product
+      await adminService.deleteProduct(productId, adminId);
+      
+      // Update report status to RESOLVED (this will trigger product deletion logic in service)
+      await adminService.updateReportStatus(reportId, 'RESOLVED', 'Sản phẩm đã bị xóa bởi admin');
+      
+      console.log('Product deleted and report updated successfully');
+      
+      return responseUtils.success(res, null, 'Xóa sản phẩm bị báo cáo thành công');
+    } catch (error) {
+      console.error('=== Admin Controller deleteReportedProduct ERROR ===');
+      console.error('Error message:', error.message);
+      console.error('=========================================');
+      
+      if (error.message === 'ID sản phẩm không hợp lệ') {
+        return responseUtils.error(res, error.message, 400);
+      } else if (error.message === 'Không tìm thấy sản phẩm') {
+        return responseUtils.error(res, error.message, 404);
+      } else if (error.message.includes('đơn hàng đang hoạt động')) {
+        return responseUtils.error(res, error.message, 400);
+      } else {
+        return responseUtils.error(res, error.message, 500);
+      }
+    }
+  }
 }
+
 module.exports = new AdminController();

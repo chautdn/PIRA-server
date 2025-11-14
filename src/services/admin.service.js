@@ -407,7 +407,7 @@ class AdminService {
 
   // ========== PRODUCT MANAGEMENT ==========
   async getAllProducts(filters) {
-    const { page = 1, limit = 10, status, search, category } = filters;
+    const { page = 1, limit = 10, status, search, category, sortBy = 'createdAt', sortOrder = 'desc' } = filters;
     
     let query = {};
 
@@ -426,27 +426,36 @@ class AdminService {
       query.category = category;
     }
 
-    const skip = (page - 1) * limit;
+     const skip = (parseInt(page) - 1) * parseInt(limit);
 
-    const [products, total] = await Promise.all([
-      Product.find(query)
-        .populate('owner', 'fullName username email phone profile')
-        .populate('category', 'name slug')
-        .sort({ createdAt: -1 })
-        .skip(skip)
-        .limit(parseInt(limit)),
-      Product.countDocuments(query)
-    ]);
+    const sortOptions = {};
+    sortOptions[sortBy] = sortOrder === 'desc' ? -1 : 1;
 
-    return {
-      products,
-      pagination: {
-        currentPage: parseInt(page),
-        totalPages: Math.ceil(total / limit),
-        totalProducts: total,
-        limit: parseInt(limit)
-      }
-    };
+    try {
+      const [products, total] = await Promise.all([
+        Product.find(query)
+          .populate('owner', 'fullName username email phone profile')
+          .populate('category', 'name slug level priority')
+          .populate('subCategory', 'name slug level priority')
+          .sort(sortOptions)
+          .skip(skip)
+          .limit(parseInt(limit)),
+        Product.countDocuments(query)
+      ]);
+
+      return {
+        products,
+        pagination: {
+          currentPage: parseInt(page),
+          totalPages: Math.ceil(total / parseInt(limit)),
+          totalProducts: total,
+          limit: parseInt(limit)
+        }
+      };
+    } catch (error) {
+      console.error('Error in getAllProducts:', error);
+      throw new Error(`Lỗi khi lấy danh sách sản phẩm: ${error.message}`);
+    }
   }
   async getProductById(productId) {
     console.log('=== Admin Service getProductById ===');
