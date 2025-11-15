@@ -43,14 +43,18 @@ const productService = {
     // sends status='' (empty) we DO NOT filter by status (return all statuses).
     // If frontend omits the status param entirely we keep the historical
     // behavior of showing only ACTIVE products.
-    const filter = {};
+    // ALWAYS exclude OWNER_DELETED and OWNER_HIDDEN from public views
+    const filter = {
+      status: { $nin: ['OWNER_DELETED', 'OWNER_HIDDEN'] }
+    };
+
     if (Object.prototype.hasOwnProperty.call(filters, 'status')) {
       // frontend explicitly provided status
       const s = String(filters.status || '').trim();
       if (s !== '') {
         // map to uppercase values used in DB (e.g., 'active' -> 'ACTIVE')
         filter.status = s.toUpperCase();
-      } // empty string => do not filter by status (show all)
+      } // empty string => do not filter by status (show all except OWNER_DELETED and OWNER_HIDDEN)
     } else {
       // no status param provided -> keep default behavior
       filter.status = 'ACTIVE';
@@ -238,7 +242,6 @@ const productService = {
     }
 
     try {
-
       const [products, total] = await Promise.all([
         Product.find(filter)
           .populate('category', 'name slug')
@@ -294,6 +297,11 @@ const productService = {
       throw new Error('Sản phẩm không tồn tại');
     }
 
+    // Check if product is hidden or deleted by owner
+    if (product.status === 'OWNER_HIDDEN' || product.status === 'OWNER_DELETED') {
+      throw new Error('Sản phẩm không tồn tại');
+    }
+
     // Increment view count
     await Product.findByIdAndUpdate(productId, {
       $inc: { 'metrics.viewCount': 1 }
@@ -345,7 +353,7 @@ const productService = {
     const productSuggestions = await Product.aggregate([
       {
         $match: {
-          status: 'ACTIVE',
+          status: { $nin: ['OWNER_HIDDEN', 'OWNER_DELETED'] },
           title: { $regex: query, $options: 'i' }
         }
       },
@@ -385,7 +393,7 @@ const productService = {
     const [priceRange, locations, categories] = await Promise.all([
       // Get price range
       Product.aggregate([
-        { $match: { status: 'ACTIVE' } },
+        { $match: { status: { $nin: ['OWNER_HIDDEN', 'OWNER_DELETED'] } } },
         {
           $group: {
             _id: null,
@@ -397,7 +405,7 @@ const productService = {
 
       // Get unique locations
       Product.aggregate([
-        { $match: { status: 'ACTIVE' } },
+        { $match: { status: { $nin: ['OWNER_HIDDEN', 'OWNER_DELETED'] } } },
         {
           $group: {
             _id: '$location.address.city',
@@ -449,7 +457,7 @@ const productService = {
   getPromotedProducts: async (limit = 6) => {
     try {
       const promotedProducts = await Product.find({
-        status: 'ACTIVE',
+        status: { $nin: ['OWNER_HIDDEN', 'OWNER_DELETED'] },
         isPromoted: true,
         promotionTier: { $exists: true, $ne: null }
       })

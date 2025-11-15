@@ -25,7 +25,7 @@ const userSchema = new mongoose.Schema(
     // Role & Status
     role: {
       type: String,
-      enum: ['RENTER', 'OWNER', 'ADMIN', 'SHIPPER'],
+      enum: ['RENTER', 'OWNER', 'ADMIN', 'SHIPPER', 'SYSTEM_ADMIN'],
       default: 'RENTER',
       required: true
     },
@@ -180,6 +180,34 @@ userSchema.pre('save', function (next) {
   if (this.profile && this.profile.gender === '') {
     this.profile.gender = undefined;
   }
+
+  // Clean up phone - convert empty string to null to avoid duplicate key error
+  if (this.phone === '') {
+    this.phone = null;
+  }
+
+  next();
+});
+
+// Clean up for findOneAndUpdate operations
+userSchema.pre(['findOneAndUpdate', 'updateOne', 'updateMany'], function (next) {
+  const update = this.getUpdate();
+
+  // Handle direct updates
+  if (update.phone === '') {
+    update.phone = null;
+  }
+
+  // Handle $set updates
+  if (update.$set && update.$set.phone === '') {
+    update.$set.phone = null;
+  }
+
+  // Handle profile.gender
+  if (update.$set && update.$set['profile.gender'] === '') {
+    update.$set['profile.gender'] = undefined;
+  }
+
   next();
 });
 

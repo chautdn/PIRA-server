@@ -287,6 +287,41 @@ router.put(
   RentalOrderController.updatePaymentMethod
 );
 
+/**
+ * Tính phí ship chi tiết cho từng product
+ * POST /api/rental-orders/calculate-product-shipping
+ */
+router.post(
+  '/calculate-product-shipping',
+  [
+    body('ownerLocation.latitude').isFloat().withMessage('Vĩ độ chủ không hợp lệ'),
+    body('ownerLocation.longitude').isFloat().withMessage('Kinh độ chủ không hợp lệ'),
+    body('userLocation.latitude').isFloat().withMessage('Vĩ độ người thuê không hợp lệ'),
+    body('userLocation.longitude').isFloat().withMessage('Kinh độ người thuê không hợp lệ'),
+    body('products').isArray({ min: 1 }).withMessage('Danh sách sản phẩm không được trống'),
+    body('products.*.quantity').isInt({ min: 1 }).withMessage('Số lượng sản phẩm không hợp lệ'),
+    validateRequest
+  ],
+  RentalOrderController.calculateProductShipping
+);
+
+/**
+ * Cập nhật phí ship cho SubOrder
+ * PUT /api/rental-orders/suborders/:subOrderId/shipping
+ */
+router.put(
+  '/suborders/:subOrderId/shipping',
+  [
+    param('subOrderId').isMongoId().withMessage('ID SubOrder không hợp lệ'),
+    body('ownerLocation.latitude').isFloat().withMessage('Vĩ độ chủ không hợp lệ'),
+    body('ownerLocation.longitude').isFloat().withMessage('Kinh độ chủ không hợp lệ'),
+    body('userLocation.latitude').isFloat().withMessage('Vĩ độ người thuê không hợp lệ'),
+    body('userLocation.longitude').isFloat().withMessage('Kinh độ người thuê không hợp lệ'),
+    validateRequest
+  ],
+  RentalOrderController.updateSubOrderShipping
+);
+
 // Register routes
 registerRoute('/rental-orders', router);
 

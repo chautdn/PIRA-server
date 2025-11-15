@@ -1,3 +1,4 @@
+const mongoose = require('mongoose');
 const Product = require('../models/Product');
 const User = require('../models/User');
 const Category = require('../models/Category');
@@ -17,22 +18,65 @@ const ownerProductService = {
    */
   getOwnerProducts: async (ownerId, options = {}) => {
     try {
-      const { page = 1, limit = 10, status, category, promoted } = options;
+      const {
+        page = 1,
+        limit = 10,
+        status,
+        category,
+        promoted,
+        search,
+        sort = 'updatedAt',
+        order = 'desc'
+      } = options;
       const skip = (page - 1) * limit;
 
-      let query = { owner: ownerId, deletedAt: { $exists: false } };
+      let query = {
+        owner: ownerId,
+        deletedAt: { $exists: false },
+        status: { $ne: 'OWNER_DELETED' } // Always exclude OWNER_DELETED, but show OWNER_HIDDEN to owner
+      };
 
-      if (status) query.status = status;
+      // Owner can always see OWNER_HIDDEN products
+      // Only filter by specific status if requested
+      if (status && status !== 'ALL') {
+        query.status = status;
+      }
       if (category) query.category = category;
       if (promoted === 'true') query.isPromoted = true;
       if (promoted === 'false') query.isPromoted = { $ne: true };
+
+      // Search functionality - search in title and description
+      if (search && search.trim()) {
+        const searchRegex = new RegExp(search.trim(), 'i');
+        query.$or = [
+          { title: searchRegex },
+          { description: searchRegex },
+          { 'brand.name': searchRegex },
+          { 'brand.model': searchRegex }
+        ];
+      }
+
+      // Build sort options
+      const sortOptions = {};
+      switch (sort) {
+        case 'price':
+          sortOptions['pricing.dailyRate'] = order === 'asc' ? 1 : -1;
+          break;
+        case 'createdAt':
+          sortOptions.createdAt = order === 'asc' ? 1 : -1;
+          break;
+        case 'updatedAt':
+        default:
+          sortOptions.updatedAt = order === 'asc' ? 1 : -1;
+          break;
+      }
 
       const products = await Product.find(query)
         .populate('category', 'name slug')
         .populate('subCategory', 'name slug')
         .populate('owner', 'profile.firstName profile.lastName email')
         .populate('currentPromotion', 'tier endDate isActive')
-        .sort({ isPromoted: -1, promotionTier: 1, updatedAt: -1 })
+        .sort(sortOptions)
         .skip(skip)
         .limit(limit);
 
@@ -107,6 +151,37 @@ const ownerProductService = {
         throw new Error('Owner not found');
       }
 
+      // Validate CCCD verification
+      if (!owner.cccd || !owner.cccd.isVerified) {
+        throw new Error(
+          'CCCD verification required. Please verify your identity before creating a product.'
+        );
+      }
+
+      // Validate bank account - must exist AND be verified
+      if (!owner.bankAccount || !owner.bankAccount.accountNumber || !owner.bankAccount.bankCode) {
+        throw new Error(
+          'Bank account required. Please add your bank account information before creating a product.'
+        );
+      }
+      if (!owner.bankAccount.isVerified) {
+        throw new Error(
+          'Bank account not verified. Please verify your bank account before creating a product.'
+        );
+      }
+
+      // Validate address
+      if (
+        !owner.address ||
+        !owner.address.streetAddress ||
+        !owner.address.city ||
+        !owner.address.province
+      ) {
+        throw new Error(
+          'Complete address required. Please update your address before creating a product.'
+        );
+      }
+
       const category = await Category.findById(productData.category);
       if (!category) {
         throw new Error('Category not found');
@@ -126,12 +201,19 @@ const ownerProductService = {
       // Otherwise, set to ACTIVE (normal products or wallet-paid promotions)
       const initialStatus = productData.promotionIntended ? 'PENDING' : 'ACTIVE';
 
+      // Prepare availability object
+      const availability = {
+        isAvailable: true,
+        quantity: productData.quantity || 1
+      };
+
       const newProduct = new Product({
         ...productData,
         owner: ownerId,
         category: category._id,
         slug,
-        status: initialStatus
+        status: initialStatus,
+        availability
       });
 
       const savedProduct = await newProduct.save();
@@ -294,6 +376,378 @@ const ownerProductService = {
       return product;
     } catch (error) {
       throw new Error('Error removing image: ' + error.message);
+    }
+  },
+
+  /**
+   * Confirm specific product item in SubOrder
+   */
+  confirmProductItem: async (ownerId, subOrderId, productItemIndex) => {
+    try {
+      const SubOrder = require('../models/SubOrder');
+
+      const subOrder = await SubOrder.findOne({
+        _id: subOrderId,
+        owner: ownerId
+      }).populate('products.product');
+
+      if (!subOrder) {
+        throw new Error('Không tìm thấy đơn hàng');
+      }
+
+      if (!subOrder.products[productItemIndex]) {
+        throw new Error('Không tìm thấy sản phẩm trong đơn hàng');
+      }
+
+      const productItem = subOrder.products[productItemIndex];
+      if (productItem.confirmationStatus !== 'PENDING') {
+        throw new Error('Sản phẩm này đã được xử lý rồi');
+      }
+
+      // Update confirmation status
+      productItem.confirmationStatus = 'CONFIRMED';
+      productItem.confirmedAt = new Date();
+
+      await subOrder.save();
+
+      // TODO: Trigger payment processing for confirmed items
+      // await processPaymentForConfirmedItems(subOrder);
+
+      return subOrder;
+    } catch (error) {
+      throw new Error('Lỗi xác nhận sản phẩm: ' + error.message);
+    }
+  },
+
+  /**
+   * Reject specific product item in SubOrder
+   */
+  rejectProductItem: async (ownerId, subOrderId, productItemIndex, reason) => {
+    try {
+      const SubOrder = require('../models/SubOrder');
+
+      const subOrder = await SubOrder.findOne({
+        _id: subOrderId,
+        owner: ownerId
+      }).populate('products.product');
+
+      if (!subOrder) {
+        throw new Error('Không tìm thấy đơn hàng');
+      }
+
+      if (!subOrder.products[productItemIndex]) {
+        throw new Error('Không tìm thấy sản phẩm trong đơn hàng');
+      }
+
+      const productItem = subOrder.products[productItemIndex];
+      if (productItem.confirmationStatus !== 'PENDING') {
+        throw new Error('Sản phẩm này đã được xử lý rồi');
+      }
+
+      // Update confirmation status
+      productItem.confirmationStatus = 'REJECTED';
+      productItem.rejectedAt = new Date();
+      productItem.rejectionReason = reason;
+
+      await subOrder.save();
+
+      // TODO: Trigger refund processing for rejected items
+      // await processRefundForRejectedItems(subOrder, productItemIndex);
+
+      return subOrder;
+    } catch (error) {
+      throw new Error('Lỗi từ chối sản phẩm: ' + error.message);
+    }
+  },
+
+  /**
+   * Get SubOrders for owner (for rental requests management)
+   */
+  getSubOrders: async (ownerId, options = {}) => {
+    try {
+      const SubOrder = require('../models/SubOrder');
+      const { page = 1, limit = 10, status } = options;
+      const skip = (page - 1) * limit;
+
+      let query = { owner: ownerId };
+      if (status && status !== 'ALL') {
+        query.status = status;
+      }
+
+      console.log('[getSubOrders] Starting with ownerId:', ownerId);
+      console.log('[getSubOrders] Query:', JSON.stringify(query));
+
+      // Simple query without any population first to test
+      const subOrders = await SubOrder.find(query)
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limit)
+        .populate({
+          path: 'masterOrder',
+          populate: {
+            path: 'renter',
+            select: 'profile.firstName profile.lastName email'
+          }
+        })
+        .populate('products.product');
+
+      console.log('[getSubOrders] Raw SubOrders found:', subOrders.length);
+
+      // Return simple data without population for now to avoid ObjectId issues
+      const total = await SubOrder.countDocuments(query);
+
+      return {
+        data: subOrders,
+        pagination: {
+          currentPage: page,
+          totalPages: Math.ceil(total / limit),
+          totalItems: total,
+          itemsPerPage: limit
+        }
+      };
+    } catch (error) {
+      console.error('[getSubOrders] Error:', error);
+      throw new Error('Lỗi lấy danh sách yêu cầu thuê: ' + error.message);
+    }
+  },
+
+  /**
+   * Check if product has active rentals or pending requests
+   */
+  checkProductRentalStatus: async (productId) => {
+    try {
+      const SubOrder = require('../models/SubOrder');
+
+      // Check for any active or pending rental requests for this product
+      const activeRentals = await SubOrder.find({
+        'products.product': productId,
+        'products.confirmationStatus': { $in: ['PENDING', 'CONFIRMED'] },
+        status: {
+          $nin: ['CANCELLED', 'COMPLETED', 'OWNER_REJECTED']
+        }
+      });
+
+      const hasPendingRequests = activeRentals.some((subOrder) =>
+        subOrder.products.some(
+          (p) => p.product.toString() === productId.toString() && p.confirmationStatus === 'PENDING'
+        )
+      );
+
+      const hasActiveRentals = activeRentals.some((subOrder) =>
+        subOrder.products.some(
+          (p) =>
+            p.product.toString() === productId.toString() && p.confirmationStatus === 'CONFIRMED'
+        )
+      );
+
+      return {
+        hasPendingRequests,
+        hasActiveRentals,
+        canHide: !hasPendingRequests, // Can hide if no pending requests
+        canDelete: !hasPendingRequests && !hasActiveRentals, // Can delete only if no activity
+        pendingCount: activeRentals.filter((so) =>
+          so.products.some(
+            (p) =>
+              p.product.toString() === productId.toString() && p.confirmationStatus === 'PENDING'
+          )
+        ).length,
+        activeCount: activeRentals.filter((so) =>
+          so.products.some(
+            (p) =>
+              p.product.toString() === productId.toString() && p.confirmationStatus === 'CONFIRMED'
+          )
+        ).length
+      };
+    } catch (error) {
+      throw new Error('Error checking rental status: ' + error.message);
+    }
+  },
+
+  /**
+   * Hide product (set status to OWNER_HIDDEN)
+   * Can only hide if there are no pending rental requests
+   * If quantity > 1 and some are rented, reduce available quantity instead
+   */
+  hideProduct: async (ownerId, productId) => {
+    try {
+      const product = await Product.findOne({
+        _id: productId,
+        owner: ownerId,
+        deletedAt: { $exists: false },
+        status: { $nin: ['OWNER_DELETED', 'OWNER_HIDDEN'] }
+      });
+
+      if (!product) {
+        throw new Error('Product not found or already hidden');
+      }
+
+      // Check rental status
+      const rentalStatus = await ownerProductService.checkProductRentalStatus(productId);
+
+      if (rentalStatus.hasPendingRequests) {
+        throw new Error(
+          `Cannot hide product. You have ${rentalStatus.pendingCount} pending rental request(s). ` +
+            'Please approve or reject all pending requests before hiding this product.'
+        );
+      }
+
+      // If product has multiple quantities and some are rented
+      if (product.availability.quantity > 1 && rentalStatus.hasActiveRentals) {
+        // Don't hide completely, just mark as unavailable for new rentals
+        product.availability.isAvailable = false;
+        product.status = 'OWNER_HIDDEN';
+        await product.save();
+
+        return {
+          product,
+          message: 'Product hidden but existing rentals are not affected'
+        };
+      }
+
+      // Hide the product
+      product.status = 'OWNER_HIDDEN';
+      product.availability.isAvailable = false;
+      await product.save();
+
+      return {
+        product,
+        message: 'Product hidden successfully'
+      };
+    } catch (error) {
+      throw new Error('Error hiding product: ' + error.message);
+    }
+  },
+
+  /**
+   * Unhide product (restore from OWNER_HIDDEN)
+   */
+  unhideProduct: async (ownerId, productId) => {
+    try {
+      const product = await Product.findOne({
+        _id: productId,
+        owner: ownerId,
+        deletedAt: { $exists: false },
+        status: 'OWNER_HIDDEN'
+      });
+
+      if (!product) {
+        throw new Error('Product not found or not hidden');
+      }
+
+      product.status = 'ACTIVE';
+      product.availability.isAvailable = true;
+      await product.save();
+
+      return await Product.findById(productId)
+        .populate('category', 'name slug')
+        .populate('subCategory', 'name slug');
+    } catch (error) {
+      throw new Error('Error unhiding product: ' + error.message);
+    }
+  },
+
+  /**
+   * Soft delete product (set status to OWNER_DELETED)
+   * Can only delete if there are no pending requests AND no active rentals
+   */
+  softDeleteProduct: async (ownerId, productId) => {
+    try {
+      const product = await Product.findOne({
+        _id: productId,
+        owner: ownerId,
+        deletedAt: { $exists: false },
+        status: { $ne: 'OWNER_DELETED' }
+      });
+
+      if (!product) {
+        throw new Error('Product not found or already deleted');
+      }
+
+      // Check rental status
+      const rentalStatus = await ownerProductService.checkProductRentalStatus(productId);
+
+      if (!rentalStatus.canDelete) {
+        const reasons = [];
+        if (rentalStatus.hasPendingRequests) {
+          reasons.push(`${rentalStatus.pendingCount} pending rental request(s)`);
+        }
+        if (rentalStatus.hasActiveRentals) {
+          reasons.push(`${rentalStatus.activeCount} active rental(s)`);
+        }
+
+        throw new Error(
+          `Cannot delete product. You have ${reasons.join(' and ')}. ` +
+            'Please resolve all rental activities before deleting this product.'
+        );
+      }
+
+      // Soft delete by changing status
+      product.status = 'OWNER_DELETED';
+      product.availability.isAvailable = false;
+      product.deletedAt = new Date();
+      await product.save();
+
+      return {
+        product,
+        message: 'Product deleted successfully. It is now hidden from all users.'
+      };
+    } catch (error) {
+      throw new Error('Error deleting product: ' + error.message);
+    }
+  },
+
+  /**
+   * Update product with limited fields (name, description, images only)
+   * Safe update that won't affect pricing, location, or other critical fields
+   */
+  updateProductSafeFields: async (ownerId, productId, updateData) => {
+    try {
+      const product = await Product.findOne({
+        _id: productId,
+        owner: ownerId,
+        deletedAt: { $exists: false },
+        status: { $nin: ['OWNER_DELETED'] }
+      }).populate('category');
+
+      if (!product) {
+        throw new Error('Product not found or access denied');
+      }
+
+      // Only allow safe fields to be updated
+      const safeFields = {};
+
+      if (updateData.title) {
+        safeFields.title = updateData.title;
+        safeFields.slug = await ownerProductService.generateUniqueSlug(updateData.title, productId);
+      }
+
+      if (updateData.description) {
+        safeFields.description = updateData.description;
+      }
+
+      // Handle image updates with AI validation
+      if (updateData.newImages && Array.isArray(updateData.newImages)) {
+        // newImages are already validated and uploaded by the controller
+        // Just extract the image data without validation info
+        const imageData = updateData.newImages.map((img) => ({
+          url: img.url,
+          publicId: img.publicId,
+          alt: img.alt,
+          isMain: img.isMain || false
+        }));
+        product.images = [...product.images, ...imageData];
+      }
+
+      // Update the safe fields
+      Object.assign(product, safeFields);
+      const updatedProduct = await product.save();
+
+      return await Product.findById(updatedProduct._id)
+        .populate('category', 'name slug')
+        .populate('subCategory', 'name slug')
+        .populate('owner', 'profile.firstName profile.lastName email');
+    } catch (error) {
+      throw new Error('Error updating product: ' + error.message);
     }
   },
 

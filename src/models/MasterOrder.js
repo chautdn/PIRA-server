@@ -42,15 +42,15 @@ const masterOrderSchema = new mongoose.Schema(
       default: 0
     },
 
-    // Thời gian thuê chung
+    // Thời gian thuê chung (optional - mỗi product có thể có period khác nhau)
     rentalPeriod: {
       startDate: {
         type: Date,
-        required: true
+        required: false
       },
       endDate: {
         type: Date,
-        required: true
+        required: false
       }
     },
 
