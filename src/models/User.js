@@ -25,7 +25,7 @@ const userSchema = new mongoose.Schema(
     // Role & Status
     role: {
       type: String,
-      enum: ['RENTER', 'OWNER', 'ADMIN', 'SHIPPER'],
+      enum: ['RENTER', 'OWNER', 'ADMIN', 'SHIPPER', 'SYSTEM_ADMIN'],
       default: 'RENTER',
       required: true
     },
