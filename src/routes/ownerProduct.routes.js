@@ -132,5 +132,33 @@ router.post(
   ownerProductController.rejectProductItem
 );
 
+// New product management routes
+router.get('/:id/rental-status', paramValidation, ownerProductController.checkRentalStatus);
+
+router.put('/:id/hide', paramValidation, ownerProductController.hideProduct);
+
+router.put('/:id/unhide', paramValidation, ownerProductController.unhideProduct);
+
+router.delete('/:id/soft-delete', paramValidation, ownerProductController.softDeleteProduct);
+
+router.put(
+  '/:id/safe-update',
+  paramValidation,
+  ownerProductController.uploadMiddleware,
+  [
+    body('title')
+      .optional()
+      .trim()
+      .isLength({ min: 3, max: 100 })
+      .withMessage('Title must be between 3 and 100 characters'),
+    body('description')
+      .optional()
+      .trim()
+      .isLength({ min: 10, max: 2000 })
+      .withMessage('Description must be between 10 and 2000 characters')
+  ],
+  ownerProductController.updateProductSafeFields
+);
+
 registerRoute('/owner-products', router);
 module.exports = router;
