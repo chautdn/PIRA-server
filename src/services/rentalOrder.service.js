@@ -1228,6 +1228,97 @@ class RentalOrderService {
   }
 
   /**
+   * Lấy danh sách sản phẩm đang được thuê (active rentals) cho chủ sản phẩm
+   */
+  async getActiveRentalsByOwner(ownerId, options = {}) {
+    console.log('🔍 Getting active rentals for owner:', ownerId);
+
+    try {
+      const { page = 1, limit = 20 } = options;
+      const skip = (page - 1) * limit;
+
+      // Query for SubOrders that are currently in active rental state
+      const query = {
+        owner: ownerId,
+        status: { $in: ['ACTIVE', 'DELIVERED', 'PROCESSING', 'SHIPPED'] }
+      };
+
+      console.log('📊 Active rentals query:', query);
+
+      const subOrders = await SubOrder.find(query)
+        .populate({
+          path: 'masterOrder',
+          populate: {
+            path: 'renter',
+            select: 'profile.firstName profile.lastName phone email'
+          }
+        })
+        .populate({
+          path: 'products.product',
+          select: 'name title images pricing price deposit'
+        })
+        .sort({ 'products.rentalPeriod.endDate': 1 }) // Sort by end date (earliest first)
+        .skip(skip)
+        .limit(limit);
+
+      const total = await SubOrder.countDocuments(query);
+
+      // Process data to flatten products with rental information
+      const activeRentals = [];
+
+      subOrders.forEach((subOrder) => {
+        subOrder.products.forEach((productItem) => {
+          if (productItem.rentalPeriod && productItem.rentalPeriod.endDate) {
+            const endDate = new Date(productItem.rentalPeriod.endDate);
+            const now = new Date();
+            const timeDiff = endDate - now;
+            const daysUntilReturn = Math.ceil(timeDiff / (1000 * 60 * 60 * 24));
+
+            activeRentals.push({
+              subOrderId: subOrder._id,
+              subOrderNumber: subOrder.subOrderNumber,
+              status: subOrder.status,
+              product: productItem.product,
+              quantity: productItem.quantity,
+              rentalPeriod: productItem.rentalPeriod,
+              startDate: productItem.rentalPeriod.startDate,
+              endDate: productItem.rentalPeriod.endDate,
+              daysUntilReturn,
+              isReturningsoon: daysUntilReturn <= 1 && daysUntilReturn >= 0,
+              isOverdue: daysUntilReturn < 0,
+              renter: subOrder.masterOrder?.renter,
+              totalRental: productItem.totalRental,
+              totalDeposit: productItem.totalDeposit,
+              masterOrderNumber: subOrder.masterOrder?.masterOrderNumber,
+              createdAt: subOrder.createdAt
+            });
+          }
+        });
+      });
+
+      // Sort by days until return (ascending)
+      activeRentals.sort((a, b) => a.daysUntilReturn - b.daysUntilReturn);
+
+      console.log(
+        `✅ Found ${activeRentals.length} active rentals from ${subOrders.length} SubOrders`
+      );
+
+      return {
+        data: activeRentals,
+        pagination: {
+          page,
+          limit,
+          total: activeRentals.length,
+          totalPages: Math.ceil(total / limit)
+        }
+      };
+    } catch (error) {
+      console.error('❌ Error getting active rentals:', error);
+      throw error;
+    }
+  }
+
+  /**
    * Xác nhận SubOrder
    */
   async confirmSubOrder(subOrderId, ownerId) {

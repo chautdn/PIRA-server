@@ -191,6 +191,17 @@ router.get(
   RentalOrderController.getOwnerSubOrders
 );
 
+// GET /api/rental-orders/owner-active-rentals - Lấy danh sách sản phẩm đang được thuê
+router.get(
+  '/owner-active-rentals',
+  [
+    query('page').optional().isInt({ min: 1 }).withMessage('Trang không hợp lệ'),
+    query('limit').optional().isInt({ min: 1, max: 100 }).withMessage('Giới hạn không hợp lệ'),
+    validateRequest
+  ],
+  RentalOrderController.getOwnerActiveRentals
+);
+
 /**
  * Lấy chi tiết đơn hàng
  * GET /api/rental-orders/:masterOrderId

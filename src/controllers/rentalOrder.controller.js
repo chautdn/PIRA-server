@@ -750,6 +750,39 @@ class RentalOrderController {
       });
     }
   }
+
+  /**
+   * Lấy danh sách sản phẩm đang được thuê (active rentals) cho chủ sản phẩm
+   * GET /api/rental-orders/owner-active-rentals
+   */
+  async getOwnerActiveRentals(req, res) {
+    try {
+      const ownerId = req.user.id;
+      const { page, limit } = req.query;
+
+      console.log('📥 GET /api/rental-orders/owner-active-rentals');
+      console.log('👤 Owner ID:', ownerId);
+      console.log('📋 Query params:', { page, limit });
+
+      const activeRentals = await RentalOrderService.getActiveRentalsByOwner(ownerId, {
+        page: parseInt(page) || 1,
+        limit: parseInt(limit) || 20
+      });
+
+      return new SuccessResponse({
+        message: 'Lấy danh sách sản phẩm đang cho thuê thành công',
+        metadata: {
+          activeRentals
+        }
+      }).send(res);
+    } catch (error) {
+      console.error('❌ Error in getOwnerActiveRentals:', error);
+      return res.status(400).json({
+        success: false,
+        message: error.message || 'Không thể lấy danh sách sản phẩm đang cho thuê'
+      });
+    }
+  }
 }
 
 module.exports = new RentalOrderController();
