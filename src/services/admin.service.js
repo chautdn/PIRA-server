@@ -2,6 +2,7 @@ const User = require('../models/User');
 const Product = require('../models/Product');
 const Category = require('../models/Category');
 const Order = require('../models/MasterOrder');
+const SubOrder = require('../models/SubOrder');
 const Report = require('../models/Report');
 
 class AdminService {
@@ -572,54 +573,6 @@ class AdminService {
     }
   }
 
-  async deleteProduct(productId, adminId) {
-    console.log('=== Admin Service deleteProduct ===');
-    console.log('Input params:', { productId, adminId });
-    
-    // Validate productId
-    if (!productId) {
-      throw new Error('ID sản phẩm không hợp lệ');
-    }
-
-    const mongoose = require('mongoose');
-    if (!mongoose.Types.ObjectId.isValid(productId)) {
-      throw new Error('ID sản phẩm không hợp lệ');
-    }
-
-    try {
-      // Check if product exists
-      const product = await Product.findById(productId);
-      if (!product) {
-        throw new Error('Không tìm thấy sản phẩm');
-      }
-
-      console.log('Product found, proceeding with deletion');
-      console.log('Product title:', product.title);
-
-      // Soft delete by setting deletedAt
-      const deletedProduct = await Product.findByIdAndUpdate(
-        productId,
-        { 
-          deletedAt: new Date(),
-          'moderation.deletedBy': adminId,
-          'moderation.deletedAt': new Date(),
-          status: 'INACTIVE'
-        },
-        { new: true }
-      );
-
-      console.log('Product soft deleted successfully');
-      return deletedProduct;
-    } catch (error) {
-      console.error('Error deleting product:', error.message);
-      
-      if (error.message === 'Không tìm thấy sản phẩm') {
-        throw error;
-      }
-      
-      throw new Error('Lỗi khi xóa sản phẩm');
-    }
-  }
   async approveProduct(productId, adminId) {
     const product = await Product.findByIdAndUpdate(
       productId,
@@ -892,30 +845,20 @@ class AdminService {
       }
 
       // Check if product is currently rented or has active orders
-      const activeOrders = await Order.countDocuments({
-        product: productId,
-        status: { $in: ['PENDING', 'CONFIRMED', 'IN_PROGRESS'] }
+      const activeOrders = await SubOrder.countDocuments({
+        'products.product': productId,
+        status: { $in: ['PENDING_CONFIRMATION', 'CONFIRMED', 'PROCESSING', 'DELIVERED', 'ACTIVE'] }
       });
 
       if (activeOrders > 0) {
         throw new Error('Không thể xóa sản phẩm có đơn hàng đang hoạt động');
       }
 
-      // Soft delete - update status to DELETED and add deletion info
-      const deletedProduct = await Product.findByIdAndUpdate(
-        productId,
-        {
-          status: 'DELETED',
-          deletedAt: new Date(),
-          'moderation.deletedBy': adminId,
-          'moderation.deletedAt': new Date(),
-          updatedAt: new Date()
-        },
-        { new: true }
-      );
+      // Hard delete - permanently remove product from database
+      await Product.findByIdAndDelete(productId);
 
-      console.log('Product soft deleted successfully:', deletedProduct._id);
-      return deletedProduct;
+      console.log('Product permanently deleted:', productId);
+      return { message: 'Sản phẩm đã được xóa vĩnh viễn', productId };
     } catch (error) {
       console.error('Error in deleteProduct service:', error.message);
       throw new Error(`Lỗi khi xóa sản phẩm: ${error.message}`);

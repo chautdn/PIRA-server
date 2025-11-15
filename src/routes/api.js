@@ -31,6 +31,7 @@ require('./cart.routes');
 require('./rating.routes');
 require('./productPromotion.routes');
 require('./rentalOrder.routes');
+require('./report.routes');
 
 // Withdrawal routes
 const withdrawalRoutes = require('./withdrawal.routes');
