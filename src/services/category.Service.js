@@ -62,8 +62,44 @@ const getCategoryBySlug = async (slug) => {
   }
 };
 
+// Get only parent categories (level 0)
+const getParentCategories = async () => {
+  try {
+    const categories = await Category.find({
+      deletedAt: null,
+      level: 0,
+      status: 'ACTIVE'
+    })
+      .sort({ priority: -1, createdAt: -1 })
+      .lean();
+
+    return categories;
+  } catch (error) {
+    throw new Error(`Failed to fetch parent categories: ${error.message}`);
+  }
+};
+
+// Get subcategories by parent ID
+const getSubcategories = async (parentId) => {
+  try {
+    const subcategories = await Category.find({
+      parentCategory: parentId,
+      deletedAt: null,
+      status: 'ACTIVE'
+    })
+      .sort({ priority: -1, name: 1 })
+      .lean();
+
+    return subcategories;
+  } catch (error) {
+    throw new Error(`Failed to fetch subcategories: ${error.message}`);
+  }
+};
+
 module.exports = {
   getCategories,
+  getParentCategories,
+  getSubcategories,
   getCategoryById,
   getCategoryBySlug
 };

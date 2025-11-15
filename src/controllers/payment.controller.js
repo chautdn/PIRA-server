@@ -131,8 +131,80 @@ const paymentController = {
     } catch (error) {
       next(error);
     }
+  },
+
+  // Create order payment session (for PayOS)
+  createOrderPaymentSession: async (req, res, next) => {
+    try {
+      const userId = req.user._id;
+      const { amount, orderInfo } = req.body;
+
+      if (!amount || !orderInfo) {
+        throw new BadRequestError('Amount and order info are required');
+      }
+
+      const metadata = {
+        ipAddress: req.ip || req.connection.remoteAddress,
+        userAgent: req.get('User-Agent')
+      };
+
+      const result = await paymentService.createOrderPaymentSession(
+        userId,
+        amount,
+        orderInfo,
+        metadata
+      );
+
+      new CREATED({
+        message: 'Order payment session created successfully',
+        metadata: result
+      }).send(res);
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  // Process wallet payment for orders
+  processWalletPayment: async (req, res, next) => {
+    try {
+      const userId = req.user._id;
+      const { amount, orderInfo } = req.body;
+
+      if (!amount || !orderInfo) {
+        throw new BadRequestError('Amount and order info are required');
+      }
+
+      const result = await paymentService.processWalletPaymentForOrder(userId, amount, orderInfo);
+
+      new SUCCESS({
+        message: 'Wallet payment processed successfully',
+        metadata: result
+      }).send(res);
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  // Webhook handler specifically for order payments
+  handleOrderPaymentWebhook: async (req, res, next) => {
+    try {
+      const result = await paymentService.processOrderPaymentWebhook(req.body);
+
+      // Always return 200 for webhooks to avoid retries
+      res.status(200).json({
+        success: true,
+        message: result.message,
+        orderCompleted: result.orderCompleted || false
+      });
+    } catch (error) {
+      console.error('Order payment webhook error:', error);
+      // Still return 200 to avoid webhook retries
+      res.status(200).json({
+        success: false,
+        message: 'Webhook processed with errors'
+      });
+    }
   }
 };
 
 module.exports = paymentController;
-

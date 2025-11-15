@@ -126,7 +126,16 @@ const productSchema = new mongoose.Schema(
     // Status & Availability
     status: {
       type: String,
-      enum: ['DRAFT', 'PENDING', 'ACTIVE', 'RENTED', 'INACTIVE', 'SUSPENDED'],
+      enum: [
+        'DRAFT',
+        'PENDING',
+        'ACTIVE',
+        'RENTED',
+        'INACTIVE',
+        'SUSPENDED',
+        'OWNER_HIDDEN',
+        'OWNER_DELETED'
+      ],
       default: 'DRAFT'
     },
     availability: {
@@ -170,28 +179,19 @@ const productSchema = new mongoose.Schema(
       sparse: true
     },
 
-    // Featured System
-    featuredTier: {
+    // Product Promotion System (visibility boost)
+    currentPromotion: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'ProductPromotion'
+    },
+    isPromoted: {
+      type: Boolean,
+      default: false
+    },
+    promotionTier: {
       type: Number,
-      enum: [1, 2, 3, 4, 5], // 1 = highest priority, 5 = lowest
-      default: null
-    },
-    featuredExpiresAt: {
-      type: Date,
-      default: null
-    },
-    featuredPaymentAmount: {
-      type: Number,
-      default: 0
-    },
-    featuredPaymentStatus: {
-      type: String,
-      enum: ['PENDING', 'PAID', 'FAILED', 'REFUNDED'],
-      default: null
-    },
-    featuredUpgradedAt: {
-      type: Date,
-      default: null
+      min: 1,
+      max: 5
     },
 
     deletedAt: Date
@@ -208,38 +208,20 @@ productSchema.index({ status: 1 });
 productSchema.index({ 'pricing.dailyRate': 1 });
 productSchema.index({ slug: 1 });
 
-// Featured indexes
-productSchema.index({ featuredTier: 1, featuredExpiresAt: 1 });
-productSchema.index({ featuredTier: 1, featuredUpgradedAt: -1 });
-productSchema.index({ featuredPaymentStatus: 1, featuredTier: 1 });
+// Product Promotion indexes (for visibility boost)
+productSchema.index({ isPromoted: 1, promotionTier: 1, createdAt: -1 });
 
 // Instance methods
-productSchema.methods.isFeaturedActive = function () {
-  if (!this.featuredTier) {
-    return false;
-  }
-
-  const now = new Date();
-  const endDate = this.featuredExpiresAt;
-
-  // Check if featured is still active
-  if (endDate && now > endDate) {
-    return false;
-  }
-
-  return true;
-};
-
-productSchema.methods.getFeaturedTierName = function () {
+productSchema.methods.getPromotionTierName = function () {
   const tierNames = {
     1: 'Premium',
-    2: 'Gold',
-    3: 'Silver',
-    4: 'Bronze',
+    2: 'Featured',
+    3: 'Popular',
+    4: 'Boosted',
     5: 'Basic'
   };
 
-  return tierNames[this.featuredTier] || 'None';
+  return tierNames[this.promotionTier] || 'None';
 };
 
 module.exports = mongoose.model('Product', productSchema);

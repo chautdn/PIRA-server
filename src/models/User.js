@@ -25,7 +25,7 @@ const userSchema = new mongoose.Schema(
     // Role & Status
     role: {
       type: String,
-      enum: ['RENTER', 'OWNER', 'ADMIN', 'SHIPPER'],
+      enum: ['RENTER', 'OWNER', 'ADMIN', 'SHIPPER', 'SYSTEM_ADMIN'],
       default: 'RENTER',
       required: true
     },
@@ -49,7 +49,14 @@ const userSchema = new mongoose.Schema(
       dateOfBirth: Date,
       gender: {
         type: String,
-        enum: ['MALE', 'FEMALE', 'OTHER']
+        required: false,
+        validate: {
+          validator: function (v) {
+            // Allow null, undefined, empty string, or valid enum values
+            return !v || v === '' || ['MALE', 'FEMALE', 'OTHER'].includes(v);
+          },
+          message: 'Gender must be MALE, FEMALE, OTHER, or empty'
+        }
       }
     },
 
@@ -166,6 +173,43 @@ userSchema.index({ role: 1, status: 1 });
 userSchema.index({ 'verification.emailVerified': 1 });
 userSchema.index({ 'cccd.isVerified': 1 });
 userSchema.index({ 'cccd.cccdNumber': 1 });
+
+// Clean up empty strings before saving
+userSchema.pre('save', function (next) {
+  // Clean up profile.gender - convert empty string to undefined
+  if (this.profile && this.profile.gender === '') {
+    this.profile.gender = undefined;
+  }
+
+  // Clean up phone - convert empty string to null to avoid duplicate key error
+  if (this.phone === '') {
+    this.phone = null;
+  }
+
+  next();
+});
+
+// Clean up for findOneAndUpdate operations
+userSchema.pre(['findOneAndUpdate', 'updateOne', 'updateMany'], function (next) {
+  const update = this.getUpdate();
+
+  // Handle direct updates
+  if (update.phone === '') {
+    update.phone = null;
+  }
+
+  // Handle $set updates
+  if (update.$set && update.$set.phone === '') {
+    update.$set.phone = null;
+  }
+
+  // Handle profile.gender
+  if (update.$set && update.$set['profile.gender'] === '') {
+    update.$set['profile.gender'] = undefined;
+  }
+
+  next();
+});
 
 // Hash password before saving
 userSchema.pre('save', async function (next) {

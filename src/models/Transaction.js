@@ -15,7 +15,7 @@ const transactionSchema = new mongoose.Schema(
     },
     type: {
       type: String,
-      enum: ['deposit', 'withdrawal', 'payment', 'refund', 'penalty'],
+      enum: ['deposit', 'withdrawal', 'payment', 'refund', 'penalty', 'order_payment'],
       required: true,
       index: true
     },
@@ -35,6 +35,12 @@ const transactionSchema = new mongoose.Schema(
     // Enhanced tracking
     description: { type: String, required: true },
     reference: String, // Internal reference
+    paymentMethod: {
+      type: String,
+      enum: ['wallet', 'payos', 'cod'],
+      default: 'payos'
+    },
+    orderCode: String, // For PayOS orders
     metadata: { type: mongoose.Schema.Types.Mixed, default: {} },
 
     // Retry and error handling
@@ -61,5 +67,3 @@ transactionSchema.index({ externalId: 1 }, { sparse: true });
 transactionSchema.index({ status: 1, expiredAt: 1 });
 
 module.exports = mongoose.model('Transaction', transactionSchema);
-
-

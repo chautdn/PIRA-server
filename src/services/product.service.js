@@ -38,8 +38,27 @@ const productService = {
     const limitNum = Math.min(50, Math.max(1, parseInt(limit)));
     const skip = (pageNum - 1) * limitNum;
 
-    // Build query filter - START WITH BASIC
-    const filter = { status: 'ACTIVE' };
+    // Build query filter
+    // Respect the `status` query param from frontend. If frontend explicitly
+    // sends status='' (empty) we DO NOT filter by status (return all statuses).
+    // If frontend omits the status param entirely we keep the historical
+    // behavior of showing only ACTIVE products.
+    // ALWAYS exclude OWNER_DELETED and OWNER_HIDDEN from public views
+    const filter = {
+      status: { $nin: ['OWNER_DELETED', 'OWNER_HIDDEN'] }
+    };
+
+    if (Object.prototype.hasOwnProperty.call(filters, 'status')) {
+      // frontend explicitly provided status
+      const s = String(filters.status || '').trim();
+      if (s !== '') {
+        // map to uppercase values used in DB (e.g., 'active' -> 'ACTIVE')
+        filter.status = s.toUpperCase();
+      } // empty string => do not filter by status (show all except OWNER_DELETED and OWNER_HIDDEN)
+    } else {
+      // no status param provided -> keep default behavior
+      filter.status = 'ACTIVE';
+    }
 
     // Text search - COMPREHENSIVE VIETNAMESE SEARCH
     if (search && search.trim()) {
@@ -56,14 +75,28 @@ const productService = {
       filter.$or = searchConditions;
     }
 
-    // Category filter - FIXED: Handle mapping from frontend IDs
+    // Category filter - CORRECTED: Handle both category and subCategory fields in Product
+    let categoryConditions = null;
     if (category && category.trim()) {
-      // First, debug what categories exist in database
-      const allCategories = await Category.find({}).select('_id name');
-
       if (category.match(/^[0-9a-fA-F]{24}$/)) {
-        // Valid ObjectID
-        filter.category = category;
+        // Valid ObjectID - check if it's a parent or subcategory
+        const categoryDoc = await Category.findById(category);
+        if (categoryDoc) {
+          if (categoryDoc.level === 0) {
+            // Parent category - find products that have this as main category
+            // OR have subcategories that belong to this parent
+            const subcategoryIds = await Category.find({
+              parentCategory: categoryDoc._id
+            }).distinct('_id');
+            categoryConditions = [
+              { category: categoryDoc._id }, // Products directly in parent category
+              { subCategory: { $in: subcategoryIds } } // Products in subcategories
+            ];
+          } else {
+            // Subcategory - filter by subCategory field specifically
+            filter.subCategory = category;
+          }
+        }
       } else {
         // Map frontend fake IDs to real category names
         const categoryMapping = {
@@ -82,9 +115,20 @@ const productService = {
         });
 
         if (categoryDoc) {
-          filter.category = categoryDoc._id;
-        } else {
-          // Don't add filter if category not found - show all products
+          if (categoryDoc.level === 0) {
+            // Parent category - find products that have this as main category
+            // OR have subcategories that belong to this parent
+            const subcategoryIds = await Category.find({
+              parentCategory: categoryDoc._id
+            }).distinct('_id');
+            categoryConditions = [
+              { category: categoryDoc._id }, // Products directly in parent category
+              { subCategory: { $in: subcategoryIds } } // Products in subcategories
+            ];
+          } else {
+            // Subcategory - filter by subCategory field specifically
+            filter.subCategory = categoryDoc._id;
+          }
         }
       }
     }
@@ -97,19 +141,66 @@ const productService = {
     }
 
     // Location filter - RE-ENABLED but handle $or conflicts
-    if (location) {
+    // Accept `district` from frontend as well (some clients send filters.district)
+    // The frontend uses slug-like values (e.g. 'hai-chau'), while DB stores
+    // the Vietnamese display names (e.g. 'Hải Châu'). Map common slugs to
+    // display names so regex matches correctly.
+    const rawLocation = location || filters.district || '' || '';
+    let locationValue = String(rawLocation).trim();
+    if (locationValue) {
+      const districtMapping = {
+        'hai-chau': 'Hải Châu',
+        'thanh-khe': 'Thanh Khê',
+        'son-tra': 'Sơn Trà',
+        'ngu-hanh-son': 'Ngũ Hành Sơn',
+        'lien-chieu': 'Liên Chiểu',
+        'cam-le': 'Cẩm Lệ'
+      };
+
+      const normalized = locationValue.toLowerCase();
+      if (districtMapping[normalized]) {
+        locationValue = districtMapping[normalized];
+      }
+
       const locationConditions = [
-        { 'location.address.city': { $regex: location, $options: 'i' } },
-        { 'location.address.province': { $regex: location, $options: 'i' } },
-        { 'location.address.district': { $regex: location, $options: 'i' } }
+        { 'location.address.city': { $regex: locationValue, $options: 'i' } },
+        { 'location.address.province': { $regex: locationValue, $options: 'i' } },
+        { 'location.address.district': { $regex: locationValue, $options: 'i' } }
       ];
 
-      // Handle $or conflicts properly
+      // Handle $or conflicts properly with both category and location conditions
+      const existingOrConditions = [];
+
+      // Add category conditions if exist
+      if (categoryConditions) {
+        existingOrConditions.push({ $or: categoryConditions });
+      }
+
+      // Add search conditions if exist
       if (filter.$or) {
-        filter.$and = [{ $or: filter.$or }, { $or: locationConditions }];
+        existingOrConditions.push({ $or: filter.$or });
         delete filter.$or;
+      }
+
+      // Add location conditions
+      existingOrConditions.push({ $or: locationConditions });
+
+      // Combine all conditions with $and
+      if (existingOrConditions.length > 1) {
+        filter.$and = existingOrConditions;
       } else {
         filter.$or = locationConditions;
+      }
+    }
+
+    // Apply category conditions if no location filter was applied
+    if (categoryConditions && !locationValue) {
+      // Handle $or conflicts with search conditions
+      if (filter.$or) {
+        filter.$and = [{ $or: filter.$or }, { $or: categoryConditions }];
+        delete filter.$or;
+      } else {
+        filter.$or = categoryConditions;
       }
     }
 
@@ -118,9 +209,22 @@ const productService = {
       filter['availability.isAvailable'] = true;
       filter['availability.quantity'] = { $gt: 0 };
     }
+    // Condition filter (product physical condition)
+    if (filters.condition) {
+      // Map frontend values like 'like-new' -> 'LIKE_NEW'
+      const cond = String(filters.condition).trim().toUpperCase().replace(/-/g, '_');
+      if (cond) filter.condition = cond;
+    }
 
-    // Build sort options
+    // Build sort options - PRIORITIZE PROMOTED PRODUCTS
     const sortOptions = {};
+
+    // Always sort promoted products first (isPromoted: true)
+    // Then by promotionTier (1 = highest, 5 = lowest)
+    sortOptions.isPromoted = -1; // Promoted products first
+    sortOptions.promotionTier = 1; // Lower tier number = higher priority
+
+    // Then apply user-selected sort
     switch (sort) {
       case 'price':
         sortOptions['pricing.dailyRate'] = order === 'asc' ? 1 : -1;
@@ -141,7 +245,9 @@ const productService = {
       const [products, total] = await Promise.all([
         Product.find(filter)
           .populate('category', 'name slug')
+          .populate('subCategory', 'name slug')
           .populate('owner', 'email profile.firstName profile.lastName trustScore')
+          .populate('currentPromotion', 'tier startDate endDate isActive')
           .sort(sortOptions)
           .skip(skip)
           .limit(limitNum)
@@ -188,6 +294,11 @@ const productService = {
       .lean();
 
     if (!product) {
+      throw new Error('Sản phẩm không tồn tại');
+    }
+
+    // Check if product is hidden or deleted by owner
+    if (product.status === 'OWNER_HIDDEN' || product.status === 'OWNER_DELETED') {
       throw new Error('Sản phẩm không tồn tại');
     }
 
@@ -242,7 +353,7 @@ const productService = {
     const productSuggestions = await Product.aggregate([
       {
         $match: {
-          status: 'ACTIVE',
+          status: { $nin: ['OWNER_HIDDEN', 'OWNER_DELETED'] },
           title: { $regex: query, $options: 'i' }
         }
       },
@@ -282,7 +393,7 @@ const productService = {
     const [priceRange, locations, categories] = await Promise.all([
       // Get price range
       Product.aggregate([
-        { $match: { status: 'ACTIVE' } },
+        { $match: { status: { $nin: ['OWNER_HIDDEN', 'OWNER_DELETED'] } } },
         {
           $group: {
             _id: null,
@@ -294,7 +405,7 @@ const productService = {
 
       // Get unique locations
       Product.aggregate([
-        { $match: { status: 'ACTIVE' } },
+        { $match: { status: { $nin: ['OWNER_HIDDEN', 'OWNER_DELETED'] } } },
         {
           $group: {
             _id: '$location.address.city',
@@ -340,48 +451,38 @@ const productService = {
   },
 
   /**
-   * Get featured products for homepage
-   * Returns products with active featured status, sorted by tier and last upgrade date
+   * Get promoted products for homepage
+   * Returns products with active promotion status, sorted by tier and creation date
    */
-  getFeaturedProducts: async (limit = 6) => {
+  getPromotedProducts: async (limit = 6) => {
     try {
-      const now = new Date();
-
-      const featuredProducts = await Product.find({
-        status: 'ACTIVE',
-        featuredTier: { $exists: true, $ne: null },
-        featuredPaymentStatus: 'PAID',
-        $or: [{ featuredExpiresAt: { $gt: now } }, { featuredExpiresAt: { $exists: false } }]
+      const promotedProducts = await Product.find({
+        status: { $nin: ['OWNER_HIDDEN', 'OWNER_DELETED'] },
+        isPromoted: true,
+        promotionTier: { $exists: true, $ne: null }
       })
         .populate('category', 'name')
         .populate('owner', 'profile.firstName profile.lastName profile.avatar')
+        .populate('currentPromotion', 'tier endDate isActive')
         .sort({
-          featuredTier: 1, // Tier 1 (highest) first
-          featuredUpgradedAt: -1 // Most recently upgraded first within same tier
+          promotionTier: 1, // Tier 1 (highest) first
+          createdAt: -1 // Most recent first within same tier
         })
         .limit(limit)
         .lean();
 
-      // Filter out products with expired featured status
-      const validFeaturedProducts = featuredProducts.filter((product) => {
-        if (!product.featuredTier) {
-          return false;
-        }
-
-        const endDate = product.featuredExpiresAt;
-
-        // Check if featured is still active
-        if (endDate && now > new Date(endDate)) {
-          return false;
-        }
-
-        return true;
-      });
-
-      return validFeaturedProducts;
+      return promotedProducts;
     } catch (error) {
-      throw new Error(`Failed to get featured products: ${error.message}`);
+      throw new Error(`Failed to get promoted products: ${error.message}`);
     }
+  },
+
+  /**
+   * Legacy method - kept for backward compatibility
+   * @deprecated Use getPromotedProducts instead
+   */
+  getFeaturedProducts: async (limit = 6) => {
+    return productService.getPromotedProducts(limit);
   }
 };
 
