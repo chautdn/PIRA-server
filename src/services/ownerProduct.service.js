@@ -110,20 +110,33 @@ const ownerProductService = {
 
       // Validate CCCD verification
       if (!owner.cccd || !owner.cccd.isVerified) {
-        throw new Error('CCCD verification required. Please verify your identity before creating a product.');
+        throw new Error(
+          'CCCD verification required. Please verify your identity before creating a product.'
+        );
       }
 
       // Validate bank account - must exist AND be verified
       if (!owner.bankAccount || !owner.bankAccount.accountNumber || !owner.bankAccount.bankCode) {
-        throw new Error('Bank account required. Please add your bank account information before creating a product.');
+        throw new Error(
+          'Bank account required. Please add your bank account information before creating a product.'
+        );
       }
       if (!owner.bankAccount.isVerified) {
-        throw new Error('Bank account not verified. Please verify your bank account before creating a product.');
+        throw new Error(
+          'Bank account not verified. Please verify your bank account before creating a product.'
+        );
       }
 
       // Validate address
-      if (!owner.address || !owner.address.streetAddress || !owner.address.city || !owner.address.province) {
-        throw new Error('Complete address required. Please update your address before creating a product.');
+      if (
+        !owner.address ||
+        !owner.address.streetAddress ||
+        !owner.address.city ||
+        !owner.address.province
+      ) {
+        throw new Error(
+          'Complete address required. Please update your address before creating a product.'
+        );
       }
 
       const category = await Category.findById(productData.category);
@@ -145,12 +158,19 @@ const ownerProductService = {
       // Otherwise, set to ACTIVE (normal products or wallet-paid promotions)
       const initialStatus = productData.promotionIntended ? 'PENDING' : 'ACTIVE';
 
+      // Prepare availability object
+      const availability = {
+        isAvailable: true,
+        quantity: productData.quantity || 1
+      };
+
       const newProduct = new Product({
         ...productData,
         owner: ownerId,
         category: category._id,
         slug,
-        status: initialStatus
+        status: initialStatus,
+        availability
       });
 
       const savedProduct = await newProduct.save();
