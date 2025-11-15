@@ -491,10 +491,43 @@ class AdminService {
         throw new Error('Không tìm thấy sản phẩm');
       }
 
+      // Calculate real-time metrics from Review collection
+      const Review = require('../models/Review');
+      const reviewStats = await Review.aggregate([
+        {
+          $match: {
+            product: new mongoose.Types.ObjectId(productId),
+            status: 'APPROVED' // Only count approved reviews
+          }
+        },
+        {
+          $group: {
+            _id: null,
+            averageRating: { $avg: '$rating' },
+            reviewCount: { $sum: 1 }
+          }
+        }
+      ]);
+
+      // Update product metrics with real data from reviews
+      if (reviewStats.length > 0) {
+        product.metrics = product.metrics || {};
+        product.metrics.averageRating = Math.round(reviewStats[0].averageRating * 10) / 10; // Round to 1 decimal
+        product.metrics.reviewCount = reviewStats[0].reviewCount;
+        console.log('Updated metrics from reviews:', product.metrics);
+      } else {
+        // No reviews yet
+        product.metrics = product.metrics || {};
+        product.metrics.averageRating = 0;
+        product.metrics.reviewCount = 0;
+        console.log('No approved reviews found for this product');
+      }
+
       console.log('Product data retrieved successfully');
       console.log('Product title:', product.title);
       console.log('Product status:', product.status);
       console.log('Product owner:', product.owner?.email);
+      console.log('Product metrics:', product.metrics);
       
       return product;
     } catch (error) {
@@ -674,15 +707,21 @@ class AdminService {
     }
 
     if (search) {
-      query.orderNumber = { $regex: search, $options: 'i' };
+      query.masterOrderNumber = { $regex: search, $options: 'i' };
     }
 
     const skip = (page - 1) * limit;
 
     const [orders, total] = await Promise.all([
       Order.find(query)
-        .populate('user', 'profile.firstName profile.lastName email')
-        .populate('items.product', 'name images price')
+        .populate('renter', 'fullName username email phone profile')
+        .populate({
+          path: 'subOrders',
+          populate: [
+            { path: 'owner', select: 'fullName username email' },
+            { path: 'products.product', select: 'title images pricing' }
+          ]
+        })
         .sort({ createdAt: -1 })
         .skip(skip)
         .limit(parseInt(limit)),
@@ -702,9 +741,58 @@ class AdminService {
 
   async getOrderById(orderId) {
     const order = await Order.findById(orderId)
-      .populate('user', 'profile.firstName profile.lastName email phone')
-      .populate('items.product', 'name images price category')
-      .populate('items.product.category', 'name');
+      .populate('renter', 'fullName username email phone profile address')
+      .populate({
+        path: 'subOrders',
+        populate: [
+          { 
+            path: 'owner', 
+            select: 'fullName username email phone profile' 
+          },
+          { 
+            path: 'products.product', 
+            select: 'title description images pricing status category',
+            populate: {
+              path: 'category',
+              select: 'name slug'
+            }
+          }
+        ]
+      });
+
+    if (!order) {
+      throw new Error('Không tìm thấy đơn hàng');
+    }
+
+    return order;
+  }
+
+  async updateOrderStatus(orderId, status) {
+    const validStatuses = [
+      'DRAFT',
+      'PENDING_PAYMENT',
+      'PAYMENT_COMPLETED',
+      'PENDING_CONFIRMATION',
+      'READY_FOR_CONTRACT',
+      'CONTRACT_SIGNED',
+      'PROCESSING',
+      'DELIVERED',
+      'ACTIVE',
+      'COMPLETED',
+      'CANCELLED'
+    ];
+
+    if (!validStatuses.includes(status)) {
+      throw new Error('Trạng thái không hợp lệ');
+    }
+
+    const order = await Order.findByIdAndUpdate(
+      orderId,
+      { status },
+      { new: true }
+    )
+      .populate('renter', 'fullName username email')
+      .populate('subOrders');
 
     if (!order) {
       throw new Error('Không tìm thấy đơn hàng');
@@ -765,13 +853,13 @@ class AdminService {
   async getReportById(reportId) {
     try {
       const report = await Report.findById(reportId)
-        .populate('reporter', 'fullName email avatar phone address')
-        .populate('reportedItem', 'title description images price status owner category')
+        .populate('reporter', 'fullName username email avatar phone address status createdAt isKycVerified profile')
+        .populate('reportedItem', 'title description images price status owner category createdAt viewCount')
         .populate({
           path: 'reportedItem',
           populate: {
             path: 'owner',
-            select: 'fullName email avatar phone'
+            select: 'fullName username email avatar phone status createdAt isKycVerified profile'
           }
         })
         .populate({
