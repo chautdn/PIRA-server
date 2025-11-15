@@ -284,7 +284,7 @@ const productService = {
   /**
    * Get product by ID with detailed information
    */
-  getProductById: async (productId) => {
+  getProductById: async (productId, locale = 'vi') => {
     const product = await Product.findById(productId)
       .populate('category', 'name slug')
       .populate('owner', 'email profile trustScore')
@@ -293,6 +293,24 @@ const productService = {
     if (!product) {
       throw new Error('Sản phẩm không tồn tại');
     }
+
+    // Fetch translations for this product
+    const translations = await ProductTranslation.find({ productId })
+      .select('locale title description shortDescription locationName')
+      .lean();
+
+    // Merge translations into product object
+    const translationsMap = {};
+    translations.forEach(trans => {
+      translationsMap[trans.locale] = {
+        title: trans.title,
+        description: trans.description,
+        shortDescription: trans.shortDescription,
+        locationName: trans.locationName
+      };
+    });
+
+    product.translations = translationsMap;
 
     // Increment view count
     await Product.findByIdAndUpdate(productId, {
@@ -475,6 +493,46 @@ const productService = {
    */
   getFeaturedProducts: async (limit = 6) => {
     return productService.getPromotedProducts(limit);
+  },
+
+  /**
+   * Save or update translation for a product
+   * @param {String} productId - Product ID
+   * @param {String} locale - Locale (en, vi)
+   * @param {Object} translationData - { title, description, shortDescription, locationName }
+   * @param {Object} options - { autoTranslated, translationProvider, verifiedByOwner }
+   */
+  saveProductTranslation: async (productId, locale, translationData, options = {}) => {
+    const translation = await ProductTranslation.findOneAndUpdate(
+      { productId, locale },
+      {
+        ...translationData,
+        ...options,
+        autoTranslatedAt: options.autoTranslated ? new Date() : undefined
+      },
+      { upsert: true, new: true }
+    );
+    return translation;
+  },
+
+  /**
+   * Get all translations for a product
+   * @param {String} productId
+   */
+  getProductTranslations: async (productId) => {
+    const translations = await ProductTranslation.find({ productId }).lean();
+    const map = {};
+    translations.forEach(trans => {
+      map[trans.locale] = trans;
+    });
+    return map;
+  },
+
+  /**
+   * Delete translation for a product
+   */
+  deleteProductTranslation: async (productId, locale) => {
+    await ProductTranslation.deleteOne({ productId, locale });
   }
 };
 

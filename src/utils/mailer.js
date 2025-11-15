@@ -1,7 +1,11 @@
 require('dotenv').config();
 const nodemailer = require('nodemailer');
+const { t } = require('./i18nServer');
 
-const sendMail = async ({ email, subject, html }) => {
+/**
+ * sendMail options: { email, subject, html, locale }
+ */
+const sendMail = async ({ email, subject, html, locale = 'vi' }) => {
   try {
     const transporter = nodemailer.createTransport({
       host: process.env.MAIL_HOST,
@@ -22,8 +26,9 @@ const sendMail = async ({ email, subject, html }) => {
     const result = await transporter.sendMail(message);
     return result;
   } catch (error) {
-    // Lỗi khi gửi email
-    throw new Error('Không thể gửi email');
+    // Use server i18n messages
+    const errMsg = t('mailer.sendFailed', locale);
+    throw new Error(errMsg);
   }
 };
 

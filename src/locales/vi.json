@@ -1,0 +1,54 @@
+{
+  "mailer": {
+    "sendFailed": "Không thể gửi email"
+  },
+  "email": {
+    "verification": {
+      "title": "Xác thực Email",
+      "greeting": "Xin chào {{username}},",
+      "instruction": "Vui lòng nhấp vào nút dưới đây để xác thực email của bạn và kích hoạt tài khoản:",
+      "button": "Xác thực Email",
+      "expire": "Liên kết này sẽ hết hạn sau 1 giờ. Nếu bạn không đăng ký tài khoản này, vui lòng bỏ qua email."
+    },
+    "reset": {
+      "title": "Đặt lại mật khẩu",
+      "greeting": "Xin chào {{username}},",
+      "instruction": "Bạn đã yêu cầu đặt lại mật khẩu. Vui lòng nhấp vào nút dưới đây để đặt lại mật khẩu của bạn:",
+      "button": "Đặt lại mật khẩu",
+      "expire": "Liên kết này sẽ hết hạn sau 1 giờ. Nếu bạn không yêu cầu đặt lại mật khẩu, vui lòng bỏ qua email này."
+    }
+  },
+  "contract": {
+    "title": "Hợp đồng thuê sản phẩm",
+    "contractNo": "Số",
+    "lessor": "BÊN CHO THUÊ (Bên A)",
+    "lessee": "BÊN THUÊ (Bên B)",
+    "productInfo": "1. Thông tin sản phẩm thuê",
+    "productName": "Tên sản phẩm",
+    "description": "Mô tả",
+    "condition": "Tình trạng",
+    "rentalPeriod": "2. Thời gian thuê",
+    "startDate": "Ngày bắt đầu",
+    "endDate": "Ngày kết thúc",
+    "duration": "Thời gian thuê",
+    "unit_day": "ngày",
+    "unit_week": "tuần",
+    "unit_month": "tháng",
+    "pricing": "3. Chi phí",
+    "rentalPrice": "Giá thuê",
+    "deposit": "Tiền cọc",
+    "deliveryFee": "Phí giao hàng",
+    "total": "Tổng cộng",
+    "rightsObligations": "4. Quyền và nghĩa vụ của các bên",
+    "lessorObligations": "4.1. Bên cho thuê có nghĩa vụ:",
+    "lesseeObligations": "4.2. Bên thuê có nghĩa vụ:",
+    "penalties": "5. Điều khoản phạt",
+    "lateReturn": "Trả muộn",
+    "damage": "Hư hỏng",
+    "loss": "Mất sản phẩm",
+    "otherTerms": "6. Điều khoản khác",
+    "signatures": "Chữ ký",
+    "generatedAt": "Hợp đồng được tạo tự động bởi PIRA vào {{datetime}}",
+    "legalNotice": "Đây là hợp đồng điện tử có giá trị pháp lý theo pháp luật hiện hành"
+  }
+}
