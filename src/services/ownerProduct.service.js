@@ -108,6 +108,24 @@ const ownerProductService = {
         throw new Error('Owner not found');
       }
 
+      // Validate CCCD verification
+      if (!owner.cccd || !owner.cccd.isVerified) {
+        throw new Error('CCCD verification required. Please verify your identity before creating a product.');
+      }
+
+      // Validate bank account - must exist AND be verified
+      if (!owner.bankAccount || !owner.bankAccount.accountNumber || !owner.bankAccount.bankCode) {
+        throw new Error('Bank account required. Please add your bank account information before creating a product.');
+      }
+      if (!owner.bankAccount.isVerified) {
+        throw new Error('Bank account not verified. Please verify your bank account before creating a product.');
+      }
+
+      // Validate address
+      if (!owner.address || !owner.address.streetAddress || !owner.address.city || !owner.address.province) {
+        throw new Error('Complete address required. Please update your address before creating a product.');
+      }
+
       const category = await Category.findById(productData.category);
       if (!category) {
         throw new Error('Category not found');
