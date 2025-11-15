@@ -1434,6 +1434,180 @@ class RentalOrderService {
       throw error;
     }
   }
+
+  /**
+   * Tính phí shipping cho từng product trong danh sách
+   * @param {Array} products - Danh sách products với quantity
+   * @param {Object} ownerLocation - Tọa độ owner {latitude, longitude}
+   * @param {Object} userLocation - Tọa độ user {latitude, longitude}
+   * @returns {Promise<Object>} - Chi tiết phí shipping per product
+   */
+  async calculateProductShippingFees(products, ownerLocation, userLocation) {
+    console.log('🚚 Calculating shipping fees for products:', {
+      productsCount: products.length,
+      ownerLocation,
+      userLocation
+    });
+
+    try {
+      // Tính khoảng cách từ owner đến user
+      const distanceResult = await VietMapService.calculateDistance(
+        ownerLocation.longitude,
+        ownerLocation.latitude,
+        userLocation.longitude,
+        userLocation.latitude
+      );
+
+      if (!distanceResult.success && !distanceResult.fallback) {
+        throw new Error('Không thể tính khoảng cách giao hàng');
+      }
+
+      const distanceKm = distanceResult.distanceKm;
+      console.log('📏 Distance calculated:', distanceKm, 'km');
+
+      // Tính phí shipping cho từng product
+      const shippingCalculation = VietMapService.calculateProductShippingFees(products, distanceKm);
+
+      return {
+        success: true,
+        distance: {
+          km: distanceKm,
+          meters: distanceResult.distance,
+          duration: distanceResult.duration,
+          fallback: distanceResult.fallback || false
+        },
+        shipping: shippingCalculation,
+        vietmapResponse: distanceResult.rawResponse
+      };
+    } catch (error) {
+      console.error('❌ Error calculating product shipping fees:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Cập nhật shipping fees cho SubOrder và tất cả products bên trong
+   * @param {string} subOrderId - ID của SubOrder
+   * @param {Object} ownerLocation - Tọa độ owner
+   * @param {Object} userLocation - Tọa độ user
+   * @param {string} userId - ID của user thực hiện update
+   * @returns {Promise<Object>} - SubOrder đã được cập nhật
+   */
+  async updateSubOrderShipping(subOrderId, ownerLocation, userLocation, userId) {
+    console.log('🔄 Updating SubOrder shipping:', {
+      subOrderId,
+      userId,
+      ownerLocation,
+      userLocation
+    });
+
+    try {
+      // Tìm SubOrder
+      const subOrder = await SubOrder.findById(subOrderId).populate([
+        {
+          path: 'masterOrder',
+          populate: { path: 'renter', select: 'profile.firstName phone' }
+        },
+        { path: 'owner', select: 'profile.firstName phone address' },
+        { path: 'products.product', select: 'title name images price' }
+      ]);
+
+      if (!subOrder) {
+        throw new Error('Không tìm thấy SubOrder');
+      }
+
+      // Kiểm tra quyền access (chỉ renter hoặc owner mới được update)
+      const masterOrder = subOrder.masterOrder;
+      const isRenter = masterOrder.renter._id.toString() === userId;
+      const isOwner = subOrder.owner._id.toString() === userId;
+
+      if (!isRenter && !isOwner) {
+        throw new Error('Không có quyền cập nhật thông tin shipping');
+      }
+
+      // Tính phí shipping cho các products
+      const shippingCalculation = await this.calculateProductShippingFees(
+        subOrder.products,
+        ownerLocation,
+        userLocation
+      );
+
+      if (!shippingCalculation.success) {
+        throw new Error('Không thể tính phí shipping');
+      }
+
+      // Cập nhật shipping info cho từng product theo delivery batches
+      let totalSubOrderShippingFee = 0;
+
+      // Create a map for quick product lookup
+      const productFeeMap = new Map();
+      shippingCalculation.shipping.productFees.forEach((fee) => {
+        productFeeMap.set(fee.productIndex, fee);
+      });
+
+      for (let i = 0; i < subOrder.products.length; i++) {
+        const productItem = subOrder.products[i];
+        const productShipping = productFeeMap.get(i);
+
+        if (productShipping) {
+          // Cập nhật shipping info cho product với delivery batch information
+          productItem.shipping = {
+            distance: shippingCalculation.distance.km,
+            fee: {
+              baseFee: 15000, // Base fee per delivery from VietMapService
+              pricePerKm: 5000, // Price per km from VietMapService
+              totalFee: productShipping.allocatedFee // Allocated share of delivery fee
+            },
+            method: masterOrder.deliveryMethod || 'PICKUP',
+            deliveryInfo: {
+              deliveryDate: productShipping.deliveryDate,
+              deliveryBatch: productShipping.deliveryBatch,
+              batchSize: productShipping.breakdown.batchSize,
+              batchQuantity: productShipping.breakdown.batchQuantity,
+              sharedDeliveryFee: productShipping.breakdown.deliveryFee
+            }
+          };
+          productItem.totalShippingFee = productShipping.allocatedFee;
+          totalSubOrderShippingFee += productShipping.allocatedFee;
+        }
+      }
+
+      // Cập nhật shipping info cho SubOrder
+      subOrder.shipping = {
+        method: masterOrder.deliveryMethod || 'PICKUP',
+        fee: {
+          baseFee: 10000, // Base fee từ VietMapService
+          pricePerKm: 5000, // Price per km từ VietMapService
+          totalFee: totalSubOrderShippingFee
+        },
+        distance: shippingCalculation.distance.km,
+        estimatedTime: shippingCalculation.distance.duration,
+        vietmapResponse: shippingCalculation.vietmapResponse
+      };
+
+      // Cập nhật pricing
+      subOrder.pricing.shippingFee = totalSubOrderShippingFee;
+      subOrder.pricing.shippingDistance = shippingCalculation.distance.km;
+      subOrder.pricing.totalAmount =
+        subOrder.pricing.subtotalRental +
+        subOrder.pricing.subtotalDeposit +
+        totalSubOrderShippingFee;
+
+      // Lưu SubOrder
+      await subOrder.save();
+
+      console.log('✅ SubOrder shipping updated successfully:', {
+        subOrderId,
+        totalShippingFee: totalSubOrderShippingFee,
+        distance: shippingCalculation.distance.km
+      });
+
+      return subOrder;
+    } catch (error) {
+      console.error('❌ Error updating SubOrder shipping:', error);
+      throw error;
+    }
+  }
 }
 
 module.exports = new RentalOrderService();
