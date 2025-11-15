@@ -1,3 +1,4 @@
+const mongoose = require('mongoose');
 const Product = require('../models/Product');
 const User = require('../models/User');
 const Category = require('../models/Category');
@@ -294,6 +295,138 @@ const ownerProductService = {
       return product;
     } catch (error) {
       throw new Error('Error removing image: ' + error.message);
+    }
+  },
+
+  /**
+   * Confirm specific product item in SubOrder
+   */
+  confirmProductItem: async (ownerId, subOrderId, productItemIndex) => {
+    try {
+      const SubOrder = require('../models/SubOrder');
+
+      const subOrder = await SubOrder.findOne({
+        _id: subOrderId,
+        owner: ownerId
+      }).populate('products.product');
+
+      if (!subOrder) {
+        throw new Error('Không tìm thấy đơn hàng');
+      }
+
+      if (!subOrder.products[productItemIndex]) {
+        throw new Error('Không tìm thấy sản phẩm trong đơn hàng');
+      }
+
+      const productItem = subOrder.products[productItemIndex];
+      if (productItem.confirmationStatus !== 'PENDING') {
+        throw new Error('Sản phẩm này đã được xử lý rồi');
+      }
+
+      // Update confirmation status
+      productItem.confirmationStatus = 'CONFIRMED';
+      productItem.confirmedAt = new Date();
+
+      await subOrder.save();
+
+      // TODO: Trigger payment processing for confirmed items
+      // await processPaymentForConfirmedItems(subOrder);
+
+      return subOrder;
+    } catch (error) {
+      throw new Error('Lỗi xác nhận sản phẩm: ' + error.message);
+    }
+  },
+
+  /**
+   * Reject specific product item in SubOrder
+   */
+  rejectProductItem: async (ownerId, subOrderId, productItemIndex, reason) => {
+    try {
+      const SubOrder = require('../models/SubOrder');
+
+      const subOrder = await SubOrder.findOne({
+        _id: subOrderId,
+        owner: ownerId
+      }).populate('products.product');
+
+      if (!subOrder) {
+        throw new Error('Không tìm thấy đơn hàng');
+      }
+
+      if (!subOrder.products[productItemIndex]) {
+        throw new Error('Không tìm thấy sản phẩm trong đơn hàng');
+      }
+
+      const productItem = subOrder.products[productItemIndex];
+      if (productItem.confirmationStatus !== 'PENDING') {
+        throw new Error('Sản phẩm này đã được xử lý rồi');
+      }
+
+      // Update confirmation status
+      productItem.confirmationStatus = 'REJECTED';
+      productItem.rejectedAt = new Date();
+      productItem.rejectionReason = reason;
+
+      await subOrder.save();
+
+      // TODO: Trigger refund processing for rejected items
+      // await processRefundForRejectedItems(subOrder, productItemIndex);
+
+      return subOrder;
+    } catch (error) {
+      throw new Error('Lỗi từ chối sản phẩm: ' + error.message);
+    }
+  },
+
+  /**
+   * Get SubOrders for owner (for rental requests management)
+   */
+  getSubOrders: async (ownerId, options = {}) => {
+    try {
+      const SubOrder = require('../models/SubOrder');
+      const { page = 1, limit = 10, status } = options;
+      const skip = (page - 1) * limit;
+
+      let query = { owner: ownerId };
+      if (status && status !== 'ALL') {
+        query.status = status;
+      }
+
+      console.log('[getSubOrders] Starting with ownerId:', ownerId);
+      console.log('[getSubOrders] Query:', JSON.stringify(query));
+
+      // Simple query without any population first to test
+      const subOrders = await SubOrder.find(query)
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limit)
+        .populate({
+          path: 'masterOrder',
+          populate: {
+            path: 'renter',
+            select: 'profile.firstName profile.lastName email'
+          }
+        })
+        .populate('products.product');
+
+      console.log('[getSubOrders] Raw SubOrders found:', subOrders.length);
+
+      // Return simple data without population for now to avoid ObjectId issues
+      const total = await SubOrder.countDocuments(query);
+
+      return {
+        data: subOrders,
+        pagination: {
+          currentPage: page,
+          totalPages: Math.ceil(total / limit),
+          totalItems: total,
+          itemsPerPage: limit
+        }
+      };
+    } catch (error) {
+      console.error('[getSubOrders] Error:', error);
+      throw new Error('Lỗi lấy danh sách yêu cầu thuê: ' + error.message);
     }
   },
 

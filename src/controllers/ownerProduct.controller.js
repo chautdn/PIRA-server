@@ -402,6 +402,96 @@ const ownerProductController = {
         });
       }
     }
+  },
+
+  // GET /api/owner/rental-requests
+  getRentalRequests: async (req, res) => {
+    try {
+      console.log('[getRentalRequests] Starting request for owner:', req.user._id);
+      const ownerId = req.user._id;
+      const { page = 1, limit = 10, status } = req.query;
+
+      console.log('[getRentalRequests] Query params:', { page, limit, status });
+
+      const subOrders = await ownerProductService.getSubOrders(ownerId, {
+        page: parseInt(page),
+        limit: parseInt(limit),
+        status
+      });
+
+      console.log('[getRentalRequests] Success, found subOrders:', subOrders.data?.length || 0);
+
+      return res.status(200).json({
+        success: true,
+        message: 'Rental requests fetched successfully',
+        data: subOrders
+      });
+    } catch (error) {
+      console.error('[getRentalRequests] Error:', error);
+      return res.status(500).json({
+        success: false,
+        message: error.message
+      });
+    }
+  },
+
+  // POST /api/owner/rental-requests/:subOrderId/items/:itemIndex/confirm
+  confirmProductItem: async (req, res) => {
+    try {
+      const ownerId = req.user._id;
+      const { subOrderId, itemIndex } = req.params;
+
+      const subOrder = await ownerProductService.confirmProductItem(
+        ownerId,
+        subOrderId,
+        parseInt(itemIndex)
+      );
+
+      return res.status(200).json({
+        success: true,
+        message: 'Sản phẩm đã được xác nhận',
+        data: subOrder
+      });
+    } catch (error) {
+      return res.status(400).json({
+        success: false,
+        message: error.message
+      });
+    }
+  },
+
+  // POST /api/owner/rental-requests/:subOrderId/items/:itemIndex/reject
+  rejectProductItem: async (req, res) => {
+    try {
+      const ownerId = req.user._id;
+      const { subOrderId, itemIndex } = req.params;
+      const { reason } = req.body;
+
+      if (!reason) {
+        return res.status(400).json({
+          success: false,
+          message: 'Vui lòng nhập lý do từ chối'
+        });
+      }
+
+      const subOrder = await ownerProductService.rejectProductItem(
+        ownerId,
+        subOrderId,
+        parseInt(itemIndex),
+        reason
+      );
+
+      return res.status(200).json({
+        success: true,
+        message: 'Sản phẩm đã được từ chối',
+        data: subOrder
+      });
+    } catch (error) {
+      return res.status(400).json({
+        success: false,
+        message: error.message
+      });
+    }
   }
 };
 

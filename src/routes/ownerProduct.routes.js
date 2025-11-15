@@ -58,6 +58,9 @@ router.get(
   ownerProductController.getProducts
 );
 
+// Rental Request Management Routes - MUST be before /:id route
+router.get('/rental-requests', ownerProductController.getRentalRequests);
+
 router.get('/:id', paramValidation, ownerProductController.getProductById);
 
 router.post(
@@ -105,6 +108,28 @@ router.delete(
     param('imageId').isMongoId().withMessage('Valid image ID is required')
   ],
   ownerProductController.deleteImage
+);
+
+router.post(
+  '/rental-requests/:subOrderId/items/:itemIndex/confirm',
+  [
+    param('subOrderId').isMongoId().withMessage('Valid subOrder ID is required'),
+    param('itemIndex').isInt({ min: 0 }).withMessage('Valid item index is required')
+  ],
+  ownerProductController.confirmProductItem
+);
+
+router.post(
+  '/rental-requests/:subOrderId/items/:itemIndex/reject',
+  [
+    param('subOrderId').isMongoId().withMessage('Valid subOrder ID is required'),
+    param('itemIndex').isInt({ min: 0 }).withMessage('Valid item index is required'),
+    body('reason')
+      .trim()
+      .isLength({ min: 5, max: 500 })
+      .withMessage('Reason must be between 5 and 500 characters')
+  ],
+  ownerProductController.rejectProductItem
 );
 
 registerRoute('/owner-products', router);
