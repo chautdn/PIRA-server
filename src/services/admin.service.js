@@ -128,17 +128,86 @@ class AdminService {
 
     const skip = (page - 1) * limit;
 
-    const [users, total] = await Promise.all([
+    const [users, total, stats] = await Promise.all([
       User.find(query)
         .select('-password')
         .sort({ createdAt: -1 })
         .skip(skip)
         .limit(parseInt(limit)),
-      User.countDocuments(query)
+      User.countDocuments(query),
+      // Get overall stats (not affected by search/role/status filters)
+      User.aggregate([
+        {
+          $facet: {
+            statusStats: [
+              {
+                $group: {
+                  _id: '$status',
+                  count: { $sum: 1 }
+                }
+              }
+            ],
+            roleStats: [
+              {
+                $group: {
+                  _id: '$role',
+                  count: { $sum: 1 }
+                }
+              }
+            ],
+            total: [
+              {
+                $count: 'count'
+              }
+            ]
+          }
+        }
+      ])
     ]);
+
+    // Process stats
+    const userStats = {
+      total: 0,
+      active: 0,
+      inactive: 0,
+      suspended: 0,
+      owners: 0,
+      renters: 0,
+      admins: 0
+    };
+
+    if (stats && stats.length > 0) {
+      const { statusStats, roleStats, total: totalCount } = stats[0];
+      
+      // Total users
+      userStats.total = totalCount && totalCount.length > 0 ? totalCount[0].count : 0;
+      
+      // Status stats
+      statusStats.forEach(stat => {
+        if (stat._id === 'ACTIVE') {
+          userStats.active = stat.count;
+        } else if (stat._id === 'INACTIVE') {
+          userStats.inactive = stat.count;
+        } else if (stat._id === 'SUSPENDED') {
+          userStats.suspended = stat.count;
+        }
+      });
+      
+      // Role stats
+      roleStats.forEach(stat => {
+        if (stat._id === 'OWNER') {
+          userStats.owners = stat.count;
+        } else if (stat._id === 'RENTER') {
+          userStats.renters = stat.count;
+        } else if (stat._id === 'ADMIN') {
+          userStats.admins = stat.count;
+        }
+      });
+    }
 
     return {
       users,
+      stats: userStats,
       pagination: {
         currentPage: parseInt(page),
         totalPages: Math.ceil(total / limit),
@@ -689,7 +758,7 @@ class AdminService {
 
     const skip = (page - 1) * limit;
 
-    const [orders, total] = await Promise.all([
+    const [orders, total, stats] = await Promise.all([
       Order.find(query)
         .populate('renter', 'fullName username email phone profile')
         .populate({
@@ -702,11 +771,43 @@ class AdminService {
         .sort({ createdAt: -1 })
         .skip(skip)
         .limit(parseInt(limit)),
-      Order.countDocuments(query)
+      Order.countDocuments(query),
+      // Get overall stats (not affected by search/status filters)
+      Order.aggregate([
+        {
+          $group: {
+            _id: '$status',
+            count: { $sum: 1 }
+          }
+        }
+      ])
     ]);
+
+    // Process stats
+    const statusStats = {
+      total: 0,
+      active: 0,
+      pending: 0,
+      completed: 0,
+      cancelled: 0
+    };
+
+    stats.forEach(stat => {
+      statusStats.total += stat.count;
+      if (stat._id === 'ACTIVE') {
+        statusStats.active = stat.count;
+      } else if (stat._id === 'PENDING' || stat._id === 'PENDING_PAYMENT' || stat._id === 'PENDING_CONFIRMATION') {
+        statusStats.pending += stat.count;
+      } else if (stat._id === 'COMPLETED') {
+        statusStats.completed = stat.count;
+      } else if (stat._id === 'CANCELLED') {
+        statusStats.cancelled = stat.count;
+      }
+    });
 
     return {
       orders,
+      stats: statusStats,
       pagination: {
         currentPage: parseInt(page),
         totalPages: Math.ceil(total / limit),

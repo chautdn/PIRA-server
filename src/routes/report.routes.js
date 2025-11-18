@@ -12,7 +12,6 @@ router.post('/', reportController.createReport);
 router.get('/my-reports', reportController.getUserReports);
 router.get('/stats', reportController.getReportStats);
 router.get('/:reportId', reportController.getReportById);
-router.delete('/:reportId', reportController.deleteReport);
 
 // Register routes
 registerRoute('/reports', router);

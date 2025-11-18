@@ -117,34 +117,6 @@ class ReportController {
     }
   }
 
-  // Delete own report (only if status is PENDING)
-  async deleteReport(req, res) {
-    try {
-      const { reportId } = req.params;
-      const reporter = req.user.id;
-
-      const report = await Report.findOne({
-        _id: reportId,
-        reporter
-      });
-
-      if (!report) {
-        return responseUtils.error(res, 'Không tìm thấy báo cáo', 404);
-      }
-
-      if (report.status !== 'PENDING') {
-        return responseUtils.error(res, 'Chỉ có thể xóa báo cáo đang chờ xử lý', 400);
-      }
-
-      await Report.findByIdAndDelete(reportId);
-
-      return responseUtils.success(res, null, 'Xóa báo cáo thành công');
-    } catch (error) {
-      console.error('Error deleting report:', error);
-      return responseUtils.error(res, error.message, 500);
-    }
-  }
-
   // Get report statistics for user
   async getReportStats(req, res) {
     try {
