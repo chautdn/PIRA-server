@@ -55,20 +55,100 @@ const subOrderSchema = new mongoose.Schema(
           type: Number,
           required: true
         },
+        // Thêm rental period riêng cho từng product item
+        rentalPeriod: {
+          startDate: {
+            type: Date,
+            required: true
+          },
+          endDate: {
+            type: Date,
+            required: true
+          },
+          duration: {
+            value: Number,
+            unit: {
+              type: String,
+              enum: ['DAY', 'WEEK', 'MONTH']
+            }
+          }
+        },
+        // Thêm shipping information cho từng product
+        shipping: {
+          distance: {
+            type: Number, // km from owner to user
+            default: 0
+          },
+          fee: {
+            baseFee: {
+              type: Number,
+              default: 15000 // 15,000 VND base fee per delivery trip
+            },
+            pricePerKm: {
+              type: Number,
+              default: 5000 // 5,000 VND per km
+            },
+            totalFee: {
+              type: Number,
+              default: 0 // Allocated share of delivery fee for this product
+            }
+          },
+          method: {
+            type: String,
+            enum: ['PICKUP', 'DELIVERY'],
+            default: 'PICKUP'
+          },
+          // Delivery batch information
+          deliveryInfo: {
+            deliveryDate: {
+              type: String, // YYYY-MM-DD format from rentalPeriod.startDate
+              default: null
+            },
+            deliveryBatch: {
+              type: Number, // Batch number for this delivery
+              default: 1
+            },
+            batchSize: {
+              type: Number, // Number of products in this delivery batch
+              default: 1
+            },
+            batchQuantity: {
+              type: Number, // Total quantity of all products in this batch
+              default: 0
+            },
+            sharedDeliveryFee: {
+              type: Number, // Total delivery fee for this batch (shared among products)
+              default: 0
+            }
+          }
+        },
+        // Thêm confirmation status cho từng product item
+        confirmationStatus: {
+          type: String,
+          enum: ['PENDING', 'CONFIRMED', 'REJECTED'],
+          default: 'PENDING'
+        },
+        rejectionReason: String,
+        confirmedAt: Date,
+        rejectedAt: Date,
         totalRental: Number,
-        totalDeposit: Number
+        totalDeposit: Number,
+        totalShippingFee: {
+          type: Number,
+          default: 0 // Individual product shipping fee
+        }
       }
     ],
 
-    // Thời gian thuê
+    // Thời gian thuê (optional - mỗi product có rental period riêng)
     rentalPeriod: {
       startDate: {
         type: Date,
-        required: true
+        required: false // Changed to optional
       },
       endDate: {
         type: Date,
-        required: true
+        required: false // Changed to optional
       },
       duration: {
         value: Number,
@@ -213,6 +293,37 @@ subOrderSchema.virtual('grandTotal').get(function () {
   return this.pricing.subtotalRental + this.pricing.subtotalDeposit + this.pricing.shippingFee;
 });
 
+// Virtual fields cho partial confirmation
+subOrderSchema.virtual('confirmedAmount').get(function () {
+  if (!this.products) return 0;
+  return this.products.reduce((total, item) => {
+    if (item.confirmationStatus === 'CONFIRMED') {
+      return total + (item.totalRental || 0) + (item.totalDeposit || 0);
+    }
+    return total;
+  }, 0);
+});
+
+subOrderSchema.virtual('rejectedAmount').get(function () {
+  if (!this.products) return 0;
+  return this.products.reduce((total, item) => {
+    if (item.confirmationStatus === 'REJECTED') {
+      return total + (item.totalRental || 0) + (item.totalDeposit || 0);
+    }
+    return total;
+  }, 0);
+});
+
+subOrderSchema.virtual('pendingAmount').get(function () {
+  if (!this.products) return 0;
+  return this.products.reduce((total, item) => {
+    if (item.confirmationStatus === 'PENDING') {
+      return total + (item.totalRental || 0) + (item.totalDeposit || 0);
+    }
+    return total;
+  }, 0);
+});
+
 // Indexes
 subOrderSchema.index({ masterOrder: 1, owner: 1 });
 subOrderSchema.index({ subOrderNumber: 1 });
@@ -224,6 +335,10 @@ subOrderSchema.pre('save', function (next) {
   if (this.isNew && !this.subOrderNumber) {
     this.subOrderNumber = `SO${Date.now()}${Math.random().toString(36).substr(2, 4).toUpperCase()}`;
   }
+
+  // Note: Overlap validation đã được xử lý ở cart level với quantity checking
+  // SubOrder cho phép multiple items với overlapping periods vì validation quantity
+  // đã được thực hiện khi add to cart
 
   // Tính tổng tiền từ sản phẩm
   if (this.products && this.products.length > 0) {

@@ -11,6 +11,14 @@ const connectDB = async () => {
 
     await mongoose.connect(uri, {});
     console.log('✅ MongoDB connected successfully');
+    try {
+      const dbName = mongoose.connection.name;
+      const hosts = mongoose.connection.host || mongoose.connection.client?.topology?.s?.options?.hosts;
+      console.log(`MongoDB DB: ${dbName}`);
+      console.log('MongoDB Hosts:', hosts);
+    } catch (err) {
+      // best-effort logging
+    }
   } catch (error) {
     // MongoDB connection failed
     console.error('❌ MongoDB connection error:', error.message);

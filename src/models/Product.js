@@ -126,7 +126,16 @@ const productSchema = new mongoose.Schema(
     // Status & Availability
     status: {
       type: String,
-      enum: ['DRAFT', 'PENDING', 'ACTIVE', 'RENTED', 'INACTIVE', 'SUSPENDED'],
+      enum: [
+        'DRAFT',
+        'PENDING',
+        'ACTIVE',
+        'RENTED',
+        'INACTIVE',
+        'SUSPENDED',
+        'OWNER_HIDDEN',
+        'OWNER_DELETED'
+      ],
       default: 'DRAFT'
     },
     availability: {

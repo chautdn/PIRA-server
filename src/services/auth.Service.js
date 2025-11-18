@@ -30,7 +30,16 @@ const authService = {
       }
     });
 
+    // Save and log DB connection info for debugging
     await newUser.save();
+    try {
+      const mongoose = require('mongoose');
+      const connName = mongoose.connection && mongoose.connection.name;
+      console.log(`🛈 New user created: ${newUser._id} (db: ${connName})`);
+    } catch (err) {
+      // ignore logging errors
+    }
+
     return newUser;
   },
 

@@ -40,11 +40,13 @@ class ImageValidationService {
 
       try {
         const uploadResult = await CloudinaryService.uploadImage(imageBuffer);
+        // Mark that AI validation was skipped so later category check can allow the image
         return {
           ...uploadResult,
           aiAnalysis: {
             nsfwDetection: { safe: true, nsfwValue: 0, note: 'Validation skipped due to AI error' },
-            conceptDetection: { concepts: [] }
+            conceptDetection: { concepts: [] },
+            validationSkipped: true
           }
         };
       } catch (uploadError) {
@@ -72,6 +74,20 @@ class ImageValidationService {
       let analysisResults = existingAnalysis;
       if (!analysisResults) {
         analysisResults = await ClarifaiService.analyzeImageWithWorkflow(imageBuffer);
+      }
+
+      // If AI validation was explicitly skipped (e.g., Clarifai unavailable), allow image
+      if (analysisResults && analysisResults.validationSkipped) {
+        return {
+          isRelevant: true,
+          detectedObjects: analysisResults.conceptDetection?.concepts || [],
+          detectedLabels: analysisResults.conceptDetection?.concepts || [],
+          confidence: 'LOW',
+          matchedKeywords: [],
+          matchScore: 0,
+          matchPercentage: 0,
+          note: 'Validation skipped by AI; accepted by fallback'
+        };
       }
 
       const detectedConcepts = analysisResults.conceptDetection.concepts || [];
