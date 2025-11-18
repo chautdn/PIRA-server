@@ -114,18 +114,6 @@ class AdminController {
     }
   }
 
-  async deleteUser(req, res) {
-    try {
-      const { userId } = req.params;
-      const adminId = req.user.id;
-
-      await adminService.deleteUser(userId, adminId);
-      return responseUtils.success(res, null, 'Xóa người dùng thành công');
-    } catch (error) {
-      return responseUtils.error(res, error.message, 500);
-    }
-  }
-
   async bulkUpdateUsers(req, res) {
     try {
       const { userIds, updateData } = req.body;
@@ -242,35 +230,6 @@ class AdminController {
         return responseUtils.error(res, error.message, 404);
       } else if (error.message.includes('Trạng thái không hợp lệ')) {
         return responseUtils.error(res, error.message, 400);
-      } else {
-        return responseUtils.error(res, error.message, 500);
-      }
-    }
-  }
-
-  async deleteProduct(req, res) {
-    console.log('=== Admin Controller deleteProduct ===');
-    console.log('Request params:', req.params);
-    
-    try {
-      const { productId } = req.params;
-      const adminId = req.user.id;
-      
-      console.log('Deleting product:', { productId, adminId });
-      
-      await adminService.deleteProduct(productId, adminId);
-      console.log('Product deleted successfully');
-      
-      return responseUtils.success(res, null, 'Xóa sản phẩm thành công');
-    } catch (error) {
-      console.error('=== Admin Controller deleteProduct ERROR ===');
-      console.error('Error message:', error.message);
-      console.error('=========================================');
-      
-      if (error.message === 'ID sản phẩm không hợp lệ') {
-        return responseUtils.error(res, error.message, 400);
-      } else if (error.message === 'Không tìm thấy sản phẩm') {
-        return responseUtils.error(res, error.message, 404);
       } else {
         return responseUtils.error(res, error.message, 500);
       }

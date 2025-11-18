@@ -22,7 +22,6 @@ router.get('/users/:userId', adminController.getUserById);
 router.patch('/users/:userId/status', adminController.updateUserStatus);
 router.patch('/users/:userId/role', adminController.updateUserRole);
 // router.patch('/users/:userId/credit-score', adminController.updateUserCreditScore);
-router.delete('/users/:userId', adminController.deleteUser);
 router.patch('/users/bulk-update', adminController.bulkUpdateUsers);
 
 // ========== PRODUCT MANAGEMENT ==========
@@ -31,7 +30,6 @@ router.get('/products/:productId', adminController.getProductById);
 router.patch('/products/:productId/status', adminController.updateProductStatus);
 router.patch('/products/:productId/approve', adminController.approveProduct);
 router.patch('/products/:productId/reject', adminController.rejectProduct);
-router.delete('/products/:productId', adminController.deleteProduct);
 
 // ========== CATEGORY MANAGEMENT ==========
 // router.get('/categories', adminController.getAllCategories);

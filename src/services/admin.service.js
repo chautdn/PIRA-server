@@ -341,29 +341,6 @@ class AdminService {
     return user;
   }
 
-  async deleteUser(userId, adminId) {
-    if (userId === adminId) {
-      throw new Error('Không thể xóa tài khoản của chính mình');
-    }
-
-    const user = await User.findById(userId);
-    if (!user) {
-      throw new Error('Không tìm thấy người dùng');
-    }
-
-    // Check if user has active orders
-    const activeOrders = await Order.countDocuments({ 
-      user: userId, 
-      status: { $in: ['PENDING', 'CONFIRMED', 'IN_PROGRESS'] }
-    });
-
-    if (activeOrders > 0) {
-      throw new Error('Không thể xóa người dùng có đơn hàng đang xử lý');
-    }
-
-    await User.findByIdAndDelete(userId);
-  }
-
   async bulkUpdateUsers(userIds, updateData, adminId) {
     // Validate userIds
     if (!userIds || !Array.isArray(userIds) || userIds.length === 0) {
@@ -907,49 +884,6 @@ class AdminService {
       return updatedReport;
     } catch (error) {
       throw new Error(`Lỗi khi cập nhật trạng thái báo cáo: ${error.message}`);
-    }
-  }
-
-  // ========== PRODUCT MANAGEMENT ==========
-  async deleteProduct(productId, adminId) {
-    console.log('=== Admin Service deleteProduct ===');
-    console.log('Input params:', { productId, adminId });
-    
-    // Validate productId
-    if (!productId) {
-      throw new Error('ID sản phẩm không hợp lệ');
-    }
-
-    const mongoose = require('mongoose');
-    if (!mongoose.Types.ObjectId.isValid(productId)) {
-      throw new Error('ID sản phẩm không hợp lệ');
-    }
-
-    try {
-      const product = await Product.findById(productId);
-      
-      if (!product) {
-        throw new Error('Không tìm thấy sản phẩm');
-      }
-
-      // Check if product is currently rented or has active orders
-      const activeOrders = await SubOrder.countDocuments({
-        'products.product': productId,
-        status: { $in: ['PENDING_CONFIRMATION', 'CONFIRMED', 'PROCESSING', 'DELIVERED', 'ACTIVE'] }
-      });
-
-      if (activeOrders > 0) {
-        throw new Error('Không thể xóa sản phẩm có đơn hàng đang hoạt động');
-      }
-
-      // Hard delete - permanently remove product from database
-      await Product.findByIdAndDelete(productId);
-
-      console.log('Product permanently deleted:', productId);
-      return { message: 'Sản phẩm đã được xóa vĩnh viễn', productId };
-    } catch (error) {
-      console.error('Error in deleteProduct service:', error.message);
-      throw new Error(`Lỗi khi xóa sản phẩm: ${error.message}`);
     }
   }
 
