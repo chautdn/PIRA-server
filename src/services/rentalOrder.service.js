@@ -55,9 +55,28 @@ class RentalOrderService {
             `Thời gian thuê không hợp lệ cho sản phẩm "${item.product.title || item.product.name}"`
           );
         }
-        if (startDate < new Date()) {
+        // Kiểm tra thời gian: trước 12h trưa có thể chọn hôm nay, sau 12h phải chọn ngày mai
+        const now = new Date();
+        const minStartDate = new Date();
+        if (now.getHours() >= 12) {
+          minStartDate.setDate(minStartDate.getDate() + 1);
+        }
+        minStartDate.setHours(0, 0, 0, 0);
+
+        // So sánh chỉ ngày, không so sánh giờ
+        const startDateOnly = new Date(startDate);
+        startDateOnly.setHours(0, 0, 0, 0);
+
+        if (startDateOnly < minStartDate) {
+          console.log('🚫 Invalid start date detected:', startDate);
+          console.log('📅 Current date is:', now);
+          console.log('📅 Min allowed start date:', minStartDate);
+          const timeMessage =
+            now.getHours() >= 12
+              ? 'Sau 12h trưa, ngày bắt đầu phải từ ngày mai trở đi'
+              : 'Ngày bắt đầu phải từ hôm nay trở đi';
           throw new Error(
-            `Thời gian bắt đầu thuê không thể trong quá khứ cho sản phẩm "${item.product.title || item.product.name}" "${startDate.toISOString().split('T')[0]}"`
+            `${timeMessage} cho sản phẩm "${item.product.title || item.product.name}" "${startDate.toISOString().split('T')[0]}"`
           );
         }
       }
@@ -360,11 +379,14 @@ class RentalOrderService {
       }
 
       // Deduct amount from wallet
+      const previousBalance = wallet.balance.available;
       wallet.balance.available -= amount;
       await wallet.save();
 
       console.log('✅ Wallet payment successful');
-      console.log('💳 New wallet balance:', wallet.balance.available);
+      console.log(
+        `💳 Wallet balance: ${previousBalance.toLocaleString('vi-VN')}đ → ${wallet.balance.available.toLocaleString('vi-VN')}đ (Deducted: ${amount.toLocaleString('vi-VN')}đ)`
+      );
 
       return {
         transactionId: transactionId,

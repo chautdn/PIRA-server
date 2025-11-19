@@ -222,6 +222,37 @@ class CartService {
     // Filter out items with deleted products
     cart.items = cart.items.filter((item) => item.product);
 
+    // Check for expired rental dates and add warnings
+    const now = new Date();
+    const minStartDate = new Date();
+    if (now.getHours() >= 12) {
+      minStartDate.setDate(minStartDate.getDate() + 1);
+    }
+    minStartDate.setHours(0, 0, 0, 0);
+
+    const expiredItems = [];
+    cart.items.forEach((item) => {
+      if (item.rental?.startDate) {
+        const startDate = new Date(item.rental.startDate);
+        if (startDate < minStartDate) {
+          expiredItems.push({
+            itemId: item._id,
+            productTitle: item.product.title,
+            startDate: item.rental.startDate,
+            message:
+              now.getHours() >= 12
+                ? 'Ngày bắt đầu đã quá hạn. Sau 12h trưa, bạn chỉ có thể chọn từ ngày mai.'
+                : 'Ngày bắt đầu đã quá hạn. Vui lòng chọn từ hôm nay.'
+          });
+        }
+      }
+    });
+
+    // Add expired items info to cart response
+    if (expiredItems.length > 0) {
+      cart.expiredItems = expiredItems;
+    }
+
     return cart;
   }
 
@@ -247,14 +278,32 @@ class CartService {
       cart = await Cart.create({ user: userId, items: [] });
     }
 
-    // Always create separate cart items - no merging
-    // But we need to validate overlapping periods don't exceed stock
-    const newQuantity = quantity;
+    // Check if same product with exact same rental dates already exists
+    let existingItem = null;
+    if (rental?.startDate && rental?.endDate) {
+      existingItem = cart.items.find((item) => {
+        if (item.product.toString() !== productId) return false;
+        if (!item.rental?.startDate || !item.rental?.endDate) return false;
+
+        // Check if dates are exactly the same
+        const itemStart = new Date(item.rental.startDate).toISOString().slice(0, 10);
+        const itemEnd = new Date(item.rental.endDate).toISOString().slice(0, 10);
+        const requestStart = new Date(rental.startDate).toISOString().slice(0, 10);
+        const requestEnd = new Date(rental.endDate).toISOString().slice(0, 10);
+
+        return itemStart === requestStart && itemEnd === requestEnd;
+      });
+    }
 
     // Calculate total quantity of overlapping periods in cart for validation
     let cartQuantityForPeriod = 0;
     if (rental?.startDate && rental?.endDate) {
       cartQuantityForPeriod = cart.items.reduce((total, item) => {
+        // Skip the existing item we might merge with to avoid double counting
+        if (existingItem && item._id?.toString() === existingItem._id?.toString()) {
+          return total;
+        }
+
         // Check all items for this product with overlapping rental periods
         if (
           item.product.toString() === productId &&
@@ -281,6 +330,9 @@ class CartService {
         return total;
       }, 0);
     }
+
+    // Add existing item quantity if we found one to merge with
+    const newQuantity = existingItem ? existingItem.quantity + quantity : quantity;
 
     // Validate total quantity against stock (including existing overlapping items)
     const totalQuantityForPeriod = cartQuantityForPeriod + newQuantity;
@@ -318,17 +370,22 @@ class CartService {
       }
     }
 
-    // Always add new item - no merging even if dates overlap
-    // Each rental period is separate cart item
-    cart.items.push({
-      product: productId,
-      quantity: newQuantity,
-      rental: rental || {
-        startDate: null,
-        endDate: null,
-        duration: 1
-      }
-    });
+    // Merge with existing item if same product and same rental dates, otherwise add new item
+    if (existingItem) {
+      // Update existing item quantity
+      existingItem.quantity = newQuantity;
+    } else {
+      // Add new item
+      cart.items.push({
+        product: productId,
+        quantity: newQuantity,
+        rental: rental || {
+          startDate: null,
+          endDate: null,
+          duration: 1
+        }
+      });
+    }
 
     await cart.save();
 
@@ -505,6 +562,106 @@ class CartService {
     }
 
     cart.items[itemIndex].rental = rental;
+    await cart.save();
+
+    await cart.populate({
+      path: 'items.product',
+      select: 'title images pricing availability status owner',
+      populate: {
+        path: 'owner',
+        select: 'profile.firstName email phone address'
+      }
+    });
+
+    return cart;
+  }
+
+  /**
+   * Update rental dates by itemId
+   */
+  async updateRentalByItemId(userId, itemId, rental) {
+    const cart = await Cart.findOne({ user: userId });
+    if (!cart) {
+      throw new Error('Giỏ hàng không tồn tại');
+    }
+
+    const itemIndex = cart.items.findIndex((item) => item._id.toString() === itemId);
+
+    if (itemIndex === -1) {
+      throw new Error('Item không có trong giỏ hàng');
+    }
+
+    const item = cart.items[itemIndex];
+    const productId = item.product.toString();
+
+    // Validate rental dates if provided
+    if (rental?.startDate && rental?.endDate) {
+      const dateCheck = await this.checkDateAvailability(
+        productId,
+        rental.startDate,
+        rental.endDate,
+        userId
+      );
+
+      if (!dateCheck.available) {
+        throw new Error(dateCheck.reason);
+      }
+
+      // Check if there's another item with same product and same rental dates that we might merge with
+      let totalQuantityAfterMerge = item.quantity;
+      const potentialMergeTarget = cart.items.find((cartItem, index) => {
+        if (index === itemIndex) return false; // Skip current item
+        if (cartItem.product.toString() !== productId) return false;
+        if (!cartItem.rental?.startDate || !cartItem.rental?.endDate) return false;
+
+        // Check if dates would be exactly the same after update
+        const itemStart = new Date(cartItem.rental.startDate).toISOString().slice(0, 10);
+        const itemEnd = new Date(cartItem.rental.endDate).toISOString().slice(0, 10);
+        const updatedStart = new Date(rental.startDate).toISOString().slice(0, 10);
+        const updatedEnd = new Date(rental.endDate).toISOString().slice(0, 10);
+
+        return itemStart === updatedStart && itemEnd === updatedEnd;
+      });
+
+      if (potentialMergeTarget) {
+        totalQuantityAfterMerge += potentialMergeTarget.quantity;
+      }
+
+      if (totalQuantityAfterMerge > dateCheck.availableCount) {
+        throw new Error(
+          `Tổng số lượng sẽ là ${totalQuantityAfterMerge} nhưng chỉ còn ${dateCheck.availableCount} sản phẩm cho thời gian này`
+        );
+      }
+    }
+
+    // Update the rental dates first
+    cart.items[itemIndex].rental = rental;
+
+    // Check if there's another item with same product and same rental dates to merge with
+    if (rental?.startDate && rental?.endDate) {
+      const updatedItem = cart.items[itemIndex];
+      const mergeTargetIndex = cart.items.findIndex((item, index) => {
+        if (index === itemIndex) return false; // Skip current item
+        if (item.product.toString() !== productId) return false;
+        if (!item.rental?.startDate || !item.rental?.endDate) return false;
+
+        // Check if dates are exactly the same
+        const itemStart = new Date(item.rental.startDate).toISOString().slice(0, 10);
+        const itemEnd = new Date(item.rental.endDate).toISOString().slice(0, 10);
+        const updatedStart = new Date(rental.startDate).toISOString().slice(0, 10);
+        const updatedEnd = new Date(rental.endDate).toISOString().slice(0, 10);
+
+        return itemStart === updatedStart && itemEnd === updatedEnd;
+      });
+
+      if (mergeTargetIndex !== -1) {
+        // Merge quantities
+        cart.items[mergeTargetIndex].quantity += updatedItem.quantity;
+        // Remove the current item since it's merged
+        cart.items.splice(itemIndex, 1);
+      }
+    }
+
     await cart.save();
 
     await cart.populate({
