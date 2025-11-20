@@ -217,6 +217,26 @@ class RentalOrderController {
   }
 
   /**
+   * Người thuê xác nhận SubOrder (sau khi chủ xác nhận)
+   * POST /api/rental-orders/sub-orders/:subOrderId/renter-confirm
+   */
+  async renterConfirmOrder(req, res) {
+    try {
+      const userId = req.user.id;
+      const { subOrderId } = req.params;
+
+      const subOrder = await RentalOrderService.renterConfirmOrder(subOrderId, userId, req.body || {});
+
+      return new SuccessResponse({
+        message: 'Người thuê đã xác nhận SubOrder thành công',
+        metadata: { subOrder }
+      }).send(res);
+    } catch (error) {
+      throw new BadRequest(error.message);
+    }
+  }
+
+  /**
    * Bước 5: Tạo hợp đồng
    * POST /api/rental-orders/:masterOrderId/generate-contracts
    */

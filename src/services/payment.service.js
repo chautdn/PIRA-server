@@ -557,20 +557,30 @@ const processWalletPaymentForOrder = async (userId, amount, orderInfo) => {
       throw new Error('Wallet not found');
     }
 
-    // Check balance
-    if (wallet.balance < validAmount) {
+    // Ensure numeric available balance and check
+    const available = Number(wallet.balance?.available || 0);
+    if (isNaN(available)) {
+      throw new Error('Wallet balance is invalid');
+    }
+
+    if (available < validAmount) {
       throw new Error(
-        `Insufficient balance. Current balance: ${wallet.balance.toLocaleString()} VND`
+        `Insufficient balance. Current balance: ${available.toLocaleString()} VND`
       );
     }
 
-    // Deduct from wallet
-    wallet.balance -= validAmount;
+    // Deduct from wallet available balance
+    wallet.balance.available = available - validAmount;
+    // ensure other fields exist and are numeric
+    wallet.balance.frozen = Number(wallet.balance?.frozen || 0);
+    wallet.balance.pending = Number(wallet.balance?.pending || 0);
+
     await wallet.save({ session });
 
     // Create transaction record
     const transaction = new Transaction({
       user: userId,
+      wallet: wallet._id,
       type: 'payment',
       amount: validAmount,
       status: 'success',
@@ -578,7 +588,7 @@ const processWalletPaymentForOrder = async (userId, amount, orderInfo) => {
       description: `Thanh toán đơn thuê #${orderInfo.orderNumber || 'N/A'}`,
       metadata: {
         orderInfo,
-        balanceAfter: wallet.balance
+        balanceAfter: wallet.balance.available
       }
     });
 

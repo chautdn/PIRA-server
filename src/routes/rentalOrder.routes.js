@@ -124,6 +124,13 @@ router.post(
   RentalOrderController.ownerConfirmOrder
 );
 
+// Người thuê xác nhận SubOrder (sau khi chủ đã xác nhận)
+router.post(
+  '/sub-orders/:subOrderId/renter-confirm',
+  [param('subOrderId').isMongoId().withMessage('ID đơn con không hợp lệ'), validateRequest],
+  RentalOrderController.renterConfirmOrder
+);
+
 /**
  * Bước 5: Tạo hợp đồng
  * POST /api/rental-orders/:masterOrderId/generate-contracts

@@ -653,6 +653,62 @@ class RentalOrderService {
   }
 
   /**
+   * Người thuê xác nhận SubOrder (sau khi chủ xác nhận)
+   */
+  async renterConfirmOrder(subOrderId, renterId, confirmationData) {
+    const subOrder = await SubOrder.findById(subOrderId).populate('masterOrder owner products.product');
+
+    if (!subOrder) {
+      throw new Error('Không tìm thấy SubOrder');
+    }
+
+    // Kiểm tra quyền: chỉ renter của masterOrder mới được confirm
+    const masterOrder = await MasterOrder.findById(subOrder.masterOrder);
+    if (!masterOrder) {
+      throw new Error('Không tìm thấy MasterOrder liên kết');
+    }
+
+    if (masterOrder.renter.toString() !== renterId.toString()) {
+      throw new Error('Không có quyền xác nhận SubOrder này');
+    }
+
+    const { status, notes } = confirmationData || {};
+
+    // Chỉ cho phép renter xác nhận (không có trạng thái REJECTED từ renter ở hiện tại)
+    subOrder.renterConfirmation = {
+      status: 'CONFIRMED',
+      confirmedAt: new Date(),
+      notes
+    };
+
+    // Nếu chủ đã xác nhận trước đó thì đưa SubOrder sang READY_FOR_CONTRACT
+    if (subOrder.ownerConfirmation && subOrder.ownerConfirmation.status === 'CONFIRMED') {
+      subOrder.status = 'READY_FOR_CONTRACT';
+
+      // Nếu chưa có hợp đồng, tạo hợp đồng cho SubOrder
+      if (!subOrder.contract) {
+        await this.generateContractForSubOrder(subOrder);
+      }
+    }
+
+    await subOrder.save();
+
+    // If all suborders are ready, update master order status
+    try {
+      const allSubOrders = await SubOrder.find({ masterOrder: masterOrder._id });
+      const allReady = allSubOrders.every((so) => so.status === 'READY_FOR_CONTRACT' || so.status === 'CONTRACT_SIGNED');
+      if (allReady) {
+        masterOrder.status = 'READY_FOR_CONTRACT';
+        await masterOrder.save();
+      }
+    } catch (err) {
+      console.error('Error while updating master order after renter confirm:', err);
+    }
+
+    return subOrder;
+  }
+
+  /**
    * Bước 5: Tạo hợp đồng điện tử
    */
   async generateContract(masterOrderId) {
