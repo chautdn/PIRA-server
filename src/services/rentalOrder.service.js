@@ -139,7 +139,8 @@ class RentalOrderService {
         });
 
         // Tính phí shipping nếu cần giao hàng
-        if (deliveryMethod === 'DELIVERY' && owner.profile.address) {
+        // Treat OWNER_DELIVERY similarly to DELIVERY for shipping calculations
+        if ((deliveryMethod === 'DELIVERY' || deliveryMethod === 'OWNER_DELIVERY') && owner.profile.address) {
           const shippingInfo = await this.calculateShippingFee(
             owner.profile.address,
             deliveryAddress

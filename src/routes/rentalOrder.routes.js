@@ -14,11 +14,11 @@ const createDraftOrderValidation = [
   body('rentalPeriod.startDate').isISO8601().withMessage('Ngày bắt đầu thuê không hợp lệ'),
   body('rentalPeriod.endDate').isISO8601().withMessage('Ngày kết thúc thuê không hợp lệ'),
   body('deliveryMethod')
-    .isIn(['PICKUP', 'DELIVERY'])
+    .isIn(['PICKUP', 'DELIVERY', 'OWNER_DELIVERY'])
     .withMessage('Hình thức nhận hàng không hợp lệ'),
   // For DELIVERY method, check address requirements
   body('deliveryAddress')
-    .if(body('deliveryMethod').equals('DELIVERY'))
+    .if((value, { req }) => req.body.deliveryMethod === 'DELIVERY')
     .custom((value) => {
       if (!value) {
         throw new Error('Địa chỉ giao hàng không được trống khi chọn DELIVERY');

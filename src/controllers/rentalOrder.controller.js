@@ -24,6 +24,7 @@ class RentalOrderController {
       }
 
       // For DELIVERY method, need either streetAddress or coordinates
+      // Only require deliveryAddress when deliveryMethod is DELIVERY (owner delivery doesn't need renter address)
       if (deliveryMethod === 'DELIVERY' && deliveryAddress) {
         const hasAddress = deliveryAddress.streetAddress;
         const hasCoordinates = deliveryAddress.latitude && deliveryAddress.longitude;
@@ -41,9 +42,12 @@ class RentalOrderController {
       } else if (deliveryMethod === 'DELIVERY' && !deliveryAddress) {
         throw new BadRequest('Thiếu thông tin địa chỉ giao hàng');
       }
-      if (!['PICKUP', 'DELIVERY'].includes(deliveryMethod)) {
+
+      // Accept OWNER_DELIVERY as a valid deliveryMethod (handled similar to DELIVERY in backend logic)
+      if (!['PICKUP', 'DELIVERY', 'OWNER_DELIVERY'].includes(deliveryMethod)) {
         throw new BadRequest('Hình thức nhận hàng không hợp lệ');
       }
+      
 
       // Kiểm tra ngày thuê hợp lệ
       const startDate = new Date(rentalPeriod.startDate);
