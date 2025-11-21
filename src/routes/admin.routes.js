@@ -48,6 +48,13 @@ router.get('/reports/:reportId', adminController.getReportById);
 router.patch('/reports/:reportId/status', adminController.updateReportStatus);
 router.delete('/reports/:reportId/product', adminController.deleteReportedProduct);
 
+// ========== BANK ACCOUNT VERIFICATION ==========
+router.get('/bank-accounts', adminController.getAllBankAccounts);
+router.get('/bank-accounts/:userId', adminController.getBankAccountById);
+router.patch('/bank-accounts/:userId/verify', adminController.verifyBankAccount);
+router.patch('/bank-accounts/:userId/reject', adminController.rejectBankAccount);
+router.patch('/bank-accounts/:userId/status', adminController.updateBankAccountStatus);
+
 // ========== SYSTEM SETTINGS ==========
 router.get('/settings', adminController.getSystemSettings);
 router.put('/settings', adminController.updateSystemSettings);

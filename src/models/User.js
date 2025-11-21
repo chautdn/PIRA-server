@@ -157,7 +157,11 @@ const userSchema = new mongoose.Schema(
         enum: ['PENDING', 'VERIFIED', 'REJECTED'],
         default: 'PENDING'
       },
-      addedAt: Date
+      addedAt: Date,
+      verifiedAt: Date,
+      rejectedAt: Date,
+      adminNote: String,
+      rejectionReason: String
     },
 
     wallet: {

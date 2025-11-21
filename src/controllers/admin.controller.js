@@ -528,6 +528,81 @@ class AdminController {
       }
     }
   }
+
+  // ========== BANK ACCOUNT VERIFICATION ==========
+  async getAllBankAccounts(req, res) {
+    try {
+      const { page = 1, limit = 10, search, status, bankCode } = req.query;
+      const filters = { page, limit, search, status, bankCode };
+      
+      const result = await adminService.getAllBankAccounts(filters);
+      return responseUtils.success(res, result, 'Lấy danh sách tài khoản ngân hàng thành công');
+    } catch (error) {
+      return responseUtils.error(res, error.message, 500);
+    }
+  }
+
+  async getBankAccountById(req, res) {
+    try {
+      const { userId } = req.params;
+      const bankAccount = await adminService.getBankAccountById(userId);
+      
+      if (!bankAccount) {
+        return responseUtils.error(res, 'Không tìm thấy tài khoản ngân hàng', 404);
+      }
+      
+      return responseUtils.success(res, bankAccount, 'Lấy chi tiết tài khoản ngân hàng thành công');
+    } catch (error) {
+      return responseUtils.error(res, error.message, 500);
+    }
+  }
+
+  async verifyBankAccount(req, res) {
+    try {
+      const { userId } = req.params;
+      const { adminNote } = req.body;
+      
+      console.log('Verifying bank account:', { userId, adminNote });
+      
+      const updatedUser = await adminService.verifyBankAccount(userId, adminNote);
+      return responseUtils.success(res, updatedUser, 'Xác minh tài khoản ngân hàng thành công');
+    } catch (error) {
+      console.error('Error in verifyBankAccount controller:', error);
+      return responseUtils.error(res, error.message, 500);
+    }
+  }
+
+  async rejectBankAccount(req, res) {
+    try {
+      const { userId } = req.params;
+      const { rejectionReason } = req.body;
+      
+      if (!rejectionReason) {
+        return responseUtils.error(res, 'Vui lòng nhập lý do từ chối', 400);
+      }
+      
+      const updatedUser = await adminService.rejectBankAccount(userId, rejectionReason);
+      return responseUtils.success(res, updatedUser, 'Từ chối xác minh tài khoản ngân hàng thành công');
+    } catch (error) {
+      return responseUtils.error(res, error.message, 500);
+    }
+  }
+
+  async updateBankAccountStatus(req, res) {
+    try {
+      const { userId } = req.params;
+      const { status, note } = req.body;
+      
+      if (!status) {
+        return responseUtils.error(res, 'Vui lòng nhập trạng thái', 400);
+      }
+      
+      const updatedUser = await adminService.updateBankAccountStatus(userId, status, note);
+      return responseUtils.success(res, updatedUser, 'Cập nhật trạng thái tài khoản ngân hàng thành công');
+    } catch (error) {
+      return responseUtils.error(res, error.message, 500);
+    }
+  }
 }
 
 module.exports = new AdminController();
