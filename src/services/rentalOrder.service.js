@@ -622,9 +622,8 @@ class RentalOrderService {
       };
       subOrder.status = 'OWNER_CONFIRMED';
 
-      // Auto-generate contract when owner confirms
+      // Save owner confirmation; renter will confirm later before contract is generated
       await subOrder.save();
-      await this.generateContractForSubOrder(subOrderId);
     } else if (status === 'REJECTED') {
       subOrder.ownerConfirmation = {
         status: 'OWNER_REJECTED',
@@ -646,8 +645,37 @@ class RentalOrderService {
       await subOrder.save();
     }
 
-    // Kiểm tra tất cả SubOrder đã được xác nhận chưa
-    await this.checkAllSubOrdersConfirmed(subOrder.masterOrder._id);
+    // Update MasterOrder status if needed
+    // Note: We do NOT set to READY_FOR_CONTRACT here; wait for renter to confirm first
+    // But we should update master status to reflect progress if all subs have been owner-confirmed or some rejected
+    if (subOrder.masterOrder) {
+      try {
+        const allSubOrders = await SubOrder.find({ masterOrder: subOrder.masterOrder._id });
+        const allConfirmedOrRejected = allSubOrders.every(
+          (so) => so.status === 'OWNER_CONFIRMED' || so.status === 'OWNER_REJECTED'
+        );
+        
+        // Only update master status if all SubOrders have been confirmed/rejected
+        if (allConfirmedOrRejected) {
+          const hasRejected = allSubOrders.some((so) => so.status === 'OWNER_REJECTED');
+          const masterOrder = await MasterOrder.findById(subOrder.masterOrder._id);
+          
+          if (masterOrder) {
+            if (hasRejected) {
+              // At least one SubOrder was rejected
+              masterOrder.status = 'CANCELLED';
+            } else {
+              // All SubOrders confirmed by owners, now waiting for renters to confirm
+              masterOrder.status = 'PENDING_CONFIRMATION';
+            }
+            await masterOrder.save();
+          }
+        }
+      } catch (err) {
+        console.error('Error updating master order after owner confirm:', err);
+        // Don't throw - SubOrder was saved successfully, this is just a status sync
+      }
+    }
 
     return subOrder;
   }
@@ -1288,34 +1316,63 @@ class RentalOrderService {
    * Xác nhận SubOrder
    */
   async confirmSubOrder(subOrderId, ownerId) {
-    console.log('✅ Confirming SubOrder:', subOrderId, 'by owner:', ownerId);
+    console.log('✅ Confirming SubOrder (legacy endpoint):', subOrderId, 'by owner:', ownerId);
 
     try {
-      const subOrder = await SubOrder.findOne({
-        _id: subOrderId,
-        owner: ownerId,
-        status: 'PENDING_CONFIRMATION'
-      });
+      // Find subOrder by id and owner without strict status filtering
+      const subOrder = await SubOrder.findOne({ _id: subOrderId, owner: ownerId }).populate(
+        'masterOrder'
+      );
 
       if (!subOrder) {
-        throw new Error('Không tìm thấy yêu cầu thuê hoặc yêu cầu đã được xử lý');
+        throw new Error('Không tìm thấy yêu cầu thuê hoặc không có quyền xác nhận');
+      }
+
+      // If there are still product items marked PENDING, mark them as CONFIRMED
+      let changed = false;
+      for (const item of subOrder.products) {
+        if (item.confirmationStatus === 'PENDING') {
+          item.confirmationStatus = 'CONFIRMED';
+          item.confirmedAt = new Date();
+          changed = true;
+        }
       }
 
       subOrder.status = 'OWNER_CONFIRMED';
       subOrder.confirmedAt = new Date();
+
+      if (changed) {
+        console.log('🔁 Some product items were pending and are now marked CONFIRMED');
+      }
+
       await subOrder.save();
 
-      console.log('✅ SubOrder confirmed successfully');
+      console.log('✅ SubOrder confirmed successfully (legacy flow)');
 
-      // Auto-generate contract for this SubOrder
-      await this.generateContractForSubOrder(subOrder);
+      // Sync master order status similar to ownerConfirmOrder
+      if (subOrder.masterOrder) {
+        try {
+          const allSubOrders = await SubOrder.find({ masterOrder: subOrder.masterOrder._id });
+          const allConfirmedOrRejected = allSubOrders.every(
+            (so) => so.status === 'OWNER_CONFIRMED' || so.status === 'OWNER_REJECTED'
+          );
 
-      console.log('✅ Contract generated for confirmed SubOrder');
-
-      // Check if all SubOrders in the MasterOrder are confirmed
-      await this.checkAllSubOrdersConfirmed(subOrder.masterOrder);
-
-      console.log('✅ Checked MasterOrder status update');
+          if (allConfirmedOrRejected) {
+            const hasRejected = allSubOrders.some((so) => so.status === 'OWNER_REJECTED');
+            const masterOrder = await MasterOrder.findById(subOrder.masterOrder._id);
+            if (masterOrder) {
+              if (hasRejected) {
+                masterOrder.status = 'CANCELLED';
+              } else {
+                masterOrder.status = 'PENDING_CONFIRMATION';
+              }
+              await masterOrder.save();
+            }
+          }
+        } catch (err) {
+          console.error('Error updating master order after confirmSubOrder (legacy):', err);
+        }
+      }
 
       // Populate và trả về
       return await SubOrder.findById(subOrderId)
@@ -1326,12 +1383,9 @@ class RentalOrderService {
             select: 'profile.firstName profile.lastName phone email'
           }
         })
-        .populate({
-          path: 'products.product',
-          select: 'name images rentalPrice depositPercentage'
-        });
+        .populate({ path: 'products.product', select: 'name images rentalPrice depositPercentage' });
     } catch (error) {
-      console.error('❌ Error confirming SubOrder:', error);
+      console.error('❌ Error confirming SubOrder (legacy):', error);
       throw error;
     }
   }

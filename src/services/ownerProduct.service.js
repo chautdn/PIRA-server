@@ -6,6 +6,8 @@ const slugify = require('slugify');
 const ImageValidationService = require('./ai/imageValidation.service');
 const CloudinaryService = require('./cloudinary/cloudinary.service');
 
+const RentalOrderService = require('./rentalOrder.service');
+
 const ownerProductService = {
   /**
    * Upload and validate images
@@ -410,6 +412,27 @@ const ownerProductService = {
 
       await subOrder.save();
 
+      // After confirming an item, if there are no more pending items,
+      // auto-promote the SubOrder to OWNER_CONFIRMED and sync MasterOrder
+      try {
+        const pendingCount = subOrder.products.filter((p) => p.confirmationStatus === 'PENDING').length;
+        const confirmedCount = subOrder.products.filter((p) => p.confirmationStatus === 'CONFIRMED').length;
+
+        if (pendingCount === 0) {
+          // If at least one item confirmed, treat whole suborder as confirmed
+          if (confirmedCount > 0) {
+            console.log('🔔 All items processed for subOrder, auto-confirming subOrder:', subOrderId);
+            await RentalOrderService.ownerConfirmOrder(subOrderId, ownerId, { status: 'CONFIRMED', notes: 'Auto-confirmed after item approvals' });
+          } else {
+            // No confirmed items -> all rejected
+            console.log('🔔 All items rejected for subOrder, auto-rejecting subOrder:', subOrderId);
+            await RentalOrderService.ownerConfirmOrder(subOrderId, ownerId, { status: 'REJECTED', rejectionReason: 'All items rejected' });
+          }
+        }
+      } catch (errAuto) {
+        console.error('Error auto-promoting SubOrder after item confirm:', errAuto);
+      }
+
       // TODO: Trigger payment processing for confirmed items
       // await processPaymentForConfirmedItems(subOrder);
 
@@ -450,6 +473,25 @@ const ownerProductService = {
       productItem.rejectionReason = reason;
 
       await subOrder.save();
+
+      // After rejecting an item, if there are no more pending items,
+      // decide whether to auto-confirm or auto-reject the SubOrder
+      try {
+        const pendingCount = subOrder.products.filter((p) => p.confirmationStatus === 'PENDING').length;
+        const confirmedCount = subOrder.products.filter((p) => p.confirmationStatus === 'CONFIRMED').length;
+
+        if (pendingCount === 0) {
+          if (confirmedCount > 0) {
+            console.log('🔔 All items processed for subOrder, some confirmed -> auto-confirm subOrder:', subOrderId);
+            await RentalOrderService.ownerConfirmOrder(subOrderId, ownerId, { status: 'CONFIRMED', notes: 'Auto-confirmed after mixed item decisions' });
+          } else {
+            console.log('🔔 All items rejected for subOrder -> auto-rejecting subOrder:', subOrderId);
+            await RentalOrderService.ownerConfirmOrder(subOrderId, ownerId, { status: 'REJECTED', rejectionReason: 'All items rejected' });
+          }
+        }
+      } catch (errAuto) {
+        console.error('Error auto-promoting SubOrder after item reject:', errAuto);
+      }
 
       // TODO: Trigger refund processing for rejected items
       // await processRefundForRejectedItems(subOrder, productItemIndex);
