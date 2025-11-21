@@ -757,10 +757,19 @@ class RentalOrderController {
    */
   async getOwnerActiveRentals(req, res) {
     try {
+      console.log('📥 GET /api/rental-orders/owner-active-rentals');
+      console.log('👤 req.user:', req.user);
+
+      if (!req.user || !req.user.id) {
+        return res.status(401).json({
+          success: false,
+          message: 'User not authenticated'
+        });
+      }
+
       const ownerId = req.user.id;
       const { page, limit } = req.query;
 
-      console.log('📥 GET /api/rental-orders/owner-active-rentals');
       console.log('👤 Owner ID:', ownerId);
       console.log('📋 Query params:', { page, limit });
 
@@ -769,12 +778,15 @@ class RentalOrderController {
         limit: parseInt(limit) || 20
       });
 
-      return new SuccessResponse({
+      console.log('✅ Active rentals found:', activeRentals.data.length);
+
+      return res.status(200).json({
+        success: true,
         message: 'Lấy danh sách sản phẩm đang cho thuê thành công',
         metadata: {
           activeRentals
         }
-      }).send(res);
+      });
     } catch (error) {
       console.error('❌ Error in getOwnerActiveRentals:', error);
       return res.status(400).json({

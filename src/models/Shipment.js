@@ -11,7 +11,7 @@ const shipmentSchema = new mongoose.Schema(
     // Relationships
     order: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: 'Order',
+      ref: 'SubOrder',
       required: true
     },
     shipper: {
