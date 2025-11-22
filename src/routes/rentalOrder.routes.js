@@ -131,6 +131,13 @@ router.post(
   RentalOrderController.renterConfirmOrder
 );
 
+// Người thuê hủy SubOrder (sau khi chủ đã xác nhận)
+router.put(
+  '/sub-orders/:subOrderId/renter-cancel',
+  [param('subOrderId').isMongoId().withMessage('ID đơn con không hợp lệ'), body('reason').optional().isString(), validateRequest],
+  RentalOrderController.renterCancelSubOrder
+);
+
 /**
  * Bước 5: Tạo hợp đồng
  * POST /api/rental-orders/:masterOrderId/generate-contracts

@@ -237,6 +237,27 @@ class RentalOrderController {
   }
 
   /**
+   * Người thuê hủy SubOrder (sau khi chủ đã xác nhận)
+   * PUT /api/rental-orders/sub-orders/:subOrderId/renter-cancel
+   */
+  async renterCancelSubOrder(req, res) {
+    try {
+      const userId = req.user.id;
+      const { subOrderId } = req.params;
+      const { reason } = req.body;
+
+      const subOrder = await RentalOrderService.renterCancelSubOrder(subOrderId, userId, reason);
+
+      return new SuccessResponse({
+        message: 'Người thuê đã hủy SubOrder thành công',
+        metadata: { subOrder }
+      }).send(res);
+    } catch (error) {
+      throw new BadRequest(error.message);
+    }
+  }
+
+  /**
    * Bước 5: Tạo hợp đồng
    * POST /api/rental-orders/:masterOrderId/generate-contracts
    */

@@ -174,15 +174,13 @@ class ContractGenerator {
 
     <div class="signatures">
       <div style="text-align: center;">
-        <p><strong>${signatures}</strong></p>
-        <p>(${t('contract.signatures', locale)})</p>
-        <div class="signature-box" id="owner-signature"></div>
+        <p><strong>Chữ ký chủ cho thuê:</strong></p>
+        <div class="signature-box">${order.contract?.signatures?.owner?.signature || ''}</div>
         <p>${order.owner.fullName || order.owner.profile?.firstName + ' ' + order.owner.profile?.lastName}</p>
       </div>
       <div style="text-align: center;">
-        <p><strong>${signatures}</strong></p>
-        <p>(${t('contract.signatures', locale)})</p>
-        <div class="signature-box" id="renter-signature"></div>
+        <p><strong>Chữ ký người thuê:</strong></p>
+        <div class="signature-box">${order.contract?.signatures?.renter?.signature || ''}</div>
         <p>${order.renter.fullName || order.renter.profile?.firstName + ' ' + order.renter.profile?.lastName}</p>
       </div>
     </div>

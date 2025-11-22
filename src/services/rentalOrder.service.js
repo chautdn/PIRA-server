@@ -8,6 +8,48 @@ const VietMapService = require('./vietmap.service');
 const mongoose = require('mongoose');
 
 class RentalOrderService {
+    /**
+     * Người thuê hủy SubOrder (sau khi chủ đã xác nhận)
+     */
+    async renterCancelSubOrder(subOrderId, renterId, reason) {
+      // Tìm subOrder thuộc về renter và trạng thái OWNER_CONFIRMED
+      const subOrder = await SubOrder.findOne({
+        _id: subOrderId,
+        status: 'OWNER_CONFIRMED'
+      }).populate('masterOrder');
+
+      if (!subOrder) {
+        throw new Error('Không tìm thấy SubOrder hoặc trạng thái không hợp lệ');
+      }
+      // Kiểm tra quyền
+      if (subOrder.masterOrder.renter.toString() !== renterId) {
+        throw new Error('Không có quyền hủy SubOrder này');
+      }
+
+      subOrder.status = 'CANCELLED';
+      subOrder.cancellation = {
+        cancelledBy: renterId,
+        cancelledAt: new Date(),
+        reason
+      };
+      await subOrder.save();
+
+      // TODO: Trả sản phẩm về cart (thực hiện ở phía client)
+
+      // Nếu tất cả suborders đều CANCELLED/OWNER_REJECTED thì cập nhật masterOrder
+      if (subOrder.masterOrder) {
+        const allSubOrders = await SubOrder.find({ masterOrder: subOrder.masterOrder._id });
+        const allCancelledOrRejected = allSubOrders.every(
+          (so) => so.status === 'CANCELLED' || so.status === 'OWNER_REJECTED'
+        );
+        if (allCancelledOrRejected) {
+          subOrder.masterOrder.status = 'CANCELLED';
+          await subOrder.masterOrder.save();
+        }
+      }
+
+      return subOrder;
+    }
   /**
    * Bước 1: Tạo đơn thuê tạm từ giỏ hàng (Draft Order)
    */

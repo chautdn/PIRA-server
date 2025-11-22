@@ -68,15 +68,13 @@ const contractSchema = new mongoose.Schema(
         signed: { type: Boolean, default: false },
         signedAt: Date,
         ipAddress: String,
-        signature: String, // Base64 encoded signature image
-        signatureHash: String // SHA-256 hash for verification
+        signature: String // Chữ ký điện tử dạng text (họ tên)
       },
       renter: {
         signed: { type: Boolean, default: false },
         signedAt: Date,
         ipAddress: String,
-        signature: String,
-        signatureHash: String
+        signature: String // Chữ ký điện tử dạng text (họ tên)
       }
     },
 
