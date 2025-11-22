@@ -602,10 +602,12 @@ class RentalOrderService {
    * Bước 4: Chủ xác nhận đơn hàng
    */
   async ownerConfirmOrder(subOrderId, ownerId, confirmationData) {
+      console.log('[DEBUG] ownerConfirmOrder called:', { subOrderId, ownerId, confirmationData });
+    // Accept subOrder in either PENDING_OWNER_CONFIRMATION or DRAFT (for legacy/auto-promotion)
     const subOrder = await SubOrder.findOne({
       _id: subOrderId,
       owner: ownerId,
-      status: 'PENDING_OWNER_CONFIRMATION'
+      status: { $in: ['PENDING_OWNER_CONFIRMATION', 'DRAFT'] }
     }).populate('masterOrder');
 
     if (!subOrder) {
@@ -621,8 +623,6 @@ class RentalOrderService {
         notes
       };
       subOrder.status = 'OWNER_CONFIRMED';
-
-      // Save owner confirmation; renter will confirm later before contract is generated
       await subOrder.save();
     } else if (status === 'REJECTED') {
       subOrder.ownerConfirmation = {
@@ -632,10 +632,7 @@ class RentalOrderService {
         notes
       };
       subOrder.status = 'OWNER_REJECTED';
-
       await subOrder.save();
-
-      // Process refund for rejected order
       await this.processRefundForRejectedOrder(
         subOrder.masterOrder._id,
         subOrderId,
@@ -646,34 +643,41 @@ class RentalOrderService {
     }
 
     // Update MasterOrder status if needed
-    // Note: We do NOT set to READY_FOR_CONTRACT here; wait for renter to confirm first
-    // But we should update master status to reflect progress if all subs have been owner-confirmed or some rejected
     if (subOrder.masterOrder) {
+      console.log('[DEBUG] subOrder.masterOrder found:', subOrder.masterOrder._id);
       try {
         const allSubOrders = await SubOrder.find({ masterOrder: subOrder.masterOrder._id });
+        console.log('[DEBUG] allSubOrders:', allSubOrders.map(so => ({ id: so._id, status: so.status })));
         const allConfirmedOrRejected = allSubOrders.every(
           (so) => so.status === 'OWNER_CONFIRMED' || so.status === 'OWNER_REJECTED'
         );
-        
+
         // Only update master status if all SubOrders have been confirmed/rejected
-        if (allConfirmedOrRejected) {
-          const hasRejected = allSubOrders.some((so) => so.status === 'OWNER_REJECTED');
-          const masterOrder = await MasterOrder.findById(subOrder.masterOrder._id);
-          
-          if (masterOrder) {
-            if (hasRejected) {
-              // At least one SubOrder was rejected
-              masterOrder.status = 'CANCELLED';
-            } else {
-              // All SubOrders confirmed by owners, now waiting for renters to confirm
-              masterOrder.status = 'PENDING_CONFIRMATION';
+          if (allConfirmedOrRejected) {
+            const hasRejected = allSubOrders.some((so) => so.status === 'OWNER_REJECTED');
+            const allConfirmed = allSubOrders.every((so) => so.status === 'OWNER_CONFIRMED');
+            console.log('[DEBUG] allConfirmedOrRejected:', allConfirmedOrRejected, 'hasRejected:', hasRejected, 'allConfirmed:', allConfirmed);
+            const masterOrder = await MasterOrder.findById(subOrder.masterOrder._id);
+
+            if (masterOrder) {
+              console.log('[DEBUG] masterOrder before status update:', masterOrder.status);
+              if (hasRejected) {
+                console.log('[DEBUG] Setting masterOrder.status = CANCELLED');
+                masterOrder.status = 'CANCELLED';
+              } else if (allConfirmed) {
+                console.log('[DEBUG] Setting masterOrder.status = READY_FOR_CONTRACT');
+                masterOrder.status = 'READY_FOR_CONTRACT';
+              } else {
+                console.log('[DEBUG] Setting masterOrder.status = PENDING_CONFIRMATION');
+                masterOrder.status = 'PENDING_CONFIRMATION';
+              }
+              await masterOrder.save();
+              console.log('[DEBUG] masterOrder after status update:', masterOrder.status);
+              console.log(`[SYNC] MasterOrder ${masterOrder._id} status updated to ${masterOrder.status} after all owners confirmed/rejected.`);
             }
-            await masterOrder.save();
           }
-        }
       } catch (err) {
         console.error('Error updating master order after owner confirm:', err);
-        // Don't throw - SubOrder was saved successfully, this is just a status sync
       }
     }
 
@@ -1202,22 +1206,34 @@ class RentalOrderService {
   }
 
   async checkAllSubOrdersConfirmed(masterOrderId) {
+    console.log('[DEBUG] checkAllSubOrdersConfirmed called:', { masterOrderId });
     const subOrders = await SubOrder.find({ masterOrder: masterOrderId });
+    console.log('[DEBUG] subOrders:', subOrders.map(so => ({ id: so._id, status: so.status })));
 
-    const allConfirmed = subOrders.every(
-      (so) => so.status === 'OWNER_CONFIRMED' || so.status === 'OWNER_REJECTED'
+    // Only set READY_FOR_CONTRACT if all suborders are READY_FOR_CONTRACT or CONTRACT_SIGNED
+    const allReady = subOrders.every(
+      (so) => so.status === 'READY_FOR_CONTRACT' || so.status === 'CONTRACT_SIGNED'
     );
 
-    if (allConfirmed) {
-      const hasRejected = subOrders.some((so) => so.status === 'OWNER_REJECTED');
+    if (allReady) {
+      await MasterOrder.findByIdAndUpdate(masterOrderId, {
+        status: 'READY_FOR_CONTRACT'
+      });
+    }
 
+    // If all suborders are confirmed or rejected, set to CANCELLED if any rejected, else set to PENDING_CONFIRMATION
+    const allConfirmedOrRejected = subOrders.every(
+      (so) => so.status === 'OWNER_CONFIRMED' || so.status === 'OWNER_REJECTED'
+    );
+    if (allConfirmedOrRejected) {
+      const hasRejected = subOrders.some((so) => so.status === 'OWNER_REJECTED');
       if (hasRejected) {
         await MasterOrder.findByIdAndUpdate(masterOrderId, {
           status: 'CANCELLED'
         });
       } else {
         await MasterOrder.findByIdAndUpdate(masterOrderId, {
-          status: 'READY_FOR_CONTRACT'
+          status: 'PENDING_CONFIRMATION'
         });
       }
     }
