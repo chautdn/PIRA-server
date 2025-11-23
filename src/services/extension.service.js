@@ -32,7 +32,11 @@ class ExtensionService {
       const subOrder = await SubOrder.findOne({
         _id: subOrderId,
         status: 'ACTIVE'
-      }).populate('masterOrder product owner');
+      }).populate([
+        { path: 'masterOrder' },
+        { path: 'owner' },
+        { path: 'products.product' }
+      ]);
 
       if (!subOrder) {
         throw new Error('Không tìm thấy SubOrder hoặc SubOrder không ở trạng thái ACTIVE');
@@ -45,22 +49,46 @@ class ExtensionService {
       }
 
       // Tính toán giá gia hạn
-      const currentEnd = new Date(subOrder.rentalPeriod.endDate);
+      let currentEnd;
+      
+      // Try to get end date from products or subOrder
+      if (subOrder.products && subOrder.products.length > 0) {
+        currentEnd = new Date(subOrder.products[0].rentalPeriod.endDate);
+      } else if (subOrder.rentalPeriod && subOrder.rentalPeriod.endDate) {
+        currentEnd = new Date(subOrder.rentalPeriod.endDate);
+      } else {
+        throw new Error('Không tìm thấy ngày kết thúc của đơn hàng');
+      }
+
       const extensionDays = Math.ceil((newEnd - currentEnd) / (1000 * 60 * 60 * 24));
 
       if (extensionDays <= 0) {
         throw new Error('Ngày kết thúc mới phải sau ngày kết thúc hiện tại');
       }
 
-      // Lấy giá thuê từ sản phẩm
-      const product = await Product.findById(subOrder.products[0].product);
-      if (!product) {
-        throw new Error('Không tìm thấy sản phẩm');
+      // Lấy giá thuê từ sản phẩm - từ SubOrder hoặc Product
+      let rentalRate = 0;
+      
+      if (subOrder.products && subOrder.products.length > 0) {
+        rentalRate = subOrder.products[0].rentalRate || 0;
+      }
+      
+      // If not found in subOrder, fetch from Product
+      if (rentalRate === 0) {
+        const product = await Product.findById(subOrder.products[0].product);
+        if (!product) {
+          throw new Error('Không tìm thấy sản phẩm');
+        }
+        rentalRate = product.pricing?.dailyRate || product.price || 0;
       }
 
-      const rentalRate = product.pricing?.dailyRate || product.price || 0;
-      const extensionCost = rentalRate * extensionDays;
-      const totalCost = extensionCost; // Có thể thêm deposits sau
+      // Validate rentalRate
+      if (!rentalRate || rentalRate <= 0 || isNaN(rentalRate)) {
+        throw new Error('Giá thuê không hợp lệ. Vui lòng kiểm tra thông tin sản phẩm');
+      }
+
+      const extensionCost = Math.round(rentalRate * extensionDays);
+      const totalCost = Math.round(extensionCost); // Có thể thêm deposits sau
 
       console.log('💰 Calculation:', {
         currentEndDate: currentEnd,
@@ -161,20 +189,31 @@ class ExtensionService {
    */
   async processWalletPayment(renterId, amount) {
     try {
+      // Validate amount first
+      if (!amount || amount <= 0 || isNaN(amount)) {
+        throw new Error(`Số tiền thanh toán không hợp lệ: ${amount}`);
+      }
+
       const user = await User.findById(renterId).populate('wallet');
       if (!user || !user.wallet) {
         throw new Error('Không tìm thấy ví của người dùng');
       }
 
       const wallet = user.wallet;
+      
+      // Validate wallet balance
+      if (wallet.balance.available === undefined || wallet.balance.available === null) {
+        throw new Error('Ví không có số dư');
+      }
+
       if (wallet.balance.available < amount) {
         throw new Error(
           `Ví không đủ số dư. Hiện có: ${wallet.balance.available.toLocaleString('vi-VN')}đ, cần: ${amount.toLocaleString('vi-VN')}đ`
         );
       }
 
-      // Deduct from wallet
-      wallet.balance.available -= amount;
+      // Deduct from wallet - ensure result is a number
+      wallet.balance.available = Math.round(wallet.balance.available - amount);
       await wallet.save();
 
       console.log('✅ Wallet payment successful');
@@ -183,9 +222,9 @@ class ExtensionService {
         status: 'SUCCESS',
         transactionId: `EXT_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
         method: 'WALLET',
-        amount,
-        previousBalance: wallet.balance.available + amount,
-        newBalance: wallet.balance.available
+        amount: Math.round(amount),
+        previousBalance: Math.round(wallet.balance.available + amount),
+        newBalance: Math.round(wallet.balance.available)
       };
     } catch (error) {
       console.error('❌ Wallet payment failed:', error.message);
