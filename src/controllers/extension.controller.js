@@ -60,7 +60,10 @@ class ExtensionController {
 
     return new SuccessResponse({
       message: 'Lấy danh sách yêu cầu gia hạn thành công',
-      metadata: result
+      metadata: {
+        requests: result.requests,
+        pagination: result.pagination
+      }
     }).send(res);
   });
 

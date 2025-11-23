@@ -130,7 +130,8 @@ const extensionRequestSchema = new mongoose.Schema(
   },
   {
     timestamps: true,
-    collection: 'ExtensionRequests'
+    collection: 'ExtensionRequests',
+    strict: false
   }
 );
 

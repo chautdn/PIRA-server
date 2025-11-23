@@ -9,7 +9,14 @@ const connectDB = async () => {
       );
     }
 
-    await mongoose.connect(uri, {});
+    const options = {
+      strictPopulate: false,
+      retryWrites: true,
+      w: 'majority',
+      serverSelectionTimeoutMS: 5000
+    };
+
+    await mongoose.connect(uri, options);
     console.log('✅ MongoDB connected successfully');
     try {
       const dbName = mongoose.connection.name;

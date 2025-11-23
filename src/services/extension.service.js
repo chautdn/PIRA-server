@@ -138,18 +138,33 @@ class ExtensionService {
         paymentDetails: paymentResult
       };
 
-      await extensionRequest.save();
+      const savedRequest = await extensionRequest.save();
+      console.log('✅ Extension request saved:', savedRequest._id);
+      console.log('📦 Saved data:', JSON.stringify(savedRequest, null, 2));
 
-      console.log('✅ Extension request created:', extensionRequest._id);
+      // Verify data was saved
+      const verifyData = await ExtensionRequest.findById(savedRequest._id);
+      if (!verifyData) {
+        throw new Error('Không thể xác nhận dữ liệu đã được lưu');
+      }
+      console.log('✅ Data verification successful');
 
       // Populate and return
-      return await ExtensionRequest.findById(extensionRequest._id).populate([
+      const populatedRequest = await ExtensionRequest.findById(savedRequest._id).populate([
         { path: 'renter', select: 'profile email' },
         { path: 'owner', select: 'profile email' },
         { path: 'subOrder', select: 'subOrderNumber' }
       ]);
+      
+      console.log('✅ Final populated request:', populatedRequest._id);
+      return populatedRequest;
     } catch (error) {
       console.error('❌ Error creating extension request:', error);
+      console.error('Error details:', {
+        message: error.message,
+        stack: error.stack,
+        validationErrors: error.errors ? Object.keys(error.errors) : null
+      });
       throw new Error('Không thể tạo yêu cầu gia hạn: ' + error.message);
     }
   }

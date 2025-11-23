@@ -9,13 +9,11 @@ router.use(authMiddleware.verifyToken);
 // Renter routes
 router.post('/request', ExtensionController.requestExtension);
 router.get('/renter-requests', ExtensionController.getRenterExtensionRequests);
-
-// Owner routes - Must be before /:requestId routes
-router.get('/owner-requests', ExtensionController.getOwnerExtensionRequests);
-
-// Dynamic routes - Must be last
-router.get('/:requestId', ExtensionController.getExtensionRequestDetail);
 router.put('/:requestId/cancel', ExtensionController.cancelExtension);
+
+// Owner routes
+router.get('/owner-requests', ExtensionController.getOwnerExtensionRequests);
+router.get('/:requestId', ExtensionController.getExtensionRequestDetail);
 router.put('/:requestId/approve', ExtensionController.approveExtension);
 router.put('/:requestId/reject', ExtensionController.rejectExtension);
 
