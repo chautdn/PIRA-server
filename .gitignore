@@ -6,13 +6,44 @@ yarn-debug.log*
 yarn-error.log*
 lerna-debug.log*
 
-# Seed files and scripts
-seeds/
-scripts/
-*.md
-# Test files
-test/
+# Test files (keep folder structure, ignore contents)
+test/**/*
+!test/README.md
+!test/.gitkeep
 *.test.js
+*.spec.js
+
+# Seed files (keep folder structure, ignore seed scripts)
+seeds/**/*
+!seeds/README_SEED.md
+!seeds/.gitkeep
+
+# Utility scripts (keep folder structure, ignore scripts)
+scripts/**/*
+!scripts/README.md
+!scripts/.gitkeep
+
+# Reports and documentation (keep folder structure, ignore contents)
+reports/**/*
+!reports/README.md
+!reports/.gitkeep
+
+# Documentation guides (keep essential API docs only)
+docs/**/*
+!docs/.gitkeep
+!docs/API_*.md
+
+# Temporary test/debug files in root
+test-*.js
+debug-*.js
+
+# Development markdown files (keep only production README.md)
+DEPLOYMENT_REPORT.md
+POSTMAN_TEST_GUIDE.md
+RENTAL_SYSTEM_README.md
+*_GUIDE.md
+*_TEST.md
+*_REPORT.md
 
 # Documentation (keep essential docs, ignore guides/quickstarts)
 SYSTEM_WALLET_QUICKSTART.md

@@ -1,0 +1,8 @@
+// Placeholder file to ensure scripts folder is tracked in git
+// Actual script files are gitignored
+
+// Example script structure:
+// scripts/
+// ├── reset-password.js
+// ├── seed-categories.js
+// └── migrate-*.js
