@@ -28,7 +28,11 @@ if (!uri) {
 }
 
 async function main() {
-  await mongoose.connect(uri, { useNewUrlParser: true, useUnifiedTopology: true });
+  await mongoose.connect(uri, { 
+    retryWrites: true,
+    w: 'majority'
+  });
+  mongoose.set('strictPopulate', false);
   console.log('Connected to DB');
 
   // Lazy-load Wallet model so this script doesn't depend on app boot sequence
@@ -55,15 +59,13 @@ async function main() {
   // Optionally record a transactions array if the model supports it
   if (Array.isArray(wallet.transactions)) {
     wallet.transactions.push({
-      type: 'CREDIT',
+      type: 'DEPOSIT',
       amount: amount,
-      currency: wallet.currency || 'VND',
-      note: 'Manual credit via scripts/credit-wallet.js',
-      createdAt: new Date()
+      description: 'Manual credit via scripts/credit-wallet.js',
+      timestamp: new Date(),
+      status: 'COMPLETED'
     });
   }
-
-  wallet.updatedAt = new Date();
 
   await wallet.save();
 

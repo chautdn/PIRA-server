@@ -138,7 +138,15 @@ class ExtensionService {
         paymentDetails: paymentResult
       };
 
-      const savedRequest = await extensionRequest.save();
+      const savedRequest = await extensionRequest.save().catch(saveError => {
+        console.error('❌ Save error details:', {
+          error: saveError.message,
+          validationErrors: saveError.errors,
+          data: extensionRequest.toObject()
+        });
+        throw saveError;
+      });
+      
       console.log('✅ Extension request saved:', savedRequest._id);
       console.log('📦 Saved data:', JSON.stringify(savedRequest, null, 2));
 
@@ -228,14 +236,28 @@ class ExtensionService {
       }
 
       // Deduct from wallet - ensure result is a number
+      const transactionId = `EXT_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`;
       wallet.balance.available = Math.round(wallet.balance.available - amount);
+      
+      // Add transaction log
+      if (!wallet.transactions) {
+        wallet.transactions = [];
+      }
+      wallet.transactions.push({
+        type: 'PAYMENT',
+        amount: Math.round(amount),
+        description: 'Extension request payment',
+        timestamp: new Date(),
+        status: 'COMPLETED'
+      });
+      
       await wallet.save();
 
       console.log('✅ Wallet payment successful');
 
       return {
         status: 'SUCCESS',
-        transactionId: `EXT_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
+        transactionId: transactionId,
         method: 'WALLET',
         amount: Math.round(amount),
         previousBalance: Math.round(wallet.balance.available + amount),

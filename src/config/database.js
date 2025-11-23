@@ -10,13 +10,13 @@ const connectDB = async () => {
     }
 
     const options = {
-      strictPopulate: false,
       retryWrites: true,
       w: 'majority',
       serverSelectionTimeoutMS: 5000
     };
 
     await mongoose.connect(uri, options);
+    mongoose.set('strictPopulate', false);
     console.log('✅ MongoDB connected successfully');
     try {
       const dbName = mongoose.connection.name;
