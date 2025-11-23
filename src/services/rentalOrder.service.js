@@ -16,35 +16,116 @@ class RentalOrderService {
       const subOrder = await SubOrder.findOne({
         _id: subOrderId,
         status: 'OWNER_CONFIRMED'
-      }).populate('masterOrder');
+      }).populate([
+        'masterOrder',
+        'products.product'
+      ]);
 
       if (!subOrder) {
         throw new Error('Không tìm thấy SubOrder hoặc trạng thái không hợp lệ');
       }
+      
       // Kiểm tra quyền
-      if (subOrder.masterOrder.renter.toString() !== renterId) {
+      const masterOrder = await MasterOrder.findById(subOrder.masterOrder._id).populate('renter');
+      if (masterOrder.renter._id.toString() !== renterId) {
         throw new Error('Không có quyền hủy SubOrder này');
       }
 
+      console.log('🚀 Cancelling SubOrder:', subOrderId);
+      console.log('👤 Renter ID:', renterId);
+
+      // 1️⃣ Trả sản phẩm về giỏ hàng
+      const cartService = require('./cart.service');
+      console.log('📦 Returning products to cart:', subOrder.products.length);
+      
+      for (const item of subOrder.products) {
+        try {
+          console.log(`  - Adding product ${item.product._id} (qty: ${item.quantity}) back to cart`);
+          await cartService.addToCart(renterId, item.product._id, item.quantity, {
+            startDate: item.rentalPeriod?.startDate,
+            endDate: item.rentalPeriod?.endDate
+          });
+        } catch (error) {
+          console.error(`❌ Error returning product to cart: ${error.message}`);
+          // Tiếp tục xử lý hoàn tiền ngay cả khi trả cart thất bại
+        }
+      }
+      console.log('✅ Products returned to cart successfully');
+
+      // 2️⃣ Hoàn tiền vào ví nếu đã thanh toán
+      let refundAmount = 0;
+      
+      // Tính toán số tiền cần hoàn
+      if (subOrder.pricing) {
+        refundAmount = (subOrder.pricing.subtotalRental || 0) + 
+                      (subOrder.pricing.subtotalDeposit || 0) + 
+                      (subOrder.pricing.shippingFee || 0);
+      }
+
+      console.log('💳 Calculated refund amount:', refundAmount);
+
+      if (refundAmount > 0 && masterOrder.paymentStatus === 'PAID') {
+        console.log('💸 Processing refund to wallet...');
+        
+        try {
+          const Wallet = require('../models/Wallet');
+          const user = await User.findById(renterId).populate('wallet');
+          
+          if (!user || !user.wallet) {
+            console.warn('⚠️  Wallet not found for user, cannot process refund');
+          } else {
+            const wallet = user.wallet;
+            
+            // Hoàn tiền vào ví
+            wallet.balance.available += refundAmount;
+            
+            // Ghi lại giao dịch hoàn tiền
+            if (!wallet.transactions) {
+              wallet.transactions = [];
+            }
+            
+            wallet.transactions.push({
+              type: 'REFUND',
+              amount: refundAmount,
+              description: `Hoàn tiền hủy đơn SubOrder ${subOrderId}`,
+              relatedOrder: subOrderId,
+              timestamp: new Date()
+            });
+            
+            await wallet.save();
+            
+            console.log('✅ Refund processed successfully');
+            console.log('💳 New wallet balance:', wallet.balance.available);
+          }
+        } catch (error) {
+          console.error('❌ Error refunding to wallet:', error.message);
+          // Tiếp tục dù lỗi hoàn tiền, vì trạng thái đơn vẫn cập nhật
+        }
+      }
+
+      // 3️⃣ Cập nhật status SubOrder
       subOrder.status = 'CANCELLED';
       subOrder.cancellation = {
         cancelledBy: renterId,
         cancelledAt: new Date(),
-        reason
+        reason,
+        refundAmount: refundAmount,
+        refundStatus: 'COMPLETED'
       };
       await subOrder.save();
 
-      // TODO: Trả sản phẩm về cart (thực hiện ở phía client)
+      console.log('✅ SubOrder cancelled with refund processed');
 
-      // Nếu tất cả suborders đều CANCELLED/OWNER_REJECTED thì cập nhật masterOrder
-      if (subOrder.masterOrder) {
-        const allSubOrders = await SubOrder.find({ masterOrder: subOrder.masterOrder._id });
+      // 4️⃣ Cập nhật masterOrder nếu tất cả suborders đều bị hủy
+      if (masterOrder) {
+        const allSubOrders = await SubOrder.find({ masterOrder: masterOrder._id });
         const allCancelledOrRejected = allSubOrders.every(
           (so) => so.status === 'CANCELLED' || so.status === 'OWNER_REJECTED'
         );
         if (allCancelledOrRejected) {
-          subOrder.masterOrder.status = 'CANCELLED';
-          await subOrder.masterOrder.save();
+          masterOrder.status = 'CANCELLED';
+          await masterOrder.save();
+          console.log('✅ MasterOrder updated to CANCELLED');
         }
       }
 
@@ -499,6 +580,31 @@ class RentalOrderService {
         throw new Error('Không tìm thấy đơn hàng để hoàn tiền');
       }
 
+      const rejectedSubOrder = await SubOrder.findById(subOrderId).populate('products.product');
+      const renterId = masterOrder.renter._id;
+
+      // 1️⃣ Trả sản phẩm về giỏ hàng
+      if (rejectedSubOrder) {
+        const cartService = require('./cart.service');
+        console.log('📦 Returning products to cart after rejection:', rejectedSubOrder.products.length);
+        
+        for (const item of rejectedSubOrder.products) {
+          try {
+            console.log(`  - Adding product ${item.product._id} (qty: ${item.quantity}) back to cart`);
+            await cartService.addToCart(renterId, item.product._id, item.quantity, {
+              startDate: item.rentalPeriod?.startDate,
+              endDate: item.rentalPeriod?.endDate
+            });
+          } catch (error) {
+            console.error(`❌ Error returning product to cart: ${error.message}`);
+          }
+        }
+        console.log('✅ Products returned to cart after rejection');
+      }
+
+      // 2️⃣ Hoàn tiền
+      let refundAmount = 0;
+
       // Check if all suborders are rejected
       const allSubOrdersRejected = await SubOrder.find({
         masterOrder: masterOrderId,
@@ -509,10 +615,11 @@ class RentalOrderService {
         // All suborders rejected - full refund
         console.log('💸 All suborders rejected - processing full refund');
 
-        const refundAmount = masterOrder.paymentInfo?.amount || masterOrder.totalAmount || 0;
+        refundAmount = masterOrder.paymentInfo?.amount || masterOrder.totalAmount || 0;
 
-        // Mock refund processing - in real app, integrate with payment/wallet service
-        const refundResult = {
+        // Update master order status
+        masterOrder.status = 'REFUNDED';
+        masterOrder.refundInfo = {
           refundId: `REF_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
           amount: refundAmount,
           method: masterOrder.paymentMethod,
@@ -520,52 +627,94 @@ class RentalOrderService {
           processedAt: new Date(),
           reason: 'Owner rejected all orders'
         };
-
-        // Update master order status
-        masterOrder.status = 'REFUNDED';
-        masterOrder.refundInfo = refundResult;
         await masterOrder.save();
 
-        console.log('✅ Full refund processed successfully:', refundResult);
+        console.log('✅ Full refund amount set to:', refundAmount);
       } else {
         // Partial refund for specific suborder
         console.log('💸 Partial refund for specific suborder');
 
-        const rejectedSubOrder = await SubOrder.findById(subOrderId).populate('products.product');
-        let partialRefundAmount = 0;
+        if (rejectedSubOrder) {
+          // Calculate refund from pricing (more accurate)
+          if (rejectedSubOrder.pricing) {
+            refundAmount = (rejectedSubOrder.pricing.subtotalRental || 0) + 
+                          (rejectedSubOrder.pricing.subtotalDeposit || 0) + 
+                          (rejectedSubOrder.pricing.shippingFee || 0);
+          } else {
+            // Fallback to manual calculation
+            rejectedSubOrder.products.forEach((item) => {
+              const product = item.product;
+              const rental = (product.pricing?.dailyRate || product.price || 0) * item.quantity;
+              const deposit =
+                (product.pricing?.deposit?.amount || product.deposit || 0) * item.quantity;
+              refundAmount += rental + deposit;
+            });
 
-        // Calculate refund amount for rejected suborder
-        rejectedSubOrder.products.forEach((item) => {
-          const product = item.product;
-          const rental = (product.pricing?.dailyRate || product.price || 0) * item.quantity;
-          const deposit =
-            (product.pricing?.deposit?.amount || product.deposit || 0) * item.quantity;
-          partialRefundAmount += rental + deposit;
-        });
+            // Add shipping cost
+            if (rejectedSubOrder.shipping?.fee) {
+              refundAmount += rejectedSubOrder.shipping.fee;
+            }
+          }
 
-        // Add shipping cost
-        if (rejectedSubOrder.shipping?.fee) {
-          partialRefundAmount += rejectedSubOrder.shipping.fee;
+          // Add to refund history
+          if (!masterOrder.refundHistory) {
+            masterOrder.refundHistory = [];
+          }
+          masterOrder.refundHistory.push({
+            refundId: `REF_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
+            amount: refundAmount,
+            method: masterOrder.paymentMethod,
+            status: 'SUCCESS',
+            processedAt: new Date(),
+            reason: `Owner rejected suborder: ${rejectionReason}`
+          });
+          await masterOrder.save();
+
+          console.log('✅ Partial refund amount set to:', refundAmount);
         }
-
-        const refundResult = {
-          refundId: `REF_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
-          amount: partialRefundAmount,
-          method: masterOrder.paymentMethod,
-          status: 'SUCCESS',
-          processedAt: new Date(),
-          reason: `Owner rejected suborder: ${rejectionReason}`
-        };
-
-        // Add to refund history
-        if (!masterOrder.refundHistory) {
-          masterOrder.refundHistory = [];
-        }
-        masterOrder.refundHistory.push(refundResult);
-        await masterOrder.save();
-
-        console.log('✅ Partial refund processed successfully:', refundResult);
       }
+
+      // 3️⃣ Hoàn tiền vào ví nếu đã thanh toán
+      if (refundAmount > 0 && masterOrder.paymentStatus === 'PAID') {
+        console.log('💳 Processing wallet refund...');
+        
+        try {
+          const Wallet = require('../models/Wallet');
+          const user = await User.findById(renterId).populate('wallet');
+          
+          if (!user || !user.wallet) {
+            console.warn('⚠️  Wallet not found for user, cannot process refund');
+          } else {
+            const wallet = user.wallet;
+            
+            // Hoàn tiền vào ví
+            wallet.balance.available += refundAmount;
+            
+            // Ghi lại giao dịch hoàn tiền
+            if (!wallet.transactions) {
+              wallet.transactions = [];
+            }
+            
+            wallet.transactions.push({
+              type: 'REFUND',
+              amount: refundAmount,
+              description: `Hoàn tiền chủ từ chối SubOrder ${subOrderId}`,
+              relatedOrder: subOrderId,
+              timestamp: new Date(),
+              status: 'COMPLETED'
+            });
+            
+            await wallet.save();
+            
+            console.log('✅ Wallet refund processed successfully');
+            console.log('💳 New wallet balance:', wallet.balance.available);
+          }
+        } catch (error) {
+          console.error('❌ Error refunding to wallet:', error.message);
+        }
+      }
+
+      console.log('✅ Refund processing completed for rejected order');
     } catch (error) {
       console.error('❌ Error processing refund:', error);
       throw new Error('Không thể xử lý hoàn tiền: ' + error.message);

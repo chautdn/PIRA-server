@@ -249,6 +249,25 @@ const subOrderSchema = new mongoose.Schema(
       notes: String
     },
 
+    // Thông tin hủy đơn
+    cancellation: {
+      cancelledBy: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'User'
+      },
+      cancelledAt: Date,
+      reason: String,
+      refundAmount: {
+        type: Number,
+        default: 0
+      },
+      refundStatus: {
+        type: String,
+        enum: ['PENDING', 'COMPLETED', 'FAILED'],
+        default: 'PENDING'
+      }
+    },
+
     // Hợp đồng
     contract: {
       type: mongoose.Schema.Types.ObjectId,

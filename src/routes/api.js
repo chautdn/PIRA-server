@@ -32,6 +32,10 @@ require('./rating.routes');
 require('./productPromotion.routes');
 require('./rentalOrder.routes');
 
+// Extension routes
+const extensionRoutes = require('./extension.routes');
+router.use('/extensions', extensionRoutes);
+
 // Withdrawal routes
 const withdrawalRoutes = require('./withdrawal.routes');
 router.use('/withdrawals', withdrawalRoutes);

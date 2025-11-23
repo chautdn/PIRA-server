@@ -33,6 +33,31 @@ const walletSchema = new mongoose.Schema(
       default: 'VND'
     },
 
+    // Transaction history
+    transactions: [
+      {
+        type: {
+          type: String,
+          enum: ['REFUND', 'WITHDRAWAL', 'DEPOSIT', 'PAYMENT', 'COMMISSION'],
+          required: true
+        },
+        amount: {
+          type: Number,
+          required: true
+        },
+        description: String,
+        relatedOrder: mongoose.Schema.Types.ObjectId,
+        timestamp: {
+          type: Date,
+          default: Date.now
+        },
+        status: {
+          type: String,
+          enum: ['PENDING', 'COMPLETED', 'FAILED'],
+          default: 'COMPLETED'
+        }
+      }
+    ],
   
     status: {
       type: String,
