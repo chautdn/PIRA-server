@@ -11,7 +11,7 @@ const transactionSchema = new mongoose.Schema(
     wallet: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'Wallet',
-      required: true
+      required: false // Not required for order payments
     },
     type: {
       type: String,

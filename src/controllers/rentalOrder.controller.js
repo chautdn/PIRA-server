@@ -86,8 +86,19 @@ class RentalOrderController {
   async createPaidOrder(req, res) {
     try {
       const userId = req.user.id;
-      const { rentalPeriod, deliveryAddress, deliveryMethod, paymentMethod, totalAmount } =
-        req.body;
+      const {
+        rentalPeriod,
+        deliveryAddress,
+        deliveryMethod,
+        paymentMethod,
+        totalAmount,
+        paymentTransactionId,
+        paymentMessage,
+        // COD specific fields
+        depositAmount,
+        depositPaymentMethod,
+        depositTransactionId
+      } = req.body;
 
       console.log('📥 POST /api/rental-orders/create-paid');
       console.log('📋 Request body:', JSON.stringify(req.body, null, 2));
@@ -98,7 +109,13 @@ class RentalOrderController {
         deliveryAddress,
         deliveryMethod,
         paymentMethod,
-        totalAmount
+        totalAmount,
+        paymentTransactionId,
+        paymentMessage,
+        // Include COD specific fields
+        depositAmount,
+        depositPaymentMethod,
+        depositTransactionId
       });
 
       if (!masterOrder) {
@@ -383,12 +400,12 @@ class RentalOrderController {
         throw new ForbiddenError('Không có quyền xem đơn hàng này');
       }
 
-      return new SuccessResponse({
-        message: 'Lấy chi tiết đơn hàng thành công',
-        metadata: {
+      return new SuccessResponse(
+        {
           masterOrder
-        }
-      }).send(res);
+        },
+        'Lấy chi tiết đơn hàng thành công'
+      ).send(res);
     } catch (error) {
       throw new BadRequest(error.message);
     }
@@ -747,6 +764,162 @@ class RentalOrderController {
       return res.status(400).json({
         success: false,
         message: error.message || 'Không thể cập nhật phương thức thanh toán'
+      });
+    }
+  }
+
+  /**
+   * Get deposit calculation for current cart
+   * GET /api/rental-orders/calculate-deposit
+   */
+  async calculateDeposit(req, res) {
+    try {
+      const userId = req.user.id;
+
+      console.log('📥 GET /api/rental-orders/calculate-deposit');
+      console.log('👤 User ID:', userId);
+
+      const depositInfo = await RentalOrderService.calculateDepositFromCart(userId);
+
+      return new SuccessResponse({
+        message: 'Tính toán tiền cọc thành công',
+        metadata: {
+          totalDeposit: depositInfo.totalDeposit,
+          breakdown: depositInfo.breakdown,
+          formattedAmount: depositInfo.totalDeposit.toLocaleString('vi-VN') + 'đ'
+        }
+      }).send(res);
+    } catch (error) {
+      console.error('❌ Error in calculateDeposit:', error);
+      return res.status(400).json({
+        success: false,
+        message: error.message || 'Không thể tính toán tiền cọc'
+      });
+    }
+  }
+
+  /**
+   * Lấy availability calendar cho product từ SubOrder data
+   * GET /api/rental-orders/products/:productId/availability-calendar
+   */
+  async getProductAvailabilityCalendar(req, res) {
+    try {
+      const { productId } = req.params;
+      const { startDate, endDate } = req.query;
+
+      console.log(`📥 GET availability calendar for product ${productId}`);
+      console.log(`📅 Date range: ${startDate} to ${endDate}`);
+
+      const calendar = await RentalOrderService.getProductAvailabilityFromSubOrders(
+        productId,
+        startDate,
+        endDate
+      );
+
+      console.log(`📊 Calendar response:`, {
+        productId: calendar.productId,
+        productTitle: calendar.productTitle,
+        calendarDays: calendar.calendar?.length,
+        firstDay: calendar.calendar?.[0]
+      });
+
+      return new SuccessResponse({
+        message: 'Lấy lịch availability thành công',
+        metadata: calendar
+      }).send(res);
+    } catch (error) {
+      console.error('❌ Error getting availability calendar:', error);
+      return res.status(400).json({
+        success: false,
+        message: error.message || 'Không thể lấy lịch availability'
+      });
+    }
+  }
+
+  /**
+   * Handle PayOS payment success callback
+   * GET /api/rental-orders/payment-success
+   */
+  async handlePaymentSuccess(req, res) {
+    try {
+      const { orderCode, cancel, status } = req.query;
+
+      console.log('📥 Rental payment callback:', { orderCode, cancel, status });
+
+      if (cancel === 'true' || status === 'CANCELLED') {
+        // Payment was cancelled - redirect to rental payment cancel page
+        return res.redirect(
+          `${process.env.CLIENT_URL || 'http://localhost:3000'}/payment/cancelled?orderCode=${orderCode}`
+        );
+      }
+
+      if (status === 'PAID') {
+        // Payment successful - redirect to rental payment success page
+        return res.redirect(
+          `${process.env.CLIENT_URL || 'http://localhost:3000'}/payment/success?orderCode=${orderCode}`
+        );
+      }
+
+      // Default case - redirect to pending page
+      return res.redirect(
+        `${process.env.CLIENT_URL || 'http://localhost:3000'}/payment/pending?orderCode=${orderCode}`
+      );
+    } catch (error) {
+      console.error('❌ Error handling rental payment callback:', error);
+      return res.redirect(`${process.env.CLIENT_URL || 'http://localhost:3000'}/payment/error`);
+    }
+  }
+
+  /**
+   * Handle general PayOS payment cancel callback
+   * GET /api/rental-orders/payment-cancel
+   */
+  async handlePaymentCancel(req, res) {
+    try {
+      const { orderCode } = req.query;
+
+      console.log('📥 Rental payment cancel callback:', { orderCode });
+
+      // Redirect to rental payment cancelled page
+      return res.redirect(
+        `${process.env.CLIENT_URL || 'http://localhost:3000'}/payment/cancelled?orderCode=${orderCode}`
+      );
+    } catch (error) {
+      console.error('❌ Error handling rental payment cancel:', error);
+      return res.redirect(`${process.env.CLIENT_URL || 'http://localhost:3000'}/payment/error`);
+    }
+  }
+
+  /**
+   * Verify and complete PayOS payment for rental order
+   * POST /api/rental-orders/:masterOrderId/verify-payment
+   */
+  async verifyPayOSPayment(req, res) {
+    try {
+      const { masterOrderId } = req.params;
+      const { orderCode } = req.body;
+
+      if (!orderCode) {
+        throw new BadRequest('Order code is required');
+      }
+
+      const result = await RentalOrderService.verifyAndCompletePayOSPayment(
+        masterOrderId,
+        orderCode
+      );
+
+      return res.status(200).json({
+        success: true,
+        message: result.message,
+        data: {
+          order: result.order
+        }
+      });
+    } catch (error) {
+      console.error('❌ Error verifying PayOS payment:', error);
+      return res.status(400).json({
+        success: false,
+        message: error.message || 'Không thể xác nhận thanh toán'
       });
     }
   }
