@@ -571,6 +571,11 @@ class RentalOrderService {
     const Transaction = require('../models/Transaction');
 
     try {
+      console.log(`\n[Platform Fee] ======== START CHARGING PLATFORM FEE ========`);
+      console.log(`[Platform Fee] Owner ID: ${ownerId}`);
+      console.log(`[Platform Fee] Master Order ID: ${masterOrderId}`);
+      console.log(`[Platform Fee] Platform Fee Amount: ${platformFee}`);
+
       // Get owner and their wallet
       const owner = await User.findById(ownerId).populate('wallet');
       if (!owner) {
@@ -581,7 +586,8 @@ class RentalOrderService {
         throw new Error(`Owner wallet not found for ${ownerId}`);
       }
 
-      console.log(`💳 Owner wallet balance before fee: ${owner.wallet.balance.available}`);
+      console.log(`[Platform Fee] Owner found: ${owner.email}`);
+      console.log(`💳 [Platform Fee] Owner wallet balance before fee: ${owner.wallet.balance.available}`);
 
       // Check if owner has sufficient balance
       if (owner.wallet.balance.available < platformFee) {
@@ -607,16 +613,29 @@ class RentalOrderService {
       });
 
       await owner.wallet.save();
-      console.log(`✅ Deducted ${platformFee} from owner wallet. New balance: ${owner.wallet.balance.available}`);
+      console.log(`✅ [Platform Fee] Deducted ${platformFee} from owner wallet`);
+      console.log(`[Platform Fee] Owner new balance: ${owner.wallet.balance.available}`);
 
-      // Find admin user (assuming admin has role 'ADMIN')
-      const admin = await User.findOne({ role: 'ADMIN' }).populate('wallet');
+      // Find admin user (could be ADMIN or SYSTEM_ADMIN role)
+      console.log(`[Platform Fee] Looking for admin user...`);
+      let admin = await User.findOne({ role: 'ADMIN' }).populate('wallet');
       if (!admin) {
+        console.log(`[Platform Fee] ADMIN role not found, trying SYSTEM_ADMIN...`);
+        admin = await User.findOne({ role: 'SYSTEM_ADMIN' }).populate('wallet');
+      }
+      if (!admin) {
+        console.error(`❌ [Platform Fee] Admin user not found!`);
+        console.error(`[Platform Fee] Searching for all admins...`);
+        const allAdmins = await User.find({ role: { $in: ['ADMIN', 'SYSTEM_ADMIN'] } });
+        console.log(`[Platform Fee] Found ${allAdmins.length} admins:`, allAdmins.map(a => ({ id: a._id, email: a.email, role: a.role })));
         throw new Error('Admin user not found');
       }
 
+      console.log(`✅ [Platform Fee] Admin found: ${admin.email} (ID: ${admin._id}, Role: ${admin.role})`);
+
       // Create admin wallet if it doesn't exist
       if (!admin.wallet) {
+        console.log(`[Platform Fee] Admin wallet not found - creating new wallet...`);
         const wallet = new Wallet({
           user: admin._id,
           balance: {
@@ -630,16 +649,16 @@ class RentalOrderService {
         await wallet.save();
         admin.wallet = wallet._id;
         await admin.save();
-        console.log('✅ Created admin wallet');
+        console.log('✅ [Platform Fee] Created admin wallet');
       }
 
       // Get admin's wallet
       const adminWallet = await Wallet.findById(admin.wallet);
       if (!adminWallet) {
-        throw new Error('Admin wallet not found');
+        throw new Error('Admin wallet not found after creation');
       }
 
-      console.log(`💳 Admin wallet balance before fee transfer: ${adminWallet.balance.available}`);
+      console.log(`💳 [Platform Fee] Admin wallet balance before fee transfer: ${adminWallet.balance.available}`);
 
       // Add platform fee to admin wallet
       adminWallet.balance.available += platformFee;
@@ -658,7 +677,8 @@ class RentalOrderService {
       });
 
       await adminWallet.save();
-      console.log(`✅ Added ${platformFee} to admin wallet. New balance: ${adminWallet.balance.available}`);
+      console.log(`✅ [Platform Fee] Added ${platformFee} to admin wallet`);
+      console.log(`[Platform Fee] Admin new balance: ${adminWallet.balance.available}`);
 
       // Create transaction record in Transaction collection for owner
       const transactionOwner = new Transaction({
@@ -699,7 +719,8 @@ class RentalOrderService {
       });
       await transactionAdmin.save();
 
-      console.log('✅ Transaction records created');
+      console.log('✅ [Platform Fee] Transaction records created for both owner and admin');
+      console.log(`[Platform Fee] ======== END CHARGING PLATFORM FEE ========\n`);
 
       return {
         success: true,
@@ -711,7 +732,8 @@ class RentalOrderService {
         transactionIdAdmin: transactionAdmin._id
       };
     } catch (error) {
-      console.error('❌ Error in chargePlatformFeeToOwner:', error.message);
+      console.error(`❌ [Platform Fee] Error in chargePlatformFeeToOwner:`, error.message);
+      console.error(`[Platform Fee] Stack:`, error.stack);
       throw error;
     }
   }
@@ -1022,7 +1044,7 @@ class RentalOrderService {
                   console.log(`💰 [Platform Fee] Rental amount: ${rentalAmount}`);
                   console.log(`📊 [Platform Fee] Platform fee (8%): ${platformFee}`);
 
-                  // Update master order with platform fee
+                  // Update master order with platform fee BEFORE saving
                   masterOrder.platformFee = platformFee;
                   
                   // Get unique owners from all confirmed suborders
@@ -1038,15 +1060,18 @@ class RentalOrderService {
                   for (const ownerId of owners) {
                     try {
                       const result = await this.chargePlatformFeeToOwner(ownerId, masterOrder._id, platformFee);
-                      console.log(`✅ [Platform Fee] Charged for owner ${ownerId}:`, result);
+                      console.log(`✅ [Platform Fee] Charged for owner ${ownerId}:`);
+                      console.log(`   Owner new balance: ${result.ownerNewBalance}`);
+                      console.log(`   Admin new balance: ${result.adminNewBalance}`);
                     } catch (error) {
                       console.error(`❌ [Platform Fee] Error charging for owner ${ownerId}:`, error.message);
-                      // Continue with other owners even if one fails
+                      throw error; // Re-throw to fail the entire operation if fee charging fails
                     }
                   }
                 } catch (error) {
-                  console.error('❌ [Platform Fee] Error in platform fee calculation:', error.message);
+                  console.error('❌ [Platform Fee] Error in platform fee calculation or charging:', error.message);
                   console.error('   Stack:', error.stack);
+                  throw error; // Fail the operation - don't continue if fee charging fails
                 }
               }
               
