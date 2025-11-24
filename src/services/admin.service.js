@@ -377,38 +377,38 @@ class AdminService {
     }
   }
 
-  async updateUserCreditScore(userId, creditScore, adminId) {
-    // Validate ObjectId format
-    const mongoose = require('mongoose');
-    if (!mongoose.Types.ObjectId.isValid(userId)) {
-      throw new Error('ID người dùng không hợp lệ');
-    }
+  // async updateUserCreditScore(userId, creditScore, adminId) {
+  //   // Validate ObjectId format
+  //   const mongoose = require('mongoose');
+  //   if (!mongoose.Types.ObjectId.isValid(userId)) {
+  //     throw new Error('ID người dùng không hợp lệ');
+  //   }
 
-    // Validate creditScore
-    const score = parseInt(creditScore);
-    if (isNaN(score) || score < 0 || score > 1000) {
-      throw new Error('Điểm tín dụng phải là số từ 0 đến 1000');
-    }
+  //   // Validate creditScore
+  //   const score = parseInt(creditScore);
+  //   if (isNaN(score) || score < 0 || score > 1000) {
+  //     throw new Error('Điểm tín dụng phải là số từ 0 đến 1000');
+  //   }
 
-    if (userId === adminId) {
-      throw new Error('Không thể thay đổi điểm tín dụng của chính mình');
-    }
+  //   if (userId === adminId) {
+  //     throw new Error('Không thể thay đổi điểm tín dụng của chính mình');
+  //   }
 
-    const user = await User.findByIdAndUpdate(
-      userId,
-      { 
-        creditScore: score,
-        updatedAt: new Date()
-      },
-      { new: true, runValidators: true }
-    ).select('-password');
+  //   const user = await User.findByIdAndUpdate(
+  //     userId,
+  //     { 
+  //       creditScore: score,
+  //       updatedAt: new Date()
+  //     },
+  //     { new: true, runValidators: true }
+  //   ).select('-password');
 
-    if (!user) {
-      throw new Error('Không tìm thấy người dùng');
-    }
+  //   if (!user) {
+  //     throw new Error('Không tìm thấy người dùng');
+  //   }
 
-    return user;
-  }
+  //   return user;
+  // }
 
   async bulkUpdateUsers(userIds, updateData, adminId) {
     // Validate userIds
@@ -652,95 +652,148 @@ class AdminService {
     }
   }
 
-  async approveProduct(productId, adminId) {
-    const product = await Product.findByIdAndUpdate(
-      productId,
-      { 
-        status: 'APPROVED',
-        'moderation.approvedBy': adminId,
-        'moderation.approvedAt': new Date(),
-        updatedAt: new Date()
-      },
-      { new: true }
-    ).populate('owner', 'profile.firstName profile.lastName email');
+  // async approveProduct(productId, adminId) {
+  //   const product = await Product.findByIdAndUpdate(
+  //     productId,
+  //     { 
+  //       status: 'APPROVED',
+  //       'moderation.approvedBy': adminId,
+  //       'moderation.approvedAt': new Date(),
+  //       updatedAt: new Date()
+  //     },
+  //     { new: true }
+  //   ).populate('owner', 'profile.firstName profile.lastName email');
 
-    if (!product) {
-      throw new Error('Không tìm thấy sản phẩm');
-    }
+  //   if (!product) {
+  //     throw new Error('Không tìm thấy sản phẩm');
+  //   }
 
-    return product;
-  }
+  //   return product;
+  // }
 
-  async rejectProduct(productId, reason, adminId) {
-    if (!reason) {
-      throw new Error('Vui lòng nhập lý do từ chối');
-    }
+  // async rejectProduct(productId, reason, adminId) {
+  //   if (!reason) {
+  //     throw new Error('Vui lòng nhập lý do từ chối');
+  //   }
 
-    const product = await Product.findByIdAndUpdate(
-      productId,
-      { 
-        status: 'REJECTED',
-        'moderation.rejectedBy': adminId,
-        'moderation.rejectedAt': new Date(),
-        'moderation.rejectionReason': reason,
-        updatedAt: new Date()
-      },
-      { new: true }
-    ).populate('owner', 'profile.firstName profile.lastName email');
+  //   const product = await Product.findByIdAndUpdate(
+  //     productId,
+  //     { 
+  //       status: 'REJECTED',
+  //       'moderation.rejectedBy': adminId,
+  //       'moderation.rejectedAt': new Date(),
+  //       'moderation.rejectionReason': reason,
+  //       updatedAt: new Date()
+  //     },
+  //     { new: true }
+  //   ).populate('owner', 'profile.firstName profile.lastName email');
 
-    if (!product) {
-      throw new Error('Không tìm thấy sản phẩm');
-    }
+  //   if (!product) {
+  //     throw new Error('Không tìm thấy sản phẩm');
+  //   }
 
-    return product;
-  }
+  //   return product;
+  // }
 
-  // ========== CATEGORY MANAGEMENT ==========
-  async getAllCategories() {
-    return await Category.find().sort({ name: 1 });
-  }
-
-  async createCategory(categoryData, adminId) {
-    const category = new Category({
-      ...categoryData,
-      createdBy: adminId
-    });
-
-    await category.save();
-    return category;
-  }
-
-  async updateCategory(categoryId, updateData, adminId) {
-    const category = await Category.findByIdAndUpdate(
-      categoryId,
-      { 
-        ...updateData,
-        updatedBy: adminId,
-        updatedAt: new Date()
-      },
-      { new: true, runValidators: true }
-    );
-
-    if (!category) {
-      throw new Error('Không tìm thấy danh mục');
-    }
-
-    return category;
-  }
-
-  async deleteCategory(categoryId, adminId) {
-    // Check if any products are using this category
-    const productCount = await Product.countDocuments({ category: categoryId });
+  async suspendProduct(productId, adminId, reason = '') {
+    console.log('=== Admin Service suspendProduct ===');
+    console.log('Input params:', { productId, adminId, reason });
     
-    if (productCount > 0) {
-      throw new Error(`Không thể xóa danh mục vì có ${productCount} sản phẩm đang sử dụng`);
+    // Validate productId
+    if (!productId) {
+      throw new Error('ID sản phẩm không hợp lệ');
     }
 
-    const category = await Category.findByIdAndDelete(categoryId);
-    if (!category) {
-      throw new Error('Không tìm thấy danh mục');
+    const mongoose = require('mongoose');
+    if (!mongoose.Types.ObjectId.isValid(productId)) {
+      throw new Error('ID sản phẩm không hợp lệ');
+    }
+
+    try {
+      const updateData = { 
+        status: 'SUSPENDED',
+        updatedAt: new Date(),
+        'moderation.suspendedBy': adminId,
+        'moderation.suspendedAt': new Date()
+      };
+
+      if (reason) {
+        updateData['moderation.suspensionReason'] = reason;
+      }
+
+      console.log('Suspending product with data:', updateData);
+      
+      const product = await Product.findByIdAndUpdate(
+        productId,
+        updateData,
+        { new: true, runValidators: true }
+      )
+      .populate('owner', 'fullName username email phone')
+      .populate('category', 'name slug');
+
+      if (!product) {
+        throw new Error('Không tìm thấy sản phẩm');
+      }
+
+      console.log('Product suspended successfully:', product._id);
+      return product;
+    } catch (error) {
+      console.error('Error suspending product:', error.message);
+      
+      if (error.message === 'Không tìm thấy sản phẩm') {
+        throw error;
+      }
+      
+      throw new Error('Lỗi khi đình chỉ sản phẩm');
     }
   }
+
+  // // ========== CATEGORY MANAGEMENT ==========
+  // async getAllCategories() {
+  //   return await Category.find().sort({ name: 1 });
+  // }
+
+  // async createCategory(categoryData, adminId) {
+  //   const category = new Category({
+  //     ...categoryData,
+  //     createdBy: adminId
+  //   });
+
+  //   await category.save();
+  //   return category;
+  // }
+
+  // async updateCategory(categoryId, updateData, adminId) {
+  //   const category = await Category.findByIdAndUpdate(
+  //     categoryId,
+  //     { 
+  //       ...updateData,
+  //       updatedBy: adminId,
+  //       updatedAt: new Date()
+  //     },
+  //     { new: true, runValidators: true }
+  //   );
+
+  //   if (!category) {
+  //     throw new Error('Không tìm thấy danh mục');
+  //   }
+
+  //   return category;
+  // }
+
+  // async deleteCategory(categoryId, adminId) {
+  //   // Check if any products are using this category
+  //   const productCount = await Product.countDocuments({ category: categoryId });
+    
+  //   if (productCount > 0) {
+  //     throw new Error(`Không thể xóa danh mục vì có ${productCount} sản phẩm đang sử dụng`);
+  //   }
+
+  //   const category = await Category.findByIdAndDelete(categoryId);
+  //   if (!category) {
+  //     throw new Error('Không tìm thấy danh mục');
+  //   }
+  // }
 
   // ========== ORDER MANAGEMENT ==========
   async getAllOrders(filters) {
