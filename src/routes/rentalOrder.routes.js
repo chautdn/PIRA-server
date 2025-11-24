@@ -191,6 +191,17 @@ router.get(
   RentalOrderController.getOwnerSubOrders
 );
 
+// GET /api/rental-orders/owner-active-rentals - Lấy danh sách sản phẩm đang được thuê
+router.get(
+  '/owner-active-rentals',
+  [
+    query('page').optional().isInt({ min: 1 }).withMessage('Trang không hợp lệ'),
+    query('limit').optional().isInt({ min: 1, max: 100 }).withMessage('Giới hạn không hợp lệ'),
+    validateRequest
+  ],
+  RentalOrderController.getOwnerActiveRentals
+);
+
 /**
  * Lấy chi tiết đơn hàng
  * GET /api/rental-orders/:masterOrderId
@@ -285,6 +296,41 @@ router.put(
     validateRequest
   ],
   RentalOrderController.updatePaymentMethod
+);
+
+/**
+ * Tính phí ship chi tiết cho từng product
+ * POST /api/rental-orders/calculate-product-shipping
+ */
+router.post(
+  '/calculate-product-shipping',
+  [
+    body('ownerLocation.latitude').isFloat().withMessage('Vĩ độ chủ không hợp lệ'),
+    body('ownerLocation.longitude').isFloat().withMessage('Kinh độ chủ không hợp lệ'),
+    body('userLocation.latitude').isFloat().withMessage('Vĩ độ người thuê không hợp lệ'),
+    body('userLocation.longitude').isFloat().withMessage('Kinh độ người thuê không hợp lệ'),
+    body('products').isArray({ min: 1 }).withMessage('Danh sách sản phẩm không được trống'),
+    body('products.*.quantity').isInt({ min: 1 }).withMessage('Số lượng sản phẩm không hợp lệ'),
+    validateRequest
+  ],
+  RentalOrderController.calculateProductShipping
+);
+
+/**
+ * Cập nhật phí ship cho SubOrder
+ * PUT /api/rental-orders/suborders/:subOrderId/shipping
+ */
+router.put(
+  '/suborders/:subOrderId/shipping',
+  [
+    param('subOrderId').isMongoId().withMessage('ID SubOrder không hợp lệ'),
+    body('ownerLocation.latitude').isFloat().withMessage('Vĩ độ chủ không hợp lệ'),
+    body('ownerLocation.longitude').isFloat().withMessage('Kinh độ chủ không hợp lệ'),
+    body('userLocation.latitude').isFloat().withMessage('Vĩ độ người thuê không hợp lệ'),
+    body('userLocation.longitude').isFloat().withMessage('Kinh độ người thuê không hợp lệ'),
+    validateRequest
+  ],
+  RentalOrderController.updateSubOrderShipping
 );
 
 // Register routes

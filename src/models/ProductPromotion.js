@@ -78,7 +78,7 @@ const productPromotionSchema = new mongoose.Schema({
   },
   recurringPeriod: {
     type: String,
-    enum: ['none', 'daily', 'weekly'],
+    enum: ['none', 'daily', 'weekly', 'monthly'],
     default: 'none'
   },
   autoRenew: {

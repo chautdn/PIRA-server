@@ -1228,6 +1228,97 @@ class RentalOrderService {
   }
 
   /**
+   * Lấy danh sách sản phẩm đang được thuê (active rentals) cho chủ sản phẩm
+   */
+  async getActiveRentalsByOwner(ownerId, options = {}) {
+    console.log('🔍 Getting active rentals for owner:', ownerId);
+
+    try {
+      const { page = 1, limit = 20 } = options;
+      const skip = (page - 1) * limit;
+
+      // Query for SubOrders that are currently in active rental state
+      const query = {
+        owner: ownerId,
+        status: { $in: ['ACTIVE', 'DELIVERED', 'PROCESSING', 'SHIPPED'] }
+      };
+
+      console.log('📊 Active rentals query:', query);
+
+      const subOrders = await SubOrder.find(query)
+        .populate({
+          path: 'masterOrder',
+          populate: {
+            path: 'renter',
+            select: 'profile.firstName profile.lastName phone email'
+          }
+        })
+        .populate({
+          path: 'products.product',
+          select: 'name title images pricing price deposit'
+        })
+        .sort({ 'products.rentalPeriod.endDate': 1 }) // Sort by end date (earliest first)
+        .skip(skip)
+        .limit(limit);
+
+      const total = await SubOrder.countDocuments(query);
+
+      // Process data to flatten products with rental information
+      const activeRentals = [];
+
+      subOrders.forEach((subOrder) => {
+        subOrder.products.forEach((productItem) => {
+          if (productItem.rentalPeriod && productItem.rentalPeriod.endDate) {
+            const endDate = new Date(productItem.rentalPeriod.endDate);
+            const now = new Date();
+            const timeDiff = endDate - now;
+            const daysUntilReturn = Math.ceil(timeDiff / (1000 * 60 * 60 * 24));
+
+            activeRentals.push({
+              subOrderId: subOrder._id,
+              subOrderNumber: subOrder.subOrderNumber,
+              status: subOrder.status,
+              product: productItem.product,
+              quantity: productItem.quantity,
+              rentalPeriod: productItem.rentalPeriod,
+              startDate: productItem.rentalPeriod.startDate,
+              endDate: productItem.rentalPeriod.endDate,
+              daysUntilReturn,
+              isReturningsoon: daysUntilReturn <= 1 && daysUntilReturn >= 0,
+              isOverdue: daysUntilReturn < 0,
+              renter: subOrder.masterOrder?.renter,
+              totalRental: productItem.totalRental,
+              totalDeposit: productItem.totalDeposit,
+              masterOrderNumber: subOrder.masterOrder?.masterOrderNumber,
+              createdAt: subOrder.createdAt
+            });
+          }
+        });
+      });
+
+      // Sort by days until return (ascending)
+      activeRentals.sort((a, b) => a.daysUntilReturn - b.daysUntilReturn);
+
+      console.log(
+        `✅ Found ${activeRentals.length} active rentals from ${subOrders.length} SubOrders`
+      );
+
+      return {
+        data: activeRentals,
+        pagination: {
+          page,
+          limit,
+          total: activeRentals.length,
+          totalPages: Math.ceil(total / limit)
+        }
+      };
+    } catch (error) {
+      console.error('❌ Error getting active rentals:', error);
+      throw error;
+    }
+  }
+
+  /**
    * Xác nhận SubOrder
    */
   async confirmSubOrder(subOrderId, ownerId) {
@@ -1431,6 +1522,180 @@ class RentalOrderService {
       return masterOrder;
     } catch (error) {
       console.error('❌ Error updating payment method:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Tính phí shipping cho từng product trong danh sách
+   * @param {Array} products - Danh sách products với quantity
+   * @param {Object} ownerLocation - Tọa độ owner {latitude, longitude}
+   * @param {Object} userLocation - Tọa độ user {latitude, longitude}
+   * @returns {Promise<Object>} - Chi tiết phí shipping per product
+   */
+  async calculateProductShippingFees(products, ownerLocation, userLocation) {
+    console.log('🚚 Calculating shipping fees for products:', {
+      productsCount: products.length,
+      ownerLocation,
+      userLocation
+    });
+
+    try {
+      // Tính khoảng cách từ owner đến user
+      const distanceResult = await VietMapService.calculateDistance(
+        ownerLocation.longitude,
+        ownerLocation.latitude,
+        userLocation.longitude,
+        userLocation.latitude
+      );
+
+      if (!distanceResult.success && !distanceResult.fallback) {
+        throw new Error('Không thể tính khoảng cách giao hàng');
+      }
+
+      const distanceKm = distanceResult.distanceKm;
+      console.log('📏 Distance calculated:', distanceKm, 'km');
+
+      // Tính phí shipping cho từng product
+      const shippingCalculation = VietMapService.calculateProductShippingFees(products, distanceKm);
+
+      return {
+        success: true,
+        distance: {
+          km: distanceKm,
+          meters: distanceResult.distance,
+          duration: distanceResult.duration,
+          fallback: distanceResult.fallback || false
+        },
+        shipping: shippingCalculation,
+        vietmapResponse: distanceResult.rawResponse
+      };
+    } catch (error) {
+      console.error('❌ Error calculating product shipping fees:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Cập nhật shipping fees cho SubOrder và tất cả products bên trong
+   * @param {string} subOrderId - ID của SubOrder
+   * @param {Object} ownerLocation - Tọa độ owner
+   * @param {Object} userLocation - Tọa độ user
+   * @param {string} userId - ID của user thực hiện update
+   * @returns {Promise<Object>} - SubOrder đã được cập nhật
+   */
+  async updateSubOrderShipping(subOrderId, ownerLocation, userLocation, userId) {
+    console.log('🔄 Updating SubOrder shipping:', {
+      subOrderId,
+      userId,
+      ownerLocation,
+      userLocation
+    });
+
+    try {
+      // Tìm SubOrder
+      const subOrder = await SubOrder.findById(subOrderId).populate([
+        {
+          path: 'masterOrder',
+          populate: { path: 'renter', select: 'profile.firstName phone' }
+        },
+        { path: 'owner', select: 'profile.firstName phone address' },
+        { path: 'products.product', select: 'title name images price' }
+      ]);
+
+      if (!subOrder) {
+        throw new Error('Không tìm thấy SubOrder');
+      }
+
+      // Kiểm tra quyền access (chỉ renter hoặc owner mới được update)
+      const masterOrder = subOrder.masterOrder;
+      const isRenter = masterOrder.renter._id.toString() === userId;
+      const isOwner = subOrder.owner._id.toString() === userId;
+
+      if (!isRenter && !isOwner) {
+        throw new Error('Không có quyền cập nhật thông tin shipping');
+      }
+
+      // Tính phí shipping cho các products
+      const shippingCalculation = await this.calculateProductShippingFees(
+        subOrder.products,
+        ownerLocation,
+        userLocation
+      );
+
+      if (!shippingCalculation.success) {
+        throw new Error('Không thể tính phí shipping');
+      }
+
+      // Cập nhật shipping info cho từng product theo delivery batches
+      let totalSubOrderShippingFee = 0;
+
+      // Create a map for quick product lookup
+      const productFeeMap = new Map();
+      shippingCalculation.shipping.productFees.forEach((fee) => {
+        productFeeMap.set(fee.productIndex, fee);
+      });
+
+      for (let i = 0; i < subOrder.products.length; i++) {
+        const productItem = subOrder.products[i];
+        const productShipping = productFeeMap.get(i);
+
+        if (productShipping) {
+          // Cập nhật shipping info cho product với delivery batch information
+          productItem.shipping = {
+            distance: shippingCalculation.distance.km,
+            fee: {
+              baseFee: 15000, // Base fee per delivery from VietMapService
+              pricePerKm: 5000, // Price per km from VietMapService
+              totalFee: productShipping.allocatedFee // Allocated share of delivery fee
+            },
+            method: masterOrder.deliveryMethod || 'PICKUP',
+            deliveryInfo: {
+              deliveryDate: productShipping.deliveryDate,
+              deliveryBatch: productShipping.deliveryBatch,
+              batchSize: productShipping.breakdown.batchSize,
+              batchQuantity: productShipping.breakdown.batchQuantity,
+              sharedDeliveryFee: productShipping.breakdown.deliveryFee
+            }
+          };
+          productItem.totalShippingFee = productShipping.allocatedFee;
+          totalSubOrderShippingFee += productShipping.allocatedFee;
+        }
+      }
+
+      // Cập nhật shipping info cho SubOrder
+      subOrder.shipping = {
+        method: masterOrder.deliveryMethod || 'PICKUP',
+        fee: {
+          baseFee: 10000, // Base fee từ VietMapService
+          pricePerKm: 5000, // Price per km từ VietMapService
+          totalFee: totalSubOrderShippingFee
+        },
+        distance: shippingCalculation.distance.km,
+        estimatedTime: shippingCalculation.distance.duration,
+        vietmapResponse: shippingCalculation.vietmapResponse
+      };
+
+      // Cập nhật pricing
+      subOrder.pricing.shippingFee = totalSubOrderShippingFee;
+      subOrder.pricing.shippingDistance = shippingCalculation.distance.km;
+      subOrder.pricing.totalAmount =
+        subOrder.pricing.subtotalRental +
+        subOrder.pricing.subtotalDeposit +
+        totalSubOrderShippingFee;
+
+      // Lưu SubOrder
+      await subOrder.save();
+
+      console.log('✅ SubOrder shipping updated successfully:', {
+        subOrderId,
+        totalShippingFee: totalSubOrderShippingFee,
+        distance: shippingCalculation.distance.km
+      });
+
+      return subOrder;
+    } catch (error) {
+      console.error('❌ Error updating SubOrder shipping:', error);
       throw error;
     }
   }

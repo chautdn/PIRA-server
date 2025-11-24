@@ -73,6 +73,55 @@ const subOrderSchema = new mongoose.Schema(
             }
           }
         },
+        // Thêm shipping information cho từng product
+        shipping: {
+          distance: {
+            type: Number, // km from owner to user
+            default: 0
+          },
+          fee: {
+            baseFee: {
+              type: Number,
+              default: 15000 // 15,000 VND base fee per delivery trip
+            },
+            pricePerKm: {
+              type: Number,
+              default: 5000 // 5,000 VND per km
+            },
+            totalFee: {
+              type: Number,
+              default: 0 // Allocated share of delivery fee for this product
+            }
+          },
+          method: {
+            type: String,
+            enum: ['PICKUP', 'DELIVERY'],
+            default: 'PICKUP'
+          },
+          // Delivery batch information
+          deliveryInfo: {
+            deliveryDate: {
+              type: String, // YYYY-MM-DD format from rentalPeriod.startDate
+              default: null
+            },
+            deliveryBatch: {
+              type: Number, // Batch number for this delivery
+              default: 1
+            },
+            batchSize: {
+              type: Number, // Number of products in this delivery batch
+              default: 1
+            },
+            batchQuantity: {
+              type: Number, // Total quantity of all products in this batch
+              default: 0
+            },
+            sharedDeliveryFee: {
+              type: Number, // Total delivery fee for this batch (shared among products)
+              default: 0
+            }
+          }
+        },
         // Thêm confirmation status cho từng product item
         confirmationStatus: {
           type: String,
@@ -83,7 +132,11 @@ const subOrderSchema = new mongoose.Schema(
         confirmedAt: Date,
         rejectedAt: Date,
         totalRental: Number,
-        totalDeposit: Number
+        totalDeposit: Number,
+        totalShippingFee: {
+          type: Number,
+          default: 0 // Individual product shipping fee
+        }
       }
     ],
 

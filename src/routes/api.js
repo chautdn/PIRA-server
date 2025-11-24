@@ -32,6 +32,8 @@ require('./rating.routes');
 require('./productPromotion.routes');
 require('./rentalOrder.routes');
 require('./report.routes');
+require('./wishlist.routes');
+require('./systemWallet.routes');
 
 // Withdrawal routes
 const withdrawalRoutes = require('./withdrawal.routes');

@@ -527,6 +527,98 @@ class RentalOrderController {
   }
 
   /**
+   * Tính phí ship chi tiết cho từng product trong suborder
+   * POST /api/rental-orders/calculate-product-shipping
+   */
+  async calculateProductShipping(req, res) {
+    try {
+      const { subOrderId, ownerLocation, userLocation, products } = req.body;
+
+      // Validation
+      if (!ownerLocation || !userLocation) {
+        throw new BadRequest('Thiếu thông tin tọa độ');
+      }
+
+      if (!ownerLocation.latitude || !ownerLocation.longitude) {
+        throw new BadRequest('Thiếu tọa độ chủ cho thuê');
+      }
+
+      if (!userLocation.latitude || !userLocation.longitude) {
+        throw new BadRequest('Thiếu tọa độ người thuê');
+      }
+
+      if (!products || !products.length) {
+        throw new BadRequest('Thiếu thông tin sản phẩm');
+      }
+
+      console.log('🚚 Calculate product shipping request:', {
+        subOrderId,
+        ownerLocation,
+        userLocation,
+        productsCount: products.length
+      });
+
+      const shippingCalculation = await RentalOrderService.calculateProductShippingFees(
+        products,
+        ownerLocation,
+        userLocation
+      );
+
+      return new SuccessResponse({
+        message: 'Tính phí ship cho từng sản phẩm thành công',
+        metadata: {
+          subOrderId,
+          shipping: shippingCalculation
+        }
+      }).send(res);
+    } catch (error) {
+      console.error('❌ Error calculating product shipping:', error);
+      throw new BadRequest(error.message);
+    }
+  }
+
+  /**
+   * Cập nhật shipping fees cho SubOrder
+   * PUT /api/rental-orders/suborders/:subOrderId/shipping
+   */
+  async updateSubOrderShipping(req, res) {
+    try {
+      const { subOrderId } = req.params;
+      const { ownerLocation, userLocation } = req.body;
+      const userId = req.user.id;
+
+      // Validation
+      if (!ownerLocation || !userLocation) {
+        throw new BadRequest('Thiếu thông tin tọa độ');
+      }
+
+      console.log('🔄 Update SubOrder shipping:', {
+        subOrderId,
+        userId,
+        ownerLocation,
+        userLocation
+      });
+
+      const updatedSubOrder = await RentalOrderService.updateSubOrderShipping(
+        subOrderId,
+        ownerLocation,
+        userLocation,
+        userId
+      );
+
+      return new SuccessResponse({
+        message: 'Cập nhật phí ship thành công',
+        metadata: {
+          subOrder: updatedSubOrder
+        }
+      }).send(res);
+    } catch (error) {
+      console.error('❌ Error updating suborder shipping:', error);
+      throw new BadRequest(error.message);
+    }
+  }
+
+  /**
    * Lấy danh sách SubOrder cho chủ sản phẩm
    * GET /api/rental-orders/owner-suborders
    */
@@ -655,6 +747,51 @@ class RentalOrderController {
       return res.status(400).json({
         success: false,
         message: error.message || 'Không thể cập nhật phương thức thanh toán'
+      });
+    }
+  }
+
+  /**
+   * Lấy danh sách sản phẩm đang được thuê (active rentals) cho chủ sản phẩm
+   * GET /api/rental-orders/owner-active-rentals
+   */
+  async getOwnerActiveRentals(req, res) {
+    try {
+      console.log('📥 GET /api/rental-orders/owner-active-rentals');
+      console.log('👤 req.user:', req.user);
+
+      if (!req.user || !req.user.id) {
+        return res.status(401).json({
+          success: false,
+          message: 'User not authenticated'
+        });
+      }
+
+      const ownerId = req.user.id;
+      const { page, limit } = req.query;
+
+      console.log('👤 Owner ID:', ownerId);
+      console.log('📋 Query params:', { page, limit });
+
+      const activeRentals = await RentalOrderService.getActiveRentalsByOwner(ownerId, {
+        page: parseInt(page) || 1,
+        limit: parseInt(limit) || 20
+      });
+
+      console.log('✅ Active rentals found:', activeRentals.data.length);
+
+      return res.status(200).json({
+        success: true,
+        message: 'Lấy danh sách sản phẩm đang cho thuê thành công',
+        metadata: {
+          activeRentals
+        }
+      });
+    } catch (error) {
+      console.error('❌ Error in getOwnerActiveRentals:', error);
+      return res.status(400).json({
+        success: false,
+        message: error.message || 'Không thể lấy danh sách sản phẩm đang cho thuê'
       });
     }
   }

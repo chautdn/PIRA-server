@@ -640,6 +640,42 @@ class AdminService {
       }
 
       console.log('Product status updated successfully:', product.status);
+
+      // Gửi email thông báo nếu sản phẩm bị đình chỉ
+      if (status === 'SUSPENDED' && product.owner && product.owner.email) {
+        try {
+          const sendMail = require('../utils/mailer');
+          const emailTemplates = require('../utils/emailTemplates');
+          
+          const ownerName = product.owner.fullName || product.owner.username || 'Chủ sản phẩm';
+          const suspendedAt = new Date().toLocaleString('vi-VN', {
+            year: 'numeric',
+            month: 'long',
+            day: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit'
+          });
+          
+          const suspensionReason = product.moderation?.suspensionReason || 'Sản phẩm vi phạm quy định của hệ thống';
+          
+          await sendMail({
+            email: product.owner.email,
+            subject: '⚠️ Thông báo: Sản phẩm của bạn đã bị đình chỉ',
+            html: emailTemplates.productSuspendedEmail(
+              ownerName,
+              product.title,
+              suspensionReason,
+              suspendedAt
+            )
+          });
+          
+          console.log('Suspension notification email sent to:', product.owner.email);
+        } catch (emailError) {
+          console.error('Error sending suspension email:', emailError.message);
+          // Không throw error để không ảnh hưởng đến việc đình chỉ sản phẩm
+        }
+      }
+
       return product;
     } catch (error) {
       console.error('Error updating product status:', error.message);
@@ -736,6 +772,40 @@ class AdminService {
       }
 
       console.log('Product suspended successfully:', product._id);
+
+      // Gửi email thông báo cho chủ sản phẩm
+      if (product.owner && product.owner.email) {
+        try {
+          const sendMail = require('../utils/mailer');
+          const emailTemplates = require('../utils/emailTemplates');
+          
+          const ownerName = product.owner.fullName || product.owner.username || 'Chủ sản phẩm';
+          const suspendedAt = new Date().toLocaleString('vi-VN', {
+            year: 'numeric',
+            month: 'long',
+            day: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit'
+          });
+          
+          await sendMail({
+            email: product.owner.email,
+            subject: '⚠️ Thông báo: Sản phẩm của bạn đã bị đình chỉ',
+            html: emailTemplates.productSuspendedEmail(
+              ownerName,
+              product.title,
+              reason || 'Sản phẩm vi phạm quy định của hệ thống',
+              suspendedAt
+            )
+          });
+          
+          console.log('Suspension notification email sent to:', product.owner.email);
+        } catch (emailError) {
+          console.error('Error sending suspension email:', emailError.message);
+          // Không throw error để không ảnh hưởng đến việc đình chỉ sản phẩm
+        }
+      }
+
       return product;
     } catch (error) {
       console.error('Error suspending product:', error.message);

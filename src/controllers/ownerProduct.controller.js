@@ -25,14 +25,17 @@ const ownerProductController = {
   getProducts: async (req, res) => {
     try {
       const ownerId = req.user._id;
-      const { page = 1, limit = 10, status, category, featured } = req.query;
+      const { page = 1, limit = 10, status, category, promoted, search, sort, order } = req.query;
 
       const products = await ownerProductService.getOwnerProducts(ownerId, {
         page: parseInt(page),
         limit: parseInt(limit),
         status,
         category,
-        featured
+        promoted,
+        search,
+        sort,
+        order
       });
 
       return res.status(200).json({
@@ -485,6 +488,255 @@ const ownerProductController = {
         success: true,
         message: 'Sản phẩm đã được từ chối',
         data: subOrder
+      });
+    } catch (error) {
+      return res.status(400).json({
+        success: false,
+        message: error.message
+      });
+    }
+  },
+
+  // GET /api/owner/products/:id/rental-status
+  checkRentalStatus: async (req, res) => {
+    try {
+      const ownerId = req.user._id;
+      const productId = req.params.id;
+
+      // Verify product ownership
+      const product = await ownerProductService.getOwnerProductById(ownerId, productId);
+
+      const rentalStatus = await ownerProductService.checkProductRentalStatus(productId);
+
+      return res.status(200).json({
+        success: true,
+        data: rentalStatus
+      });
+    } catch (error) {
+      return res.status(400).json({
+        success: false,
+        message: error.message
+      });
+    }
+  },
+
+  // PUT /api/owner/products/:id/hide
+  hideProduct: async (req, res) => {
+    try {
+      const ownerId = req.user._id;
+      const productId = req.params.id;
+
+      const result = await ownerProductService.hideProduct(ownerId, productId);
+
+      return res.status(200).json({
+        success: true,
+        message: result.message,
+        data: result.product
+      });
+    } catch (error) {
+      return res.status(400).json({
+        success: false,
+        message: error.message
+      });
+    }
+  },
+
+  // PUT /api/owner/products/:id/unhide
+  unhideProduct: async (req, res) => {
+    try {
+      const ownerId = req.user._id;
+      const productId = req.params.id;
+
+      const product = await ownerProductService.unhideProduct(ownerId, productId);
+
+      return res.status(200).json({
+        success: true,
+        message: 'Product unhidden successfully',
+        data: product
+      });
+    } catch (error) {
+      return res.status(400).json({
+        success: false,
+        message: error.message
+      });
+    }
+  },
+
+  // DELETE /api/owner/products/:id/soft-delete
+  softDeleteProduct: async (req, res) => {
+    try {
+      const ownerId = req.user._id;
+      const productId = req.params.id;
+
+      const result = await ownerProductService.softDeleteProduct(ownerId, productId);
+
+      return res.status(200).json({
+        success: true,
+        message: result.message,
+        data: result.product
+      });
+    } catch (error) {
+      return res.status(400).json({
+        success: false,
+        message: error.message
+      });
+    }
+  },
+
+  // PUT /api/owner/products/:id/safe-update
+  updateProductSafeFields: async (req, res) => {
+    try {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        return res.status(400).json({
+          success: false,
+          message: 'Validation errors',
+          errors: errors.array()
+        });
+      }
+
+      const ownerId = req.user._id;
+      const productId = req.params.id;
+      const updateData = req.body;
+
+      let imageValidationResults = [];
+
+      // Handle new images with AI validation if provided
+      if (req.files && req.files.length > 0) {
+        try {
+          // Get product to retrieve category for validation
+          const existingProduct = await ownerProductService.getOwnerProductById(ownerId, productId);
+          const categoryId = existingProduct.category._id || existingProduct.category;
+
+          // Validate and upload images with AI
+          const uploadedImages = await ownerProductService.uploadAndValidateImages(
+            req.files,
+            categoryId
+          );
+
+          // Extract validation results for response
+          imageValidationResults = uploadedImages.map((img) => ({
+            url: img.url,
+            categoryMatch: img.categoryValidation.isRelevant,
+            confidence: img.categoryValidation.confidence,
+            detectedObjects: img.categoryValidation.detectedObjects,
+            detectedLabels: img.categoryValidation.detectedLabels,
+            matchScore: img.categoryValidation.matchScore,
+            matchPercentage: img.categoryValidation.matchPercentage,
+            nsfwSafe: img.nsfwCheck.safe,
+            nsfwValue: img.nsfwCheck.nsfwValue
+          }));
+
+          // Set validated images for update
+          updateData.newImages = uploadedImages;
+        } catch (imageValidationError) {
+          // Check if error has validationErrors array
+          if (imageValidationError.validationErrors) {
+            const validationErrors = imageValidationError.validationErrors;
+            const nsfwErrors = validationErrors.filter((e) => e.type === 'NSFW_VIOLATION');
+            const categoryErrors = validationErrors.filter((e) => e.type === 'CATEGORY_MISMATCH');
+            const processingErrors = validationErrors.filter((e) => e.type === 'PROCESSING_ERROR');
+
+            // Determine primary error type
+            let errorType = 'IMAGE_VALIDATION_ERROR';
+            let details = {
+              reason: 'Image validation failed',
+              suggestion: 'Please check your images and try again.'
+            };
+
+            if (nsfwErrors.length > 0 && categoryErrors.length > 0) {
+              errorType = 'MIXED_VALIDATION_ERROR';
+              details = {
+                reason: 'Multiple validation issues found',
+                suggestion:
+                  'Please upload appropriate, family-friendly images that match your product category.'
+              };
+            } else if (nsfwErrors.length > 0) {
+              errorType = 'NSFW_VIOLATION';
+              details = {
+                reason: 'Images contain inappropriate content',
+                suggestion: 'Please upload appropriate, family-friendly images only.'
+              };
+            } else if (categoryErrors.length > 0) {
+              errorType = 'CATEGORY_MISMATCH';
+              details = {
+                reason: 'Images do not match the product category',
+                suggestion: 'Please upload images that are relevant to your product category.'
+              };
+            } else if (processingErrors.length > 0) {
+              errorType = 'PROCESSING_ERROR';
+              details = {
+                reason: 'Error processing images',
+                suggestion:
+                  'Please try again with different images or contact support if the issue persists.'
+              };
+            }
+
+            // Create errorBreakdown
+            const errorBreakdown = {
+              total: validationErrors.length,
+              nsfw: nsfwErrors.length,
+              category: categoryErrors.length,
+              other: processingErrors.length,
+              details: validationErrors.map((error) => ({
+                fileName: error.filename,
+                type: error.type,
+                message: error.reason,
+                nsfwValue: error.error?.includes('NSFW confidence') ? error.error : undefined
+              }))
+            };
+
+            return res.status(400).json({
+              success: false,
+              message: 'Image validation failed',
+              error: imageValidationError.message,
+              errorType: errorType,
+              errorBreakdown: errorBreakdown,
+              details: details
+            });
+          }
+
+          // Fallback for other types of errors
+          return res.status(400).json({
+            success: false,
+            message: 'Image validation failed',
+            error: imageValidationError.message,
+            errorType: 'IMAGE_VALIDATION_ERROR',
+            details: {
+              reason: 'Image validation failed',
+              suggestion: 'Please check your images and try again.'
+            }
+          });
+        }
+      }
+
+      const product = await ownerProductService.updateProductSafeFields(
+        ownerId,
+        productId,
+        updateData
+      );
+
+      return res.status(200).json({
+        success: true,
+        message: 'Product updated successfully',
+        data: product,
+        imageValidation:
+          imageValidationResults.length > 0
+            ? {
+                totalImages: imageValidationResults.length,
+                results: imageValidationResults,
+                summary: {
+                  allImagesRelevant: imageValidationResults.every((img) => img.categoryMatch),
+                  allImagesSafe: imageValidationResults.every((img) => img.nsfwSafe),
+                  averageMatchScore:
+                    imageValidationResults.reduce((sum, img) => sum + (img.matchScore || 0), 0) /
+                    imageValidationResults.length,
+                  averageNsfwValue:
+                    imageValidationResults.reduce((sum, img) => sum + (img.nsfwValue || 0), 0) /
+                    imageValidationResults.length
+                }
+              }
+            : null
       });
     } catch (error) {
       return res.status(400).json({
