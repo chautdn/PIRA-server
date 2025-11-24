@@ -141,4 +141,4 @@ extensionRequestSchema.index({ owner: 1, status: 1 });
 extensionRequestSchema.index({ renter: 1, status: 1 });
 extensionRequestSchema.index({ status: 1, createdAt: -1 });
 
-module.exports = mongoose.model('ExtensionRequest', extensionRequestSchema);
+module.exports = mongoose.model('ExtensionRequests', extensionRequestSchema);

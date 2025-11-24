@@ -47,16 +47,25 @@ class ExtensionController {
    */
   getOwnerExtensionRequests = asyncHandler(async (req, res) => {
     const ownerId = req.user.id;
-    const { status, page = 1, limit = 10 } = req.query;
+    const { page = 1, limit = 10 } = req.query;
 
     console.log('📥 GET /api/extensions/owner-requests');
     console.log('👤 Owner ID:', ownerId);
 
+    // Luôn lấy các yêu cầu PENDING cho owner
     const result = await ExtensionService.getOwnerExtensionRequests(ownerId, {
-      status,
+      status: 'PENDING',
       page: parseInt(page),
       limit: parseInt(limit)
     });
+
+    console.log('📦 Result from service:', result);
+    console.log('📊 Requests count:', result.requests.length);
+
+    // Disable cache để luôn trả về dữ liệu mới
+    res.set('Cache-Control', 'no-cache, no-store, must-revalidate');
+    res.set('Pragma', 'no-cache');
+    res.set('Expires', '0');
 
     return new SuccessResponse({
       message: 'Lấy danh sách yêu cầu gia hạn thành công',

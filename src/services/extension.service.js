@@ -1,9 +1,11 @@
+const mongoose = require('mongoose');
 const ExtensionRequest = require('../models/ExtensionRequest');
 const SubOrder = require('../models/SubOrder');
 const MasterOrder = require('../models/MasterOrder');
 const Product = require('../models/Product');
 const User = require('../models/User');
 const Wallet = require('../models/Wallet');
+
 
 class ExtensionService {
   /**
@@ -99,12 +101,20 @@ class ExtensionService {
         totalCost
       });
 
+      // Đảm bảo ownerId lấy đúng từ subOrder và luôn là ObjectId
+      let ownerId = subOrder.owner?._id || subOrder.owner;
+      if (!ownerId) {
+        throw new Error('SubOrder không có owner, không thể tạo yêu cầu gia hạn');
+      }
+      if (typeof ownerId === 'string' && mongoose.Types.ObjectId.isValid(ownerId)) {
+        ownerId = new mongoose.Types.ObjectId(ownerId);
+      }
       // Tạo extension request
       const extensionRequest = new ExtensionRequest({
         subOrder: subOrderId,
         masterOrder: masterOrder._id,
         renter: renterId,
-        owner: subOrder.owner._id,
+        owner: ownerId,
         currentEndDate: currentEnd,
         newEndDate: newEnd,
         extensionReason,
@@ -138,24 +148,23 @@ class ExtensionService {
         paymentDetails: paymentResult
       };
 
-      const savedRequest = await extensionRequest.save().catch(saveError => {
+      let savedRequest;
+      try {
+        savedRequest = await extensionRequest.save();
+      } catch (saveError) {
         console.error('❌ Save error details:', {
           error: saveError.message,
           validationErrors: saveError.errors,
           data: extensionRequest.toObject()
         });
-        throw saveError;
-      });
-      
-      console.log('✅ Extension request saved:', savedRequest._id);
-      console.log('📦 Saved data:', JSON.stringify(savedRequest, null, 2));
+        throw new Error('Không thể lưu yêu cầu gia hạn: ' + saveError.message);
+      }
 
-      // Verify data was saved
-      const verifyData = await ExtensionRequest.findById(savedRequest._id);
-      if (!verifyData) {
+      if (!savedRequest || !savedRequest._id) {
         throw new Error('Không thể xác nhận dữ liệu đã được lưu');
       }
-      console.log('✅ Data verification successful');
+      console.log('✅ Extension request saved:', savedRequest._id);
+      console.log('📦 Saved data:', JSON.stringify(savedRequest, null, 2));
 
       // Populate and return
       const populatedRequest = await ExtensionRequest.findById(savedRequest._id).populate([
@@ -163,7 +172,7 @@ class ExtensionService {
         { path: 'owner', select: 'profile email' },
         { path: 'subOrder', select: 'subOrderNumber' }
       ]);
-      
+
       console.log('✅ Final populated request:', populatedRequest._id);
       return populatedRequest;
     } catch (error) {
@@ -290,11 +299,20 @@ class ExtensionService {
     try {
       console.log('🔍 Fetching extension requests for owner:', ownerId);
 
-      const query = { owner: ownerId };
-      
+      // Luôn ép ownerId về ObjectId để đảm bảo nhất quán
+      let ownerObjectId;
+      if (mongoose.Types.ObjectId.isValid(ownerId)) {
+        ownerObjectId = new mongoose.Types.ObjectId(ownerId.toString());
+      } else {
+        throw new Error('ownerId không hợp lệ');
+      }
+      const query = { owner: ownerObjectId };
+
       if (filters.status) {
         query.status = filters.status;
       }
+
+      console.log('🔍 [getOwnerExtensionRequests] Query:', query);
 
       const requests = await ExtensionRequest.find(query)
         .populate([
