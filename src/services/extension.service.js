@@ -13,8 +13,7 @@ class ExtensionService {
    */
   async requestExtension(subOrderId, renterId, extensionData) {
     try {
-      console.log('🔄 Creating extension request:', { subOrderId, renterId });
-      console.log('📋 Extension data:', JSON.stringify(extensionData, null, 2));
+
 
       const { newEndDate, extensionReason, paymentMethod } = extensionData;
 
@@ -92,7 +91,7 @@ class ExtensionService {
       const extensionCost = Math.round(rentalRate * extensionDays);
       const totalCost = Math.round(extensionCost); // Có thể thêm deposits sau
 
-      console.log('💰 Calculation:', {
+      console.log(' Calculation:', {
         currentEndDate: currentEnd,
         newEndDate: newEnd,
         extensionDays,
@@ -128,7 +127,6 @@ class ExtensionService {
       });
 
       // Process payment ngay lập tức
-      console.log('💳 Processing payment...');
       const paymentResult = await this.processExtensionPayment(
         extensionRequest,
         paymentMethod,
@@ -152,7 +150,7 @@ class ExtensionService {
       try {
         savedRequest = await extensionRequest.save();
       } catch (saveError) {
-        console.error('❌ Save error details:', {
+        console.error('Save error details:', {
           error: saveError.message,
           validationErrors: saveError.errors,
           data: extensionRequest.toObject()
@@ -163,8 +161,6 @@ class ExtensionService {
       if (!savedRequest || !savedRequest._id) {
         throw new Error('Không thể xác nhận dữ liệu đã được lưu');
       }
-      console.log('✅ Extension request saved:', savedRequest._id);
-      console.log('📦 Saved data:', JSON.stringify(savedRequest, null, 2));
 
       // Populate and return
       const populatedRequest = await ExtensionRequest.findById(savedRequest._id).populate([
@@ -173,10 +169,9 @@ class ExtensionService {
         { path: 'subOrder', select: 'subOrderNumber' }
       ]);
 
-      console.log('✅ Final populated request:', populatedRequest._id);
       return populatedRequest;
     } catch (error) {
-      console.error('❌ Error creating extension request:', error);
+
       console.error('Error details:', {
         message: error.message,
         stack: error.stack,
@@ -191,7 +186,6 @@ class ExtensionService {
    */
   async processExtensionPayment(extensionRequest, paymentMethod, amount, renterId) {
     try {
-      console.log('💳 Processing extension payment:', { paymentMethod, amount });
 
       switch (paymentMethod) {
         case 'WALLET':
@@ -207,7 +201,6 @@ class ExtensionService {
           };
       }
     } catch (error) {
-      console.error('❌ Payment error:', error);
       return {
         status: 'FAILED',
         error: error.message,
@@ -262,8 +255,6 @@ class ExtensionService {
       
       await wallet.save();
 
-      console.log('✅ Wallet payment successful');
-
       return {
         status: 'SUCCESS',
         transactionId: transactionId,
@@ -282,7 +273,6 @@ class ExtensionService {
    * Process COD payment
    */
   async processCODPayment(renterId, amount) {
-    console.log('💵 Processing COD payment - no immediate payment');
     return {
       status: 'SUCCESS',
       transactionId: `EXT_${Date.now()}`,
@@ -297,7 +287,6 @@ class ExtensionService {
    */
   async getOwnerExtensionRequests(ownerId, filters = {}) {
     try {
-      console.log('🔍 Fetching extension requests for owner:', ownerId);
 
       // Luôn ép ownerId về ObjectId để đảm bảo nhất quán
       let ownerObjectId;
@@ -311,8 +300,6 @@ class ExtensionService {
       if (filters.status) {
         query.status = filters.status;
       }
-
-      console.log('🔍 [getOwnerExtensionRequests] Query:', query);
 
       const requests = await ExtensionRequest.find(query)
         .populate([
@@ -335,7 +322,6 @@ class ExtensionService {
         }
       };
     } catch (error) {
-      console.error('❌ Error fetching extension requests:', error);
       throw new Error('Không thể lấy danh sách yêu cầu gia hạn: ' + error.message);
     }
   }
@@ -361,7 +347,7 @@ class ExtensionService {
 
       return request;
     } catch (error) {
-      console.error('❌ Error fetching request detail:', error);
+      console.error(' Error fetching request detail:', error);
       throw new Error('Không thể lấy chi tiết yêu cầu: ' + error.message);
     }
   }
@@ -371,7 +357,6 @@ class ExtensionService {
    */
   async approveExtension(requestId, ownerId) {
     try {
-      console.log('✅ Approving extension request:', requestId);
 
       const extensionRequest = await ExtensionRequest.findOne({
         _id: requestId,
@@ -397,13 +382,11 @@ class ExtensionService {
       subOrder.rentalPeriod.endDate = extensionRequest.newEndDate;
       await subOrder.save();
 
-      console.log('✅ SubOrder updated with new end date');
 
       return await ExtensionRequest.findById(requestId).populate([
         { path: 'renter', select: 'profile email' }
       ]);
     } catch (error) {
-      console.error('❌ Error approving extension:', error);
       throw new Error('Không thể chấp nhận yêu cầu gia hạn: ' + error.message);
     }
   }
@@ -413,7 +396,6 @@ class ExtensionService {
    */
   async rejectExtension(requestId, ownerId, rejectionData) {
     try {
-      console.log('❌ Rejecting extension request:', requestId);
 
       const { rejectionReason, notes } = rejectionData;
 
@@ -438,17 +420,14 @@ class ExtensionService {
       extensionRequest.rejectedAt = new Date();
 
       // Refund payment
-      console.log('💸 Processing refund...');
       if (extensionRequest.paymentStatus === 'PAID') {
         await this.refundExtensionPayment(extensionRequest);
-        console.log('✅ Refund processed');
       }
 
       await extensionRequest.save();
 
       return extensionRequest;
     } catch (error) {
-      console.error('❌ Error rejecting extension:', error);
       throw new Error('Không thể từ chối yêu cầu gia hạn: ' + error.message);
     }
   }
@@ -465,11 +444,9 @@ class ExtensionService {
         if (user && user.wallet) {
           user.wallet.balance.available += totalCost;
           await user.wallet.save();
-          console.log('✅ Refunded to wallet:', totalCost);
         }
       }
     } catch (error) {
-      console.error('⚠️  Error processing refund:', error);
       // Continue even if refund fails
     }
   }
@@ -479,7 +456,6 @@ class ExtensionService {
    */
   async cancelExtension(requestId, renterId) {
     try {
-      console.log('🚫 Cancelling extension request:', requestId);
 
       const extensionRequest = await ExtensionRequest.findOne({
         _id: requestId,
@@ -502,7 +478,6 @@ class ExtensionService {
 
       return extensionRequest;
     } catch (error) {
-      console.error('❌ Error cancelling extension:', error);
       throw new Error('Không thể hủy yêu cầu gia hạn: ' + error.message);
     }
   }
@@ -538,7 +513,6 @@ class ExtensionService {
         }
       };
     } catch (error) {
-      console.error('❌ Error fetching renter requests:', error);
       throw new Error('Không thể lấy danh sách yêu cầu: ' + error.message);
     }
   }

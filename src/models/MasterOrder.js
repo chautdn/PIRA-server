@@ -42,6 +42,13 @@ const masterOrderSchema = new mongoose.Schema(
       default: 0
     },
 
+    // Phí nền tảng (8% tổng tiền thuê khi chọn PICKUP + COD)
+    platformFee: {
+      type: Number,
+      default: 0,
+      min: 0
+    },
+
     // Thời gian thuê chung (optional - mỗi product có thể có period khác nhau)
     rentalPeriod: {
       startDate: {

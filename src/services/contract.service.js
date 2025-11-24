@@ -12,65 +12,75 @@ class ContractService {
    * Tạo nội dung hợp đồng từ template
    */
   async generateContractContent(contractId) {
-    const contract = await Contract.findById(contractId).populate([
-      { path: 'owner', select: 'profile email' },
-      { path: 'renter', select: 'profile email' },
-      { path: 'product' }
-    ]);
+    try {
+      const contract = await Contract.findById(contractId).populate([
+        { path: 'owner', select: 'profile email' },
+        { path: 'renter', select: 'profile email' },
+        { path: 'product' }
+      ]);
 
-    if (!contract) {
-      throw new Error('Không tìm thấy hợp đồng');
+      if (!contract) {
+        throw new Error('Không tìm thấy hợp đồng');
+      }
+
+      // Lấy thông tin SubOrder để có đầy đủ chi tiết (nếu có)
+      const subOrder = contract.order ? await SubOrder.findById(contract.order).populate('masterOrder') : null;
+
+      const contractTemplate = await this.getContractTemplate();
+
+      // Safe extraction with defaults
+      const ownerProfile = contract.owner?.profile || {};
+      const renterProfile = contract.renter?.profile || {};
+      const product = contract.product || {};
+      const terms = contract.terms || {};
+
+      const ownerName = ownerProfile.fullName || `${ownerProfile.firstName || ''} ${ownerProfile.lastName || ''}`.trim() || '';
+      const renterName = renterProfile.fullName || `${renterProfile.firstName || ''} ${renterProfile.lastName || ''}`.trim() || '';
+
+      const startDate = terms.startDate ? new Date(terms.startDate).toLocaleDateString('vi-VN') : '';
+      const endDate = terms.endDate ? new Date(terms.endDate).toLocaleDateString('vi-VN') : '';
+      const rentalRate = typeof terms.rentalRate === 'number' ? terms.rentalRate : (terms.rentalRate ? Number(terms.rentalRate) : 0);
+      const deposit = typeof terms.deposit === 'number' ? terms.deposit : (terms.deposit ? Number(terms.deposit) : 0);
+
+      const deliveryAddressText = subOrder?.masterOrder?.deliveryAddress ? this.formatAddress(subOrder.masterOrder.deliveryAddress) : '';
+      const deliveryMethodText = subOrder?.masterOrder?.deliveryMethod === 'PICKUP' ? 'Nhận trực tiếp' : (subOrder?.masterOrder?.deliveryMethod ? 'Giao tận nơi' : '');
+
+      // Thay thế các placeholder trong template
+      const contractContent = contractTemplate
+        .replace(/{{CONTRACT_NUMBER}}/g, contract.contractNumber || 'N/A')
+        .replace(/{{CONTRACT_DATE}}/g, new Date().toLocaleDateString('vi-VN'))
+        .replace(/{{OWNER_NAME}}/g, ownerName)
+        .replace(/{{OWNER_EMAIL}}/g, contract.owner?.email || '')
+        .replace(/{{OWNER_PHONE}}/g, ownerProfile.phone || '')
+        .replace(/{{OWNER_ADDRESS}}/g, this.formatAddress(ownerProfile.address || {}))
+        .replace(/{{OWNER_ID_NUMBER}}/g, ownerProfile.idNumber || '')
+        .replace(/{{RENTER_NAME}}/g, renterName)
+        .replace(/{{RENTER_EMAIL}}/g, contract.renter?.email || '')
+        .replace(/{{RENTER_PHONE}}/g, renterProfile.phone || '')
+        .replace(/{{RENTER_ADDRESS}}/g, this.formatAddress(renterProfile.address || {}))
+        .replace(/{{RENTER_ID_NUMBER}}/g, renterProfile.idNumber || '')
+        .replace(/{{PRODUCT_NAME}}/g, product.name || product.title || '')
+        .replace(/{{PRODUCT_DESCRIPTION}}/g, product.description || '')
+        .replace(/{{PRODUCT_SERIAL}}/g, product.serialNumber || 'N/A')
+        .replace(/{{PRODUCT_VALUE}}/g, this.formatCurrency(product.price || product.value || 0))
+        .replace(/{{START_DATE}}/g, startDate)
+        .replace(/{{END_DATE}}/g, endDate)
+        .replace(/{{RENTAL_RATE}}/g, this.formatCurrency(rentalRate))
+        .replace(/{{DEPOSIT_AMOUNT}}/g, this.formatCurrency(deposit))
+        .replace(/{{TOTAL_AMOUNT}}/g, this.formatCurrency((rentalRate || 0) + (deposit || 0)))
+        .replace(/{{DELIVERY_ADDRESS}}/g, deliveryAddressText)
+        .replace(/{{DELIVERY_METHOD}}/g, deliveryMethodText)
+        .replace(/{{PLATFORM_NAME}}/g, 'PIRA - Nền tảng cho thuê sản phẩm')
+        .replace(/{{PLATFORM_ADDRESS}}/g, 'Tầng 5, Tòa nhà FPT, Quận 9, TP.HCM')
+        .replace(/{{PLATFORM_PHONE}}/g, '1900-1234')
+        .replace(/{{PLATFORM_EMAIL}}/g, 'support@pira.vn');
+
+      return contractContent;
+    } catch (error) {
+      console.error('❌ Error generating contract content:', error);
+      // Return a safe fallback content so UI can display an error message instead of failing
+      return `Không thể tạo nội dung hợp đồng: ${error.message || 'Lỗi nội bộ'}`;
     }
-
-    // Lấy thông tin SubOrder để có đầy đủ chi tiết
-    const subOrder = await SubOrder.findById(contract.order).populate('masterOrder');
-
-    const contractTemplate = await this.getContractTemplate();
-
-    // Thay thế các placeholder trong template
-    const contractContent = contractTemplate
-      .replace(/{{CONTRACT_NUMBER}}/g, contract.contractNumber || 'N/A')
-      .replace(/{{CONTRACT_DATE}}/g, new Date().toLocaleDateString('vi-VN'))
-      .replace(/{{OWNER_NAME}}/g, contract.owner.profile.fullName || '')
-      .replace(/{{OWNER_EMAIL}}/g, contract.owner.email || '')
-      .replace(/{{OWNER_PHONE}}/g, contract.owner.profile.phone || '')
-      .replace(/{{OWNER_ADDRESS}}/g, this.formatAddress(contract.owner.profile.address))
-      .replace(/{{OWNER_ID_NUMBER}}/g, contract.owner.profile.idNumber || '')
-      .replace(/{{RENTER_NAME}}/g, contract.renter.profile.fullName || '')
-      .replace(/{{RENTER_EMAIL}}/g, contract.renter.email || '')
-      .replace(/{{RENTER_PHONE}}/g, contract.renter.profile.phone || '')
-      .replace(/{{RENTER_ADDRESS}}/g, this.formatAddress(contract.renter.profile.address))
-      .replace(/{{RENTER_ID_NUMBER}}/g, contract.renter.profile.idNumber || '')
-      .replace(/{{PRODUCT_NAME}}/g, contract.product.name || '')
-      .replace(/{{PRODUCT_DESCRIPTION}}/g, contract.product.description || '')
-      .replace(/{{PRODUCT_SERIAL}}/g, contract.product.serialNumber || 'N/A')
-      .replace(/{{PRODUCT_VALUE}}/g, this.formatCurrency(contract.product.price))
-      .replace(/{{START_DATE}}/g, new Date(contract.terms.startDate).toLocaleDateString('vi-VN'))
-      .replace(/{{END_DATE}}/g, new Date(contract.terms.endDate).toLocaleDateString('vi-VN'))
-      .replace(/{{RENTAL_RATE}}/g, this.formatCurrency(contract.terms.rentalRate))
-      .replace(/{{DEPOSIT_AMOUNT}}/g, this.formatCurrency(contract.terms.deposit))
-      .replace(
-        /{{TOTAL_AMOUNT}}/g,
-        this.formatCurrency(contract.terms.rentalRate + contract.terms.deposit)
-      )
-      .replace(
-        /{{DELIVERY_ADDRESS}}/g,
-        subOrder ? this.formatAddress(subOrder.masterOrder.deliveryAddress) : ''
-      )
-      .replace(
-        /{{DELIVERY_METHOD}}/g,
-        subOrder
-          ? subOrder.masterOrder.deliveryMethod === 'PICKUP'
-            ? 'Nhận trực tiếp'
-            : 'Giao tận nơi'
-          : ''
-      )
-      .replace(/{{PLATFORM_NAME}}/g, 'PIRA - Nền tảng cho thuê sản phẩm')
-      .replace(/{{PLATFORM_ADDRESS}}/g, 'Tầng 5, Tòa nhà FPT, Quận 9, TP.HCM')
-      .replace(/{{PLATFORM_PHONE}}/g, '1900-1234')
-      .replace(/{{PLATFORM_EMAIL}}/g, 'support@pira.vn');
-
-    return contractContent;
   }
 
   /**

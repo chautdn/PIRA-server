@@ -541,6 +541,7 @@ class RentalOrderService {
 
   /**
    * Process COD payment - cash on delivery
+   * No platform fee charged here - will be charged when owner confirms the order
    */
   async processCODPayment(masterOrderId, paymentData) {
     const { transactionId, amount } = paymentData;
@@ -555,9 +556,164 @@ class RentalOrderService {
       processedAt: new Date(),
       paymentDetails: {
         message: 'Thanh toán khi nhận hàng',
-        note: 'Khách hàng sẽ thanh toán bằng tiền mặt khi nhận sản phẩm'
+        note: 'Khách hàng sẽ thanh toán bằng tiền mặt khi nhận sản phẩm',
+        platformFeeNote: 'Phí nền tảng sẽ được trừ sau khi chủ xác nhận đơn'
       }
     };
+  }
+
+  /**
+   * Charge platform fee to owner and transfer to admin wallet
+   */
+  async chargePlatformFeeToOwner(ownerId, masterOrderId, platformFee) {
+    const User = require('../models/User');
+    const Wallet = require('../models/Wallet');
+    const Transaction = require('../models/Transaction');
+
+    try {
+      // Get owner and their wallet
+      const owner = await User.findById(ownerId).populate('wallet');
+      if (!owner) {
+        throw new Error(`Owner ${ownerId} not found`);
+      }
+
+      if (!owner.wallet) {
+        throw new Error(`Owner wallet not found for ${ownerId}`);
+      }
+
+      console.log(`💳 Owner wallet balance before fee: ${owner.wallet.balance.available}`);
+
+      // Check if owner has sufficient balance
+      if (owner.wallet.balance.available < platformFee) {
+        throw new Error(
+          `Ví chủ sản phẩm không đủ để trả phí nền tảng. Số dư: ${owner.wallet.balance.available}, phí: ${platformFee}`
+        );
+      }
+
+      // Deduct from owner's wallet
+      owner.wallet.balance.available -= platformFee;
+      
+      // Record transaction for owner
+      if (!owner.wallet.transactions) {
+        owner.wallet.transactions = [];
+      }
+      owner.wallet.transactions.push({
+        type: 'COMMISSION',
+        amount: platformFee,
+        description: `Phí nền tảng (8%) đơn hàng PICKUP + COD`,
+        relatedOrder: masterOrderId,
+        timestamp: new Date(),
+        status: 'COMPLETED'
+      });
+
+      await owner.wallet.save();
+      console.log(`✅ Deducted ${platformFee} from owner wallet. New balance: ${owner.wallet.balance.available}`);
+
+      // Find admin user (assuming admin has role 'ADMIN')
+      const admin = await User.findOne({ role: 'ADMIN' }).populate('wallet');
+      if (!admin) {
+        throw new Error('Admin user not found');
+      }
+
+      // Create admin wallet if it doesn't exist
+      if (!admin.wallet) {
+        const wallet = new Wallet({
+          user: admin._id,
+          balance: {
+            available: 0,
+            frozen: 0,
+            pending: 0
+          },
+          currency: 'VND',
+          status: 'ACTIVE'
+        });
+        await wallet.save();
+        admin.wallet = wallet._id;
+        await admin.save();
+        console.log('✅ Created admin wallet');
+      }
+
+      // Get admin's wallet
+      const adminWallet = await Wallet.findById(admin.wallet);
+      if (!adminWallet) {
+        throw new Error('Admin wallet not found');
+      }
+
+      console.log(`💳 Admin wallet balance before fee transfer: ${adminWallet.balance.available}`);
+
+      // Add platform fee to admin wallet
+      adminWallet.balance.available += platformFee;
+      
+      // Record transaction for admin
+      if (!adminWallet.transactions) {
+        adminWallet.transactions = [];
+      }
+      adminWallet.transactions.push({
+        type: 'COMMISSION',
+        amount: platformFee,
+        description: `Phí nền tảng (8%) từ đơn hàng PICKUP + COD (Owner: ${ownerId})`,
+        relatedOrder: masterOrderId,
+        timestamp: new Date(),
+        status: 'COMPLETED'
+      });
+
+      await adminWallet.save();
+      console.log(`✅ Added ${platformFee} to admin wallet. New balance: ${adminWallet.balance.available}`);
+
+      // Create transaction record in Transaction collection for owner
+      const transactionOwner = new Transaction({
+        user: ownerId,
+        wallet: owner.wallet._id,
+        type: 'order_payment',
+        amount: platformFee,
+        status: 'success',
+        description: `Phí nền tảng (8%) đơn hàng PICKUP + COD`,
+        reference: masterOrderId.toString(),
+        paymentMethod: 'wallet',
+        metadata: {
+          masterOrderId: masterOrderId.toString(),
+          platformFeeType: 'cod_pickup',
+          description: 'Platform fee for COD + Pickup delivery'
+        },
+        processedAt: new Date()
+      });
+      await transactionOwner.save();
+
+      // Create transaction record for admin
+      const transactionAdmin = new Transaction({
+        user: admin._id,
+        wallet: adminWallet._id,
+        type: 'order_payment',
+        amount: platformFee,
+        status: 'success',
+        description: `Phí nền tảng (8%) từ đơn hàng PICKUP + COD (Owner: ${ownerId})`,
+        reference: masterOrderId.toString(),
+        paymentMethod: 'wallet',
+        metadata: {
+          masterOrderId: masterOrderId.toString(),
+          ownerId: ownerId.toString(),
+          platformFeeType: 'cod_pickup',
+          description: 'Platform fee collected from owner for COD + Pickup delivery'
+        },
+        processedAt: new Date()
+      });
+      await transactionAdmin.save();
+
+      console.log('✅ Transaction records created');
+
+      return {
+        success: true,
+        ownerId,
+        platformFee,
+        ownerNewBalance: owner.wallet.balance.available,
+        adminNewBalance: adminWallet.balance.available,
+        transactionIdOwner: transactionOwner._id,
+        transactionIdAdmin: transactionAdmin._id
+      };
+    } catch (error) {
+      console.error('❌ Error in chargePlatformFeeToOwner:', error.message);
+      throw error;
+    }
   }
 
   /**
@@ -852,6 +1008,48 @@ class RentalOrderService {
 
             if (masterOrder) {
               console.log('[DEBUG] masterOrder before status update:', masterOrder.status);
+              
+              // 🎯 CHARGE PLATFORM FEE FOR COD + PICKUP when all confirmed
+              if (allConfirmed && masterOrder.paymentMethod === 'COD' && masterOrder.deliveryMethod === 'PICKUP') {
+                console.log('🎯 [Platform Fee] All owners confirmed - COD + PICKUP detected - charging platform fee');
+                
+                try {
+                  // Calculate 8% platform fee from rental amount (excluding deposit and shipping)
+                  const rentalAmount = masterOrder.totalAmount - masterOrder.totalShippingFee;
+                  const platformFeePercentage = 0.08; // 8%
+                  const platformFee = Math.round(rentalAmount * platformFeePercentage);
+                  
+                  console.log(`💰 [Platform Fee] Rental amount: ${rentalAmount}`);
+                  console.log(`📊 [Platform Fee] Platform fee (8%): ${platformFee}`);
+
+                  // Update master order with platform fee
+                  masterOrder.platformFee = platformFee;
+                  
+                  // Get unique owners from all confirmed suborders
+                  const owners = [...new Set(
+                    allSubOrders
+                      .filter(so => so.status === 'OWNER_CONFIRMED')
+                      .map(so => so.owner.toString())
+                  )];
+                  
+                  console.log(`👥 [Platform Fee] Number of owners to charge: ${owners.length}`);
+
+                  // For each owner, deduct platform fee from their wallet and transfer to admin
+                  for (const ownerId of owners) {
+                    try {
+                      const result = await this.chargePlatformFeeToOwner(ownerId, masterOrder._id, platformFee);
+                      console.log(`✅ [Platform Fee] Charged for owner ${ownerId}:`, result);
+                    } catch (error) {
+                      console.error(`❌ [Platform Fee] Error charging for owner ${ownerId}:`, error.message);
+                      // Continue with other owners even if one fails
+                    }
+                  }
+                } catch (error) {
+                  console.error('❌ [Platform Fee] Error in platform fee calculation:', error.message);
+                  console.error('   Stack:', error.stack);
+                }
+              }
+              
               if (hasRejected) {
                 console.log('[DEBUG] Setting masterOrder.status = CANCELLED');
                 masterOrder.status = 'CANCELLED';
@@ -1555,6 +1753,43 @@ class RentalOrderService {
       await subOrder.save();
 
       console.log('✅ SubOrder confirmed successfully (legacy flow)');
+
+      // 🎯 CHARGE PLATFORM FEE FOR COD + PICKUP
+      try {
+        const masterOrder = await MasterOrder.findById(subOrder.masterOrder._id);
+        console.log('🔍 DEBUG: Checking platform fee conditions');
+        console.log('   paymentMethod:', masterOrder?.paymentMethod);
+        console.log('   deliveryMethod:', masterOrder?.deliveryMethod);
+        
+        if (masterOrder && masterOrder.paymentMethod === 'COD' && masterOrder.deliveryMethod === 'PICKUP') {
+          console.log('🎯 COD + PICKUP detected - charging platform fee');
+          
+          // Calculate 8% platform fee from rental amount (excluding deposit and shipping)
+          const rentalAmount = masterOrder.totalAmount - masterOrder.totalShippingFee;
+          const platformFeePercentage = 0.08; // 8%
+          const platformFee = Math.round(rentalAmount * platformFeePercentage);
+          
+          console.log(`💰 Rental amount: ${rentalAmount}`);
+          console.log(`📊 Platform fee (8%): ${platformFee}`);
+
+          // Update master order with platform fee
+          masterOrder.platformFee = platformFee;
+          await masterOrder.save();
+          console.log('✅ platformFee saved to masterOrder');
+
+          // Charge platform fee to this owner
+          const result = await this.chargePlatformFeeToOwner(ownerId, masterOrder._id, platformFee);
+          console.log(`✅ Platform fee charged for owner ${ownerId}:`, result);
+        } else {
+          console.log('⚠️  Conditions not met for platform fee:');
+          console.log('   Is COD?', masterOrder?.paymentMethod === 'COD');
+          console.log('   Is PICKUP?', masterOrder?.deliveryMethod === 'PICKUP');
+        }
+      } catch (error) {
+        console.error('❌ Error charging platform fee during confirmSubOrder:', error.message);
+        console.error('   Stack:', error.stack);
+        // Continue even if fee charging fails - don't block the confirmation
+      }
 
       // Sync master order status similar to ownerConfirmOrder
       if (subOrder.masterOrder) {
