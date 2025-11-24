@@ -28,8 +28,8 @@ router.patch('/users/bulk-update', adminController.bulkUpdateUsers);
 router.get('/products', adminController.getAllProducts);
 router.get('/products/:productId', adminController.getProductById);
 router.patch('/products/:productId/status', adminController.updateProductStatus);
-router.patch('/products/:productId/approve', adminController.approveProduct);
-router.patch('/products/:productId/reject', adminController.rejectProduct);
+// router.patch('/products/:productId/approve', adminController.approveProduct);
+// router.patch('/products/:productId/reject', adminController.rejectProduct);
 
 // ========== CATEGORY MANAGEMENT ==========
 // router.get('/categories', adminController.getAllCategories);
@@ -46,7 +46,7 @@ router.patch('/orders/:orderId/status', adminController.updateOrderStatus);
 router.get('/reports', adminController.getAllReports);
 router.get('/reports/:reportId', adminController.getReportById);
 router.patch('/reports/:reportId/status', adminController.updateReportStatus);
-router.delete('/reports/:reportId/product', adminController.deleteReportedProduct);
+router.patch('/reports/:reportId/suspend-product', adminController.suspendReportedProduct);
 
 // ========== BANK ACCOUNT VERIFICATION ==========
 router.get('/bank-accounts', adminController.getAllBankAccounts);

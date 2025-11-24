@@ -97,22 +97,22 @@ class AdminController {
     }
   }
 
-  async updateUserCreditScore(req, res) {
-    try {
-      const { userId } = req.params;
-      const { creditScore } = req.body;
-      const adminId = req.user.id;
+  // async updateUserCreditScore(req, res) {
+  //   try {
+  //     const { userId } = req.params;
+  //     const { creditScore } = req.body;
+  //     const adminId = req.user.id;
 
-      if (creditScore === undefined || creditScore === null) {
-        return responseUtils.error(res, 'Vui lòng cung cấp điểm tín dụng', 400);
-      }
+  //     if (creditScore === undefined || creditScore === null) {
+  //       return responseUtils.error(res, 'Vui lòng cung cấp điểm tín dụng', 400);
+  //     }
 
-      const user = await adminService.updateUserCreditScore(userId, creditScore, adminId);
-      return responseUtils.success(res, user, 'Cập nhật điểm tín dụng thành công');
-    } catch (error) {
-      return responseUtils.error(res, error.message, 500);
-    }
-  }
+  //     const user = await adminService.updateUserCreditScore(userId, creditScore, adminId);
+  //     return responseUtils.success(res, user, 'Cập nhật điểm tín dụng thành công');
+  //   } catch (error) {
+  //     return responseUtils.error(res, error.message, 500);
+  //   }
+  // }
 
   async bulkUpdateUsers(req, res) {
     try {
@@ -236,77 +236,32 @@ class AdminController {
     }
   }
 
-  async approveProduct(req, res) {
-    try {
-      const { productId } = req.params;
-      const adminId = req.user.id;
+  // async approveProduct(req, res) {
+  //   try {
+  //     const { productId } = req.params;
+  //     const adminId = req.user.id;
 
-      const product = await adminService.approveProduct(productId, adminId);
-      return responseUtils.success(res, product, 'Phê duyệt sản phẩm thành công');
-    } catch (error) {
-      return responseUtils.error(res, error.message, 500);
-    }
-  }
+  //     const product = await adminService.approveProduct(productId, adminId);
+  //     return responseUtils.success(res, product, 'Phê duyệt sản phẩm thành công');
+  //   } catch (error) {
+  //     return responseUtils.error(res, error.message, 500);
+  //   }
+  // }
 
-  async rejectProduct(req, res) {
-    try {
-      const { productId } = req.params;
-      const { reason } = req.body;
-      const adminId = req.user.id;
+  // async rejectProduct(req, res) {
+  //   try {
+  //     const { productId } = req.params;
+  //     const { reason } = req.body;
+  //     const adminId = req.user.id;
 
-      const product = await adminService.rejectProduct(productId, reason, adminId);
-      return responseUtils.success(res, product, 'Từ chối sản phẩm thành công');
-    } catch (error) {
-      return responseUtils.error(res, error.message, 500);
-    }
-  }
+  //     const product = await adminService.rejectProduct(productId, reason, adminId);
+  //     return responseUtils.success(res, product, 'Từ chối sản phẩm thành công');
+  //   } catch (error) {
+  //     return responseUtils.error(res, error.message, 500);
+  //   }
+  // }
 
-  // ========== CATEGORY MANAGEMENT ==========
-  async getAllCategories(req, res) {
-    try {
-      const categories = await adminService.getAllCategories();
-      return responseUtils.success(res, categories, 'Lấy danh sách danh mục thành công');
-    } catch (error) {
-      return responseUtils.error(res, error.message, 500);
-    }
-  }
-
-  async createCategory(req, res) {
-    try {
-      const categoryData = req.body;
-      const adminId = req.user.id;
-
-      const category = await adminService.createCategory(categoryData, adminId);
-      return responseUtils.success(res, category, 'Tạo danh mục thành công');
-    } catch (error) {
-      return responseUtils.error(res, error.message, 500);
-    }
-  }
-
-  async updateCategory(req, res) {
-    try {
-      const { categoryId } = req.params;
-      const updateData = req.body;
-      const adminId = req.user.id;
-
-      const category = await adminService.updateCategory(categoryId, updateData, adminId);
-      return responseUtils.success(res, category, 'Cập nhật danh mục thành công');
-    } catch (error) {
-      return responseUtils.error(res, error.message, 500);
-    }
-  }
-
-  async deleteCategory(req, res) {
-    try {
-      const { categoryId } = req.params;
-      const adminId = req.user.id;
-
-      await adminService.deleteCategory(categoryId, adminId);
-      return responseUtils.success(res, null, 'Xóa danh mục thành công');
-    } catch (error) {
-      return responseUtils.error(res, error.message, 500);
-    }
-  }
+ 
 
   // ========== ORDER MANAGEMENT ==========
   async getAllOrders(req, res) {
@@ -369,65 +324,54 @@ class AdminController {
     }
   }
 
-  // ========== CATEGORY MANAGEMENT ==========
-  async getAllCategories(req, res) {
-    try {
-      const categories = await adminService.getAllCategories();
-      return responseUtils.success(res, categories, 'Lấy danh sách danh mục thành công');
-    } catch (error) {
-      return responseUtils.error(res, error.message, 500);
-    }
-  }
+  // // ========== CATEGORY MANAGEMENT ==========
+  // async getAllCategories(req, res) {
+  //   try {
+  //     const categories = await adminService.getAllCategories();
+  //     return responseUtils.success(res, categories, 'Lấy danh sách danh mục thành công');
+  //   } catch (error) {
+  //     return responseUtils.error(res, error.message, 500);
+  //   }
+  // }
 
-  async createCategory(req, res) {
-    try {
-      const categoryData = req.body;
-      const adminId = req.user.id;
+  // async createCategory(req, res) {
+  //   try {
+  //     const categoryData = req.body;
+  //     const adminId = req.user.id;
 
-      const category = await adminService.createCategory(categoryData, adminId);
-      return responseUtils.success(res, category, 'Tạo danh mục thành công');
-    } catch (error) {
-      return responseUtils.error(res, error.message, 500);
-    }
-  }
+  //     const category = await adminService.createCategory(categoryData, adminId);
+  //     return responseUtils.success(res, category, 'Tạo danh mục thành công');
+  //   } catch (error) {
+  //     return responseUtils.error(res, error.message, 500);
+  //   }
+  // }
 
-  async updateCategory(req, res) {
-    try {
-      const { categoryId } = req.params;
-      const updateData = req.body;
-      const adminId = req.user.id;
+  // async updateCategory(req, res) {
+  //   try {
+  //     const { categoryId } = req.params;
+  //     const updateData = req.body;
+  //     const adminId = req.user.id;
 
-      const category = await adminService.updateCategory(categoryId, updateData, adminId);
-      return responseUtils.success(res, category, 'Cập nhật danh mục thành công');
-    } catch (error) {
-      return responseUtils.error(res, error.message, 500);
-    }
-  }
+  //     const category = await adminService.updateCategory(categoryId, updateData, adminId);
+  //     return responseUtils.success(res, category, 'Cập nhật danh mục thành công');
+  //   } catch (error) {
+  //     return responseUtils.error(res, error.message, 500);
+  //   }
+  // }
 
-  async deleteCategory(req, res) {
-    try {
-      const { categoryId } = req.params;
-      const adminId = req.user.id;
+  // async deleteCategory(req, res) {
+  //   try {
+  //     const { categoryId } = req.params;
+  //     const adminId = req.user.id;
 
-      await adminService.deleteCategory(categoryId, adminId);
-      return responseUtils.success(res, null, 'Xóa danh mục thành công');
-    } catch (error) {
-      return responseUtils.error(res, error.message, 500);
-    }
-  }
+  //     await adminService.deleteCategory(categoryId, adminId);
+  //     return responseUtils.success(res, null, 'Xóa danh mục thành công');
+  //   } catch (error) {
+  //     return responseUtils.error(res, error.message, 500);
+  //   }
+  // }
 
-  // ========== REPORT MANAGEMENT ==========
-  async getAllReports(req, res) {
-    try {
-      const { page = 1, limit = 10, type, status } = req.query;
-      const filters = { page, limit, type, status };
-      
-      const result = await adminService.getAllReports(filters);
-      return responseUtils.success(res, result, 'Lấy danh sách báo cáo thành công');
-    } catch (error) {
-      return responseUtils.error(res, error.message, 500);
-    }
-  }
+
 
   // ========== SYSTEM SETTINGS ==========
   async getSystemSettings(req, res) {
@@ -491,8 +435,8 @@ class AdminController {
     }
   }
 
-  async deleteReportedProduct(req, res) {
-    console.log('=== Admin Controller deleteReportedProduct ===');
+  async suspendReportedProduct(req, res) {
+    console.log('=== Admin Controller suspendReportedProduct ===');
     console.log('Request params:', req.params);
     console.log('Request body:', req.body);
     
@@ -501,19 +445,19 @@ class AdminController {
       const { productId } = req.body;
       const adminId = req.user.id;
       
-      console.log('Deleting reported product:', { reportId, productId, adminId });
+      console.log('Suspending reported product:', { reportId, productId, adminId });
       
-      // Delete the product
-      await adminService.deleteProduct(productId, adminId);
+      // Suspend the product
+      await adminService.suspendProduct(productId, adminId, 'Sản phẩm bị đình chỉ do vi phạm quy định');
       
-      // Update report status to RESOLVED (this will trigger product deletion logic in service)
-      await adminService.updateReportStatus(reportId, 'RESOLVED', 'Sản phẩm đã bị xóa bởi admin');
+      // Update report status to RESOLVED
+      await adminService.updateReportStatus(reportId, 'RESOLVED', 'Sản phẩm đã bị đình chỉ bởi admin');
       
-      console.log('Product deleted and report updated successfully');
+      console.log('Product suspended and report updated successfully');
       
-      return responseUtils.success(res, null, 'Xóa sản phẩm bị báo cáo thành công');
+      return responseUtils.success(res, null, 'Đình chỉ sản phẩm bị báo cáo thành công');
     } catch (error) {
-      console.error('=== Admin Controller deleteReportedProduct ERROR ===');
+      console.error('=== Admin Controller suspendReportedProduct ERROR ===');
       console.error('Error message:', error.message);
       console.error('=========================================');
       
@@ -521,8 +465,6 @@ class AdminController {
         return responseUtils.error(res, error.message, 400);
       } else if (error.message === 'Không tìm thấy sản phẩm') {
         return responseUtils.error(res, error.message, 404);
-      } else if (error.message.includes('đơn hàng đang hoạt động')) {
-        return responseUtils.error(res, error.message, 400);
       } else {
         return responseUtils.error(res, error.message, 500);
       }
