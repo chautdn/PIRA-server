@@ -38,6 +38,9 @@ router.put('/:productId/rental', cartController.updateRental);
 // Update quantity by itemId (new - for multiple items per product)
 router.put('/item/:itemId', cartController.updateQuantityByItemId);
 
+// Update rental dates by itemId (new - for multiple items per product)
+router.put('/item/:itemId/rental', cartController.updateRentalByItemId);
+
 // Remove item by productId (removes all items with this productId)
 router.delete('/:productId', cartController.removeItem);
 

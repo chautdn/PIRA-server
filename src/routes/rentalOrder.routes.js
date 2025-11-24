@@ -73,6 +73,12 @@ const signContractValidation = [
 router.post('/create-draft', createDraftOrderValidation, RentalOrderController.createDraftOrder);
 
 /**
+ * Calculate deposit for current cart
+ * GET /api/rental-orders/calculate-deposit
+ */
+router.get('/calculate-deposit', RentalOrderController.calculateDeposit);
+
+/**
  * Bước 1b: Tạo đơn thuê với thanh toán (renter pays upfront)
  * POST /api/rental-orders/create-paid
  */
@@ -81,7 +87,16 @@ const createPaidOrderValidation = [
   body('paymentMethod')
     .isIn(['WALLET', 'BANK_TRANSFER', 'PAYOS', 'COD'])
     .withMessage('Phương thức thanh toán không hợp lệ'),
-  body('totalAmount').isFloat({ min: 0 }).withMessage('Tổng tiền không hợp lệ')
+  body('totalAmount').isFloat({ min: 0 }).withMessage('Tổng tiền không hợp lệ'),
+  // COD specific validation
+  body('depositAmount')
+    .if(body('paymentMethod').equals('COD'))
+    .isFloat({ min: 1 })
+    .withMessage('COD orders require a valid deposit amount'),
+  body('depositPaymentMethod')
+    .if(body('paymentMethod').equals('COD'))
+    .isIn(['WALLET', 'PAYOS', 'BANK_TRANSFER'])
+    .withMessage('COD orders require a valid deposit payment method')
 ];
 router.post('/create-paid', createPaidOrderValidation, RentalOrderController.createPaidOrder);
 
@@ -331,6 +346,43 @@ router.put(
     validateRequest
   ],
   RentalOrderController.updateSubOrderShipping
+);
+
+/**
+ * Lấy availability calendar cho product từ SubOrder data
+ * GET /api/rental-orders/products/:productId/availability-calendar
+ */
+router.get(
+  '/products/:productId/availability-calendar',
+  [
+    param('productId').isMongoId().withMessage('ID sản phẩm không hợp lệ'),
+    query('startDate').isISO8601().withMessage('Ngày bắt đầu không hợp lệ'),
+    query('endDate').isISO8601().withMessage('Ngày kết thúc không hợp lệ'),
+    validateRequest
+  ],
+  RentalOrderController.getProductAvailabilityCalendar
+);
+
+/**
+ * Handle PayOS payment callbacks
+ * GET /api/rental-orders/payment-success
+ * GET /api/rental-orders/payment-cancel
+ */
+router.get('/payment-success', RentalOrderController.handlePaymentSuccess);
+router.get('/payment-cancel', RentalOrderController.handlePaymentCancel);
+
+/**
+ * Verify PayOS payment for rental order
+ * POST /api/rental-orders/:masterOrderId/verify-payment
+ */
+router.post(
+  '/:masterOrderId/verify-payment',
+  [
+    param('masterOrderId').isMongoId().withMessage('Invalid master order ID'),
+    body('orderCode').notEmpty().withMessage('Order code is required'),
+    validateRequest
+  ],
+  RentalOrderController.verifyPayOSPayment
 );
 
 // Register routes

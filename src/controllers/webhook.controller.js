@@ -2,6 +2,7 @@ const Transaction = require('../models/Transaction');
 const Wallet = require('../models/Wallet');
 const User = require('../models/User');
 const productPromotionService = require('../services/productPromotion.service');
+const RentalOrderService = require('../services/rentalOrder.service');
 
 const webhookController = {
   // Simple webhook handler - just update transaction and wallet
@@ -69,25 +70,81 @@ const webhookController = {
         return res.status(200).json({ message: 'Already processed' });
       }
 
+      // Check if this is a rental order payment
+      const isRentalOrderPayment =
+        transaction.type === 'order_payment' && transaction.metadata?.orderType === 'rental_order';
+
+      console.log('🔍 Transaction type check:', {
+        type: transaction.type,
+        orderType: transaction.metadata?.orderType,
+        isRentalOrderPayment,
+        masterOrderId: transaction.metadata?.masterOrderId
+      });
+
       if (isSuccess) {
         // Update transaction to success
         await Transaction.findByIdAndUpdate(transaction._id, {
           status: 'success',
           processedAt: new Date()
         });
+        console.log('✅ Transaction updated to success');
 
-        // Update wallet balance
-        const wallet = await Wallet.findById(transaction.wallet);
-        if (wallet) {
-          wallet.balance.available += transaction.amount;
-          await wallet.save();
+        if (isRentalOrderPayment) {
+          // Handle rental order payment confirmation
+          console.log('🏠 Processing rental order payment:', {
+            masterOrderId: transaction.metadata.masterOrderId,
+            orderCode
+          });
+
+          try {
+            const result = await RentalOrderService.verifyAndCompletePayOSPayment(
+              transaction.metadata.masterOrderId,
+              orderCode
+            );
+
+            console.log('✅ Rental order payment confirmed:', result.message);
+
+            // Emit socket notification to user
+            if (global.chatGateway) {
+              global.chatGateway.emitToUser(
+                transaction.user.toString(),
+                'rental-payment-confirmed',
+                {
+                  masterOrderId: transaction.metadata.masterOrderId,
+                  orderNumber: transaction.metadata.orderNumber,
+                  message: 'Thanh toán đơn hàng thành công'
+                }
+              );
+            }
+
+            return res.status(200).json({
+              message: 'Rental order payment processed successfully',
+              orderCode,
+              masterOrderId: transaction.metadata.masterOrderId
+            });
+          } catch (error) {
+            console.error('❌ Error confirming rental order payment:', error);
+            // Still return 200 to PayOS to avoid retry
+            return res.status(200).json({
+              message: 'Payment received but order confirmation failed',
+              orderCode,
+              error: error.message
+            });
+          }
+        } else {
+          // Regular wallet top-up
+          const wallet = await Wallet.findById(transaction.wallet);
+          if (wallet) {
+            wallet.balance.available += transaction.amount;
+            await wallet.save();
+          }
+
+          return res.status(200).json({
+            message: 'Payment processed successfully',
+            orderCode,
+            amount: transaction.amount
+          });
         }
-
-        return res.status(200).json({
-          message: 'Payment processed successfully',
-          orderCode,
-          amount: transaction.amount
-        });
       } else {
         // Payment failed
         await Transaction.findByIdAndUpdate(transaction._id, {

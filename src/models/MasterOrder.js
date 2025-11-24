@@ -90,6 +90,7 @@ const masterOrderSchema = new mongoose.Schema(
       enum: [
         'DRAFT', // Đơn tạm
         'PENDING_PAYMENT', // Chờ thanh toán
+        'AWAITING_PAYMENT', // Đang chờ user hoàn tất thanh toán PayOS
         'PAYMENT_COMPLETED', // Đã thanh toán
         'PENDING_CONFIRMATION', // Chờ xác nhận từ chủ
         'READY_FOR_CONTRACT', // Sẵn sàng ký hợp đồng
@@ -123,6 +124,13 @@ const masterOrderSchema = new mongoose.Schema(
     },
 
     notes: String,
+
+    // 🕐 Owner confirmation deadline for paid orders
+    ownerConfirmationDeadline: {
+      type: Date,
+      default: null,
+      index: true // For efficient queries of expired orders
+    },
 
     // Thông tin hủy đơn
     cancellation: {
