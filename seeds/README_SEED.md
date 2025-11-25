@@ -1,4 +1,146 @@
-# Owner Products Seed Data
+# PIRA Seed Data
+
+## Overview
+
+This directory contains seed scripts for testing various features of the PIRA rental system.
+
+## Available Seed Scripts
+
+### 1. Owner Products with Rental Scenarios
+
+**File**: `seed-owner-products.js`
+
+Creates test products with different rental states to test hide/delete validation logic.
+
+```powershell
+node seeds/seed-owner-products.js
+```
+
+---
+
+### 2. Early Return Feature - Comprehensive Test Scenarios
+
+**File**: `seed-early-return-scenarios.js`
+
+Creates complete test data for the early return feature with all possible scenarios.
+
+```powershell
+node seeds/seed-early-return-scenarios.js
+```
+
+#### Test Users Created
+
+- **Renter**: `renter@pira.vn` / `Renter@123`
+- **Owner**: `owner@pira.vn` / `Owner@123`
+- Both have active wallets with 50,000,000 VND for testing
+
+#### Test Scenarios
+
+1. **PICKUP Order - Valid for Early Return** ✅
+   - Active order with proper dates
+   - Can create early return request
+2. **DELIVERY Order - Valid with Shipment** ✅
+   - Active order with delivery shipments
+   - Can create early return request
+   - Updates existing return shipment
+3. **Order Ending Tomorrow - INVALID** ❌
+   - Ends within 24 hours
+   - Cannot request early return
+4. **Order with Pending Early Return Request** ⏳
+   - Already has pending request
+   - Owner can confirm/reject
+5. **Overdue Order - INVALID** ❌
+   - End date passed
+   - Cannot request early return
+6. **Confirmed Early Return - Awaiting Auto-Completion** ⏱️
+   - Owner confirmed return
+   - Deposit refunded
+   - Will auto-complete after 24h
+7. **Cancelled Early Return** 🚫
+   - Renter cancelled their request
+   - Order continues normally
+8. **DELIVERY - Can Change Return Address** ✅
+   - Active DELIVERY order
+   - Can request early return with new address
+   - System updates return shipment
+
+#### API Endpoints to Test
+
+```http
+# Create early return request
+POST /api/early-returns
+{
+  "subOrderId": "SO-XXX",
+  "requestedReturnDate": "2025-11-30",
+  "returnAddress": { ... },
+  "notes": "Need to return early"
+}
+
+# Get renter's requests
+GET /api/early-returns/renter?status=PENDING
+
+# Get owner's requests
+GET /api/early-returns/owner?status=PENDING
+
+# Owner confirms return
+POST /api/early-returns/:id/confirm
+{
+  "productCondition": "EXCELLENT",
+  "notes": "Good condition"
+}
+
+# Renter cancels request
+POST /api/early-returns/:id/cancel
+{
+  "reason": "Changed my mind"
+}
+
+# Owner creates review (after confirmation)
+POST /api/early-returns/:id/review
+{
+  "rating": 5,
+  "comment": "Great renter!",
+  "detailedRatings": { ... }
+}
+```
+
+#### Testing Guide
+
+**Valid Scenarios** (should succeed):
+
+- ✅ Create request for Scenario 1 (PICKUP)
+- ✅ Create request for Scenario 2 (DELIVERY)
+- ✅ Create request for Scenario 8 (DELIVERY with address change)
+
+**Invalid Scenarios** (should fail with proper error):
+
+- ❌ Scenario 3: "Cannot request early return - order ends within 24 hours"
+- ❌ Scenario 4: "Early return request already exists for this order"
+- ❌ Scenario 5: "Cannot request early return for overdue order"
+
+**Owner Actions**:
+
+- 📋 View pending requests (Scenario 4)
+- ✅ Confirm request → triggers deposit refund
+- ❌ Reject request with reason
+- ⭐ Create review after confirmation
+
+**Auto-Completion**:
+
+- ⏰ Run cron job manually or wait 1 hour
+- ✅ Order status changes to COMPLETED
+- 🔔 Notifications sent to both parties
+
+#### Socket.IO Events to Test
+
+- `early-return-request` - Owner receives notification
+- `return-confirmed` - Renter receives notification
+- `return-auto-completed` - Renter receives notification
+- `wallet-updated` - Both parties for deposit refund
+
+---
+
+## Original: Owner Products Seed Data
 
 ## Overview
 

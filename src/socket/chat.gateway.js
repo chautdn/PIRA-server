@@ -269,6 +269,18 @@ class ChatGateway {
     }
   }
 
+  // Emit custom event to specific user (generic method)
+  emitToUser(userId, eventName, data) {
+    try {
+      this.io.to(`user:${userId}`).emit(eventName, {
+        ...data,
+        timestamp: new Date().toISOString()
+      });
+    } catch (error) {
+      console.error(`Error emitting ${eventName} to user ${userId}:`, error);
+    }
+  }
+
   // WALLET REAL-TIME UPDATES - NEW METHODS
 
   // Emit wallet balance update to user
