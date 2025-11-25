@@ -269,7 +269,7 @@ class RentalOrderService {
       if (paymentResult.status === 'SUCCESS' || paymentResult.status === 'PARTIALLY_PAID') {
         await SubOrder.updateMany(
           { masterOrder: draftOrder._id },
-          { status: 'PENDING_OWNER_CONFIRMATION' }
+          { status: 'PENDING_CONFIRMATION' }
         );
 
         // Set owner confirmation deadline (24h for paid orders)
@@ -277,7 +277,7 @@ class RentalOrderService {
         draftOrder.ownerConfirmationDeadline = expireTime;
         await draftOrder.save();
 
-        console.log('✅ Order confirmed and SubOrders updated to PENDING_OWNER_CONFIRMATION');
+        console.log('✅ Order confirmed and SubOrders updated to PENDING_CONFIRMATION');
       } else {
         // PENDING payment: SubOrders remain in initial status
         console.log('⏳ Order created but awaiting payment completion');
@@ -728,7 +728,7 @@ class RentalOrderService {
     // Cập nhật tất cả SubOrder
     await SubOrder.updateMany(
       { masterOrder: masterOrderId },
-      { status: 'PENDING_OWNER_CONFIRMATION' }
+      { status: 'PENDING_CONFIRMATION' }
     );
 
     await masterOrder.save();
@@ -746,7 +746,7 @@ class RentalOrderService {
     const subOrder = await SubOrder.findOne({
       _id: subOrderId,
       owner: ownerId,
-      status: 'PENDING_OWNER_CONFIRMATION'
+      status: 'PENDING_CONFIRMATION'
     }).populate('masterOrder');
 
     if (!subOrder) {
@@ -2268,10 +2268,10 @@ class RentalOrderService {
 
       await masterOrder.save();
 
-      // Update SubOrders to PENDING_OWNER_CONFIRMATION
+      // Update SubOrders to PENDING_CONFIRMATION
       await SubOrder.updateMany(
         { masterOrder: masterOrderId },
-        { status: 'PENDING_OWNER_CONFIRMATION' }
+        { status: 'PENDING_CONFIRMATION' }
       );
 
       // Set owner confirmation deadline (24h)
@@ -2420,7 +2420,7 @@ class RentalOrderService {
       const subOrder = await SubOrder.findOne({
         _id: subOrderId,
         owner: ownerId,
-        status: 'PENDING_OWNER_CONFIRMATION'
+        status: 'PENDING_CONFIRMATION'
       })
         .populate('masterOrder')
         .populate('products.product')
@@ -2978,7 +2978,7 @@ class RentalOrderService {
       for (const masterOrder of expiredOrders) {
         const subOrders = await SubOrder.find({
           masterOrder: masterOrder._id,
-          status: 'PENDING_OWNER_CONFIRMATION'
+          status: 'PENDING_CONFIRMATION'
         }).session(session);
 
         for (const subOrder of subOrders) {

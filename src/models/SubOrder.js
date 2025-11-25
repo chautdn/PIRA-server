@@ -220,7 +220,7 @@ const subOrderSchema = new mongoose.Schema(
       type: String,
       enum: [
         'DRAFT',
-        'PENDING_OWNER_CONFIRMATION',
+        'PENDING_CONFIRMATION',
         'OWNER_CONFIRMED',
         'OWNER_REJECTED',
         'PARTIALLY_CONFIRMED', // Một phần sản phẩm được xác nhận

@@ -1078,7 +1078,7 @@ class RentalOrderController {
       // Tìm các SubOrder đang chờ xác nhận của owner này
       const subOrders = await SubOrder.find({
         owner: ownerId,
-        status: 'PENDING_OWNER_CONFIRMATION'
+        status: 'PENDING_CONFIRMATION'
       })
         .populate('masterOrder', 'masterOrderNumber deliveryAddress ownerConfirmationDeadline')
         .populate({
@@ -1092,7 +1092,7 @@ class RentalOrderController {
 
       const total = await SubOrder.countDocuments({
         owner: ownerId,
-        status: 'PENDING_OWNER_CONFIRMATION'
+        status: 'PENDING_CONFIRMATION'
       });
 
       return new SuccessResponse({
