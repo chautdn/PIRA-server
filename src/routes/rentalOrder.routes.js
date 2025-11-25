@@ -219,7 +219,6 @@ router.get(
 // GET /api/rental-orders/owner-active-rentals - Lấy danh sách sản phẩm đang được thuê
 router.get(
   '/owner-active-rentals',
-  authMiddleware,
   [
     query('page').optional().isInt({ min: 1 }).withMessage('Trang không hợp lệ'),
     query('limit').optional().isInt({ min: 1, max: 100 }).withMessage('Giới hạn không hợp lệ'),
