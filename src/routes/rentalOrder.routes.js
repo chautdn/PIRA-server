@@ -150,6 +150,16 @@ router.post(
 );
 
 /**
+ * Lấy chi tiết hợp đồng
+ * GET /api/rental-orders/contracts/:contractId
+ */
+router.get(
+  '/contracts/:contractId',
+  [param('contractId').isMongoId().withMessage('ID hợp đồng không hợp lệ'), validateRequest],
+  RentalOrderController.getContractDetail
+);
+
+/**
  * Bước 6: Ký hợp đồng
  * POST /api/rental-orders/contracts/:contractId/sign
  */
@@ -383,6 +393,76 @@ router.post(
     validateRequest
   ],
   RentalOrderController.verifyPayOSPayment
+);
+
+// ============================================================================
+// PARTIAL CONFIRMATION ROUTES (XÁC NHẬN MỘT PHẦN)
+// ============================================================================
+
+/**
+ * Owner xác nhận một phần sản phẩm trong SubOrder
+ * POST /api/rental-orders/suborders/:subOrderId/partial-confirm
+ * Body: { confirmedProductIds: ['productItemId1', 'productItemId2', ...] }
+ */
+router.post(
+  '/suborders/:subOrderId/partial-confirm',
+  [
+    param('subOrderId').isMongoId().withMessage('ID SubOrder không hợp lệ'),
+    body('confirmedProductIds')
+      .isArray({ min: 1 })
+      .withMessage('Phải chọn ít nhất 1 sản phẩm để xác nhận'),
+    body('confirmedProductIds.*').isString().withMessage('ID sản phẩm không hợp lệ'),
+    validateRequest
+  ],
+  RentalOrderController.partialConfirmSubOrder
+);
+
+/**
+ * Lấy danh sách SubOrder cần xác nhận của owner
+ * GET /api/rental-orders/owner/pending-confirmation
+ */
+router.get(
+  '/owner/pending-confirmation',
+  [
+    query('page').optional().isInt({ min: 1 }).withMessage('Trang không hợp lệ'),
+    query('limit').optional().isInt({ min: 1, max: 50 }).withMessage('Giới hạn không hợp lệ'),
+    validateRequest
+  ],
+  RentalOrderController.getOwnerPendingConfirmation
+);
+
+/**
+ * Lấy chi tiết SubOrder để owner xác nhận
+ * GET /api/rental-orders/suborders/:subOrderId/for-confirmation
+ */
+router.get(
+  '/suborders/:subOrderId/for-confirmation',
+  [param('subOrderId').isMongoId().withMessage('ID SubOrder không hợp lệ'), validateRequest],
+  RentalOrderController.getSubOrderForConfirmation
+);
+
+/**
+ * Lấy tổng quan confirmation của MasterOrder (cho renter)
+ * GET /api/rental-orders/:masterOrderId/confirmation-summary
+ */
+router.get(
+  '/:masterOrderId/confirmation-summary',
+  [param('masterOrderId').isMongoId().withMessage('ID MasterOrder không hợp lệ'), validateRequest],
+  RentalOrderController.getConfirmationSummary
+);
+
+/**
+ * Renter từ chối SubOrder đã được partial confirm
+ * POST /api/rental-orders/suborders/:subOrderId/renter-reject
+ */
+router.post(
+  '/suborders/:subOrderId/renter-reject',
+  [
+    param('subOrderId').isMongoId().withMessage('ID SubOrder không hợp lệ'),
+    body('reason').optional().isString().withMessage('Lý do phải là chuỗi ký tự'),
+    validateRequest
+  ],
+  RentalOrderController.renterRejectSubOrder
 );
 
 // Register routes

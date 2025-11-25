@@ -894,29 +894,45 @@ class RentalOrderService {
       throw new Error('Không có quyền ký hợp đồng này');
     }
 
+    // Kiểm tra luồng ký đúng: Owner phải ký trước
+    if (isRenter && !contract.signatures.owner.signed) {
+      throw new Error('Chủ đồ phải ký hợp đồng trước');
+    }
+
+    // Kiểm tra đã ký chưa
+    if (isOwner && contract.signatures.owner.signed) {
+      throw new Error('Bạn đã ký hợp đồng này rồi');
+    }
+    if (isRenter && contract.signatures.renter.signed) {
+      throw new Error('Bạn đã ký hợp đồng này rồi');
+    }
+
     // Cập nhật chữ ký
     if (isOwner) {
       contract.signatures.owner = {
+        signed: true,
         signedAt: new Date(),
-        signatureData,
+        signature: signatureData.signature,
         ipAddress: signatureData.ipAddress,
         userAgent: signatureData.userAgent
       };
+      // Owner ký xong → chuyển sang PENDING_RENTER
+      contract.status = 'PENDING_RENTER';
+      console.log('✅ Owner đã ký hợp đồng, chuyển sang PENDING_RENTER');
     }
 
     if (isRenter) {
       contract.signatures.renter = {
+        signed: true,
         signedAt: new Date(),
-        signatureData,
+        signature: signatureData.signature,
         ipAddress: signatureData.ipAddress,
         userAgent: signatureData.userAgent
       };
-    }
-
-    // Kiểm tra nếu đã có đủ chữ ký
-    if (contract.signatures.owner.signedAt && contract.signatures.renter.signedAt) {
+      // Renter ký xong → Hoàn thành
       contract.status = 'SIGNED';
       contract.signedAt = new Date();
+      console.log('✅ Renter đã ký hợp đồng, hợp đồng hoàn tất');
 
       // Cập nhật SubOrder
       await SubOrder.findOneAndUpdate({ contract: contractId }, { status: 'CONTRACT_SIGNED' });
@@ -2469,6 +2485,757 @@ class RentalOrderService {
       totalQuantity: product.availability.quantity,
       calendar: calendar
     };
+  }
+
+  // ============================================================================
+  // XÁC NHẬN MỘT PHẦN SẢN PHẨM (PARTIAL CONFIRMATION)
+  // ============================================================================
+
+  /**
+   * Owner xác nhận một phần sản phẩm trong SubOrder
+   * - Những sản phẩm được chọn → CONFIRMED
+   * - Những sản phẩm KHÔNG được chọn → TỰ ĐỘNG REJECTED + hoàn tiền ngay lập tức
+   * - Chỉ tạo 1 hợp đồng cho các sản phẩm CONFIRMED
+   *
+   * @param {String} subOrderId - ID của SubOrder
+   * @param {String} ownerId - ID của owner
+   * @param {Array} confirmedProductIds - Mảng _id của các product item được xác nhận
+   * @returns {Object} SubOrder đã được cập nhật
+   */
+  async partialConfirmSubOrder(subOrderId, ownerId, confirmedProductIds) {
+    const session = await mongoose.startSession();
+    session.startTransaction();
+
+    try {
+      // 1. Lấy SubOrder và kiểm tra quyền
+      const subOrder = await SubOrder.findOne({
+        _id: subOrderId,
+        owner: ownerId,
+        status: 'PENDING_OWNER_CONFIRMATION'
+      })
+        .populate('masterOrder')
+        .populate('products.product')
+        .session(session);
+
+      if (!subOrder) {
+        throw new Error('Không tìm thấy đơn hàng hoặc không có quyền xác nhận');
+      }
+
+      const masterOrder = await MasterOrder.findById(subOrder.masterOrder._id).session(session);
+      if (!masterOrder) {
+        throw new Error('Không tìm thấy MasterOrder');
+      }
+
+      // 2. Kiểm tra xem có ít nhất 1 sản phẩm được xác nhận
+      if (!confirmedProductIds || confirmedProductIds.length === 0) {
+        throw new Error('Phải xác nhận ít nhất 1 sản phẩm');
+      }
+
+      // Chuyển sang Set để tìm kiếm nhanh
+      const confirmedSet = new Set(confirmedProductIds.map((id) => id.toString()));
+
+      let totalConfirmed = 0;
+      let totalRejected = 0;
+      let rejectedAmount = 0;
+      const now = new Date();
+
+      // 3. Duyệt qua từng sản phẩm và cập nhật trạng thái
+      for (const productItem of subOrder.products) {
+        const productIdStr = productItem._id.toString();
+
+        if (confirmedSet.has(productIdStr)) {
+          // Sản phẩm được chọn → CONFIRMED
+          productItem.confirmationStatus = 'CONFIRMED';
+          productItem.confirmedAt = now;
+          totalConfirmed++;
+        } else {
+          // Sản phẩm KHÔNG được chọn → TỰ ĐỘNG REJECTED
+          productItem.confirmationStatus = 'REJECTED';
+          productItem.rejectedAt = now;
+          productItem.rejectionReason = 'Chủ đồ chỉ xác nhận một phần đơn hàng';
+          totalRejected++;
+
+          // Tính số tiền cần hoàn
+          const rentalAmount = productItem.totalRental || 0;
+          const depositAmount = productItem.totalDeposit || 0;
+          const shippingAmount = productItem.totalShippingFee || 0;
+          rejectedAmount += rentalAmount + depositAmount + shippingAmount;
+        }
+      }
+
+      // 4. Cập nhật trạng thái SubOrder
+      if (totalConfirmed > 0 && totalRejected > 0) {
+        subOrder.status = 'PARTIALLY_CONFIRMED';
+      } else if (totalConfirmed === subOrder.products.length) {
+        subOrder.status = 'OWNER_CONFIRMED';
+      } else if (totalRejected === subOrder.products.length) {
+        subOrder.status = 'OWNER_REJECTED';
+      }
+
+      subOrder.ownerConfirmation = {
+        status: totalConfirmed > 0 ? 'CONFIRMED' : 'REJECTED',
+        confirmedAt: now,
+        notes: `Đã xác nhận ${totalConfirmed}/${subOrder.products.length} sản phẩm`
+      };
+
+      await subOrder.save({ session });
+
+      // 5. Hoàn tiền cho các sản phẩm bị rejected
+      if (rejectedAmount > 0) {
+        await this.refundRejectedProducts(
+          masterOrder,
+          subOrder,
+          rejectedAmount,
+          `Chủ đồ chỉ xác nhận ${totalConfirmed}/${subOrder.products.length} sản phẩm`,
+          session
+        );
+      }
+
+      // 6. Cập nhật confirmationSummary của MasterOrder
+      await this.updateMasterOrderConfirmationSummary(masterOrder._id, session);
+
+      // 7. Kiểm tra và cập nhật trạng thái tổng thể của MasterOrder
+      await this.updateMasterOrderStatus(masterOrder._id, session);
+
+      // 8. Gửi thông báo cho renter
+      await this.sendPartialConfirmationNotification(
+        masterOrder,
+        subOrder,
+        totalConfirmed,
+        totalRejected
+      );
+
+      // 9. Nếu có sản phẩm CONFIRMED → tạo hợp đồng cho SubOrder này
+      if (totalConfirmed > 0) {
+        // Chuyển SubOrder sang READY_FOR_CONTRACT
+        subOrder.status = 'READY_FOR_CONTRACT';
+        subOrder.contractStatus = {
+          status: 'PENDING',
+          createdAt: now
+        };
+        await subOrder.save({ session });
+
+        // Tạo hợp đồng chỉ cho các sản phẩm CONFIRMED
+        await this.generatePartialContract(subOrder._id, session);
+      }
+
+      await session.commitTransaction();
+      session.endSession();
+
+      // Trả về SubOrder đã được populate
+      return await SubOrder.findById(subOrderId)
+        .populate('masterOrder')
+        .populate('products.product')
+        .populate('owner', 'profile.fullName profile.phone email');
+    } catch (error) {
+      await session.abortTransaction();
+      session.endSession();
+      console.error('❌ Error in partialConfirmSubOrder:', error);
+      throw new Error('Không thể xác nhận đơn hàng: ' + error.message);
+    }
+  }
+
+  /**
+   * Hoàn tiền cho các sản phẩm bị rejected
+   */
+  async refundRejectedProducts(masterOrder, subOrder, refundAmount, reason, session) {
+    try {
+      const renter = masterOrder.renter;
+
+      // Lấy wallet của renter
+      const wallet = await Wallet.findOne({ user: renter }).session(session);
+      if (!wallet) {
+        throw new Error('Không tìm thấy ví của người thuê');
+      }
+
+      // Cộng tiền vào available balance
+      wallet.balance.available += refundAmount;
+      await wallet.save({ session });
+
+      // Tạo transaction record
+      const transaction = new Transaction({
+        user: renter,
+        wallet: wallet._id,
+        type: 'refund',
+        amount: refundAmount,
+        status: 'success',
+        description: `Hoàn tiền cho đơn hàng ${subOrder.subOrderNumber}: ${reason}`,
+        reference: subOrder.subOrderNumber,
+        paymentMethod: 'wallet',
+        metadata: {
+          masterOrderId: masterOrder._id,
+          subOrderId: subOrder._id,
+          reason: reason,
+          refundType: 'partial_rejection'
+        },
+        processedAt: new Date()
+      });
+      await transaction.save({ session });
+
+      // Cập nhật tổng số tiền đã hoàn trong MasterOrder
+      if (!masterOrder.confirmationSummary) {
+        masterOrder.confirmationSummary = {};
+      }
+      masterOrder.confirmationSummary.totalRefundedAmount =
+        (masterOrder.confirmationSummary.totalRefundedAmount || 0) + refundAmount;
+      await masterOrder.save({ session });
+
+      console.log(`✅ Đã hoàn ${refundAmount} VND cho người thuê ${renter}`);
+    } catch (error) {
+      console.error('❌ Error refunding rejected products:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Cập nhật tổng hợp trạng thái xác nhận của MasterOrder
+   */
+  async updateMasterOrderConfirmationSummary(masterOrderId, session) {
+    try {
+      const masterOrder = await MasterOrder.findById(masterOrderId).session(session);
+      const subOrders = await SubOrder.find({ masterOrder: masterOrderId }).session(session);
+
+      let totalProducts = 0;
+      let confirmedProducts = 0;
+      let rejectedProducts = 0;
+      let pendingProducts = 0;
+      let totalConfirmedAmount = 0;
+      let totalRejectedAmount = 0;
+
+      for (const subOrder of subOrders) {
+        for (const productItem of subOrder.products) {
+          totalProducts++;
+          const itemAmount = (productItem.totalRental || 0) + (productItem.totalDeposit || 0);
+
+          if (productItem.confirmationStatus === 'CONFIRMED') {
+            confirmedProducts++;
+            totalConfirmedAmount += itemAmount;
+          } else if (productItem.confirmationStatus === 'REJECTED') {
+            rejectedProducts++;
+            totalRejectedAmount += itemAmount;
+          } else {
+            pendingProducts++;
+          }
+        }
+      }
+
+      masterOrder.confirmationSummary = {
+        totalProducts,
+        confirmedProducts,
+        rejectedProducts,
+        pendingProducts,
+        totalConfirmedAmount,
+        totalRejectedAmount,
+        totalRefundedAmount: masterOrder.confirmationSummary?.totalRefundedAmount || 0
+      };
+
+      await masterOrder.save({ session });
+    } catch (error) {
+      console.error('❌ Error updating confirmation summary:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Cập nhật trạng thái tổng thể của MasterOrder dựa trên confirmationSummary
+   */
+  async updateMasterOrderStatus(masterOrderId, session) {
+    try {
+      const masterOrder = await MasterOrder.findById(masterOrderId).session(session);
+      const summary = masterOrder.confirmationSummary;
+
+      if (!summary) return;
+
+      // Nếu tất cả sản phẩm đều CONFIRMED
+      if (summary.confirmedProducts === summary.totalProducts) {
+        masterOrder.status = 'CONFIRMED';
+      }
+      // Nếu có ít nhất 1 sản phẩm REJECTED
+      else if (summary.rejectedProducts > 0 && summary.confirmedProducts > 0) {
+        masterOrder.status = 'PARTIALLY_CANCELLED';
+      }
+      // Nếu tất cả sản phẩm đều bị REJECTED
+      else if (summary.rejectedProducts === summary.totalProducts) {
+        masterOrder.status = 'CANCELLED';
+      }
+      // Còn lại: vẫn còn sản phẩm PENDING
+      else if (summary.pendingProducts > 0) {
+        masterOrder.status = 'PENDING_CONFIRMATION';
+      }
+
+      await masterOrder.save({ session });
+    } catch (error) {
+      console.error('❌ Error updating master order status:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Gửi thông báo cho renter về việc xác nhận một phần
+   */
+  async sendPartialConfirmationNotification(masterOrder, subOrder, confirmedCount, rejectedCount) {
+    try {
+      const Notification = require('../models/Notification');
+
+      const totalCount = confirmedCount + rejectedCount;
+      let message = '';
+      let category = 'INFO';
+
+      if (confirmedCount > 0 && rejectedCount > 0) {
+        message = `Chủ đồ đã xác nhận ${confirmedCount}/${totalCount} sản phẩm trong đơn hàng ${subOrder.subOrderNumber}. Các sản phẩm còn lại đã được tự động hủy và hoàn tiền.`;
+        category = 'WARNING';
+      } else if (confirmedCount === totalCount) {
+        message = `Chủ đồ đã xác nhận tất cả ${confirmedCount} sản phẩm trong đơn hàng ${subOrder.subOrderNumber}.`;
+        category = 'SUCCESS';
+      } else {
+        message = `Chủ đồ đã từ chối đơn hàng ${subOrder.subOrderNumber}. Toàn bộ tiền đã được hoàn lại.`;
+        category = 'ERROR';
+      }
+
+      await Notification.create({
+        recipient: masterOrder.renter,
+        title: 'Cập nhật xác nhận đơn hàng',
+        message: message,
+        type: 'ORDER',
+        category: category,
+        relatedOrder: masterOrder._id,
+        status: 'PENDING',
+        data: {
+          subOrderId: subOrder._id,
+          confirmedCount,
+          rejectedCount,
+          totalCount
+        }
+      });
+
+      console.log('✅ Đã gửi thông báo xác nhận một phần cho renter');
+    } catch (error) {
+      console.error('❌ Error sending partial confirmation notification:', error);
+      // Không throw error vì notification không phải critical
+    }
+  }
+
+  /**
+   * Tạo hợp đồng chỉ cho các sản phẩm đã CONFIRMED trong SubOrder
+   */
+  async generatePartialContract(subOrderId, session = null) {
+    try {
+      const subOrder = await SubOrder.findById(subOrderId)
+        .populate('masterOrder')
+        .populate('owner', 'profile email phone')
+        .populate('products.product')
+        .session(session);
+
+      if (!subOrder) {
+        throw new Error('Không tìm thấy SubOrder');
+      }
+
+      // Lọc ra chỉ các sản phẩm CONFIRMED
+      const confirmedProducts = subOrder.products.filter(
+        (item) => item.confirmationStatus === 'CONFIRMED'
+      );
+
+      if (confirmedProducts.length === 0) {
+        throw new Error('Không có sản phẩm nào được xác nhận để tạo hợp đồng');
+      }
+
+      const masterOrder = subOrder.masterOrder;
+      const renter = await User.findById(masterOrder.renter).session(session);
+
+      // Tạo contractNumber
+      const contractNumber = `CT${Date.now()}${Math.random().toString(36).substr(2, 5).toUpperCase()}`;
+
+      // Tính tổng giá trị hợp đồng (chỉ cho các sản phẩm CONFIRMED)
+      let totalRental = 0;
+      let totalDeposit = 0;
+      let totalShipping = 0;
+
+      for (const item of confirmedProducts) {
+        totalRental += item.totalRental || 0;
+        totalDeposit += item.totalDeposit || 0;
+        totalShipping += item.totalShippingFee || 0;
+      }
+
+      const totalAmount = totalRental + totalDeposit + totalShipping;
+
+      // Tạo HTML content cho hợp đồng
+      const htmlContent = this.generateContractHTML(
+        contractNumber,
+        subOrder,
+        renter,
+        confirmedProducts,
+        totalRental,
+        totalDeposit,
+        totalShipping,
+        totalAmount
+      );
+
+      // Tạo Contract document
+      const contract = new Contract({
+        contractNumber,
+        subOrder: subOrder._id,
+        masterOrder: masterOrder._id,
+        owner: subOrder.owner._id,
+        renter: masterOrder.renter,
+        product: confirmedProducts[0].product._id, // Sản phẩm đầu tiên (có thể cải thiện)
+        terms: {
+          startDate: confirmedProducts[0].rentalPeriod.startDate,
+          endDate: confirmedProducts[0].rentalPeriod.endDate,
+          rentalRate: totalRental,
+          deposit: totalDeposit,
+          totalAmount: totalAmount,
+          lateReturnPenalty: 0,
+          damagePenalty: 0
+        },
+        status: 'PENDING_OWNER', // Owner phải ký trước
+        content: {
+          htmlContent: htmlContent,
+          pdfUrl: null,
+          templateVersion: '1.0'
+        },
+        verification: {
+          ownerIdVerified: false,
+          renterIdVerified: false,
+          timestamp: new Date()
+        }
+      });
+
+      if (session) {
+        await contract.save({ session });
+      } else {
+        await contract.save();
+      }
+
+      // Cập nhật SubOrder với contract ID
+      subOrder.contract = contract._id;
+      subOrder.contractStatus.status = 'PENDING';
+      subOrder.contractStatus.createdAt = new Date();
+
+      if (session) {
+        await subOrder.save({ session });
+      } else {
+        await subOrder.save();
+      }
+
+      console.log(`✅ Đã tạo hợp đồng ${contractNumber} cho SubOrder ${subOrder.subOrderNumber}`);
+      return contract;
+    } catch (error) {
+      console.error('❌ Error generating partial contract:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Generate HTML content cho hợp đồng (chỉ chứa sản phẩm CONFIRMED)
+   */
+  generateContractHTML(
+    contractNumber,
+    subOrder,
+    renter,
+    confirmedProducts,
+    totalRental,
+    totalDeposit,
+    totalShipping,
+    totalAmount
+  ) {
+    const productListHTML = confirmedProducts
+      .map(
+        (item, index) => `
+      <tr>
+        <td>${index + 1}</td>
+        <td>${item.product?.title || item.product?.name || 'N/A'}</td>
+        <td>${item.quantity}</td>
+        <td>${new Date(item.rentalPeriod.startDate).toLocaleDateString('vi-VN')}</td>
+        <td>${new Date(item.rentalPeriod.endDate).toLocaleDateString('vi-VN')}</td>
+        <td>${(item.totalRental || 0).toLocaleString('vi-VN')} VND</td>
+        <td>${(item.totalDeposit || 0).toLocaleString('vi-VN')} VND</td>
+      </tr>
+    `
+      )
+      .join('');
+
+    return `
+      <!DOCTYPE html>
+      <html lang="vi">
+      <head>
+        <meta charset="UTF-8">
+        <title>Hợp đồng thuê ${contractNumber}</title>
+        <style>
+          body { font-family: 'Times New Roman', serif; padding: 40px; line-height: 1.6; }
+          h1 { text-align: center; color: #2c3e50; }
+          .info { margin: 20px 0; }
+          .info strong { display: inline-block; width: 200px; }
+          table { width: 100%; border-collapse: collapse; margin: 20px 0; }
+          th, td { border: 1px solid #ddd; padding: 12px; text-align: left; }
+          th { background-color: #3498db; color: white; }
+          .total { font-weight: bold; background-color: #ecf0f1; }
+          .note { background-color: #fff3cd; padding: 15px; border-left: 4px solid #ffc107; margin: 20px 0; }
+        </style>
+      </head>
+      <body>
+        <h1>HỢP ĐỒNG THUÊ ĐỒ</h1>
+        <p style="text-align: center; font-weight: bold;">Số: ${contractNumber}</p>
+        
+        <div class="info">
+          <p><strong>BÊN CHO THUÊ:</strong> ${subOrder.owner?.profile?.firstName || 'N/A'} ${subOrder.owner?.profile?.lastName || ''}</p>
+          <p><strong>Số điện thoại:</strong> ${subOrder.owner?.phone || 'N/A'}</p>
+          <p><strong>Email:</strong> ${subOrder.owner?.email || 'N/A'}</p>
+        </div>
+
+        <div class="info">
+          <p><strong>BÊN THUÊ:</strong> ${renter?.profile?.firstName || 'N/A'} ${renter?.profile?.lastName || ''}</p>
+          <p><strong>Số điện thoại:</strong> ${renter?.phone || 'N/A'}</p>
+          <p><strong>Email:</strong> ${renter?.email || 'N/A'}</p>
+        </div>
+
+        <div class="note">
+          <strong>Lưu ý quan trọng:</strong> 
+          <p>Chủ đồ đã xác nhận <strong>${confirmedProducts.length}</strong> sản phẩm trong đơn hàng này. 
+          Các sản phẩm còn lại đã được tự động hủy và hoàn tiền.</p>
+        </div>
+
+        <h3>DANH SÁCH SẢN PHẨM ĐÃ XÁC NHẬN</h3>
+        <table>
+          <thead>
+            <tr>
+              <th>STT</th>
+              <th>Tên sản phẩm</th>
+              <th>Số lượng</th>
+              <th>Ngày bắt đầu</th>
+              <th>Ngày kết thúc</th>
+              <th>Giá thuê</th>
+              <th>Tiền cọc</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${productListHTML}
+            <tr class="total">
+              <td colspan="5" style="text-align: right;">TỔNG CỘNG:</td>
+              <td>${totalRental.toLocaleString('vi-VN')} VND</td>
+              <td>${totalDeposit.toLocaleString('vi-VN')} VND</td>
+            </tr>
+            <tr class="total">
+              <td colspan="5" style="text-align: right;">Phí vận chuyển:</td>
+              <td colspan="2">${totalShipping.toLocaleString('vi-VN')} VND</td>
+            </tr>
+            <tr class="total">
+              <td colspan="5" style="text-align: right;"><strong>TỔNG THANH TOÁN:</strong></td>
+              <td colspan="2"><strong>${totalAmount.toLocaleString('vi-VN')} VND</strong></td>
+            </tr>
+          </tbody>
+        </table>
+
+        <h3>ĐIỀU KHOẢN HỢP ĐỒNG</h3>
+        <ol>
+          <li>Bên thuê cam kết sử dụng sản phẩm đúng mục đích và giữ gìn cẩn thận.</li>
+          <li>Tiền cọc sẽ được hoàn trả sau khi trả sản phẩm trong tình trạng tốt.</li>
+          <li>Nếu trả trễ, bên thuê phải chịu phí phạt theo quy định.</li>
+          <li>Nếu sản phẩm bị hư hỏng, bên thuê phải bồi thường theo giá trị thực tế.</li>
+        </ol>
+
+        <div style="margin-top: 50px; display: flex; justify-content: space-between;">
+          <div style="text-align: center;">
+            <p><strong>BÊN CHO THUÊ</strong></p>
+            <p>(Ký và ghi rõ họ tên)</p>
+          </div>
+          <div style="text-align: center;">
+            <p><strong>BÊN THUÊ</strong></p>
+            <p>(Ký và ghi rõ họ tên)</p>
+          </div>
+        </div>
+      </body>
+      </html>
+    `;
+  }
+
+  /**
+   * Cron job tự động reject các sản phẩm PENDING quá deadline
+   */
+  async autoRejectExpiredPendingProducts() {
+    const session = await mongoose.startSession();
+    session.startTransaction();
+
+    try {
+      const now = new Date();
+
+      // Tìm các MasterOrder đã quá deadline
+      const expiredOrders = await MasterOrder.find({
+        status: 'PENDING_CONFIRMATION',
+        ownerConfirmationDeadline: { $lt: now }
+      }).session(session);
+
+      console.log(`🕐 Tìm thấy ${expiredOrders.length} đơn hàng quá deadline`);
+
+      for (const masterOrder of expiredOrders) {
+        const subOrders = await SubOrder.find({
+          masterOrder: masterOrder._id,
+          status: 'PENDING_OWNER_CONFIRMATION'
+        }).session(session);
+
+        for (const subOrder of subOrders) {
+          let hasRejection = false;
+          let rejectedAmount = 0;
+
+          // Reject tất cả sản phẩm PENDING
+          for (const productItem of subOrder.products) {
+            if (productItem.confirmationStatus === 'PENDING') {
+              productItem.confirmationStatus = 'REJECTED';
+              productItem.rejectedAt = now;
+              productItem.rejectionReason = 'Quá thời hạn xác nhận';
+
+              const itemAmount =
+                (productItem.totalRental || 0) +
+                (productItem.totalDeposit || 0) +
+                (productItem.totalShippingFee || 0);
+              rejectedAmount += itemAmount;
+              hasRejection = true;
+            }
+          }
+
+          if (hasRejection) {
+            // Cập nhật trạng thái SubOrder
+            const confirmedCount = subOrder.products.filter(
+              (p) => p.confirmationStatus === 'CONFIRMED'
+            ).length;
+
+            if (confirmedCount > 0) {
+              subOrder.status = 'PARTIALLY_CONFIRMED';
+            } else {
+              subOrder.status = 'OWNER_REJECTED';
+            }
+
+            subOrder.ownerConfirmation = {
+              status: 'REJECTED',
+              rejectedAt: now,
+              rejectionReason: 'Quá thời hạn xác nhận'
+            };
+
+            await subOrder.save({ session });
+
+            // Hoàn tiền
+            if (rejectedAmount > 0) {
+              await this.refundRejectedProducts(
+                masterOrder,
+                subOrder,
+                rejectedAmount,
+                'Quá thời hạn xác nhận',
+                session
+              );
+            }
+          }
+        }
+
+        // Cập nhật MasterOrder
+        await this.updateMasterOrderConfirmationSummary(masterOrder._id, session);
+        await this.updateMasterOrderStatus(masterOrder._id, session);
+      }
+
+      await session.commitTransaction();
+      session.endSession();
+
+      console.log('✅ Đã tự động reject các sản phẩm quá deadline');
+    } catch (error) {
+      await session.abortTransaction();
+      session.endSession();
+      console.error('❌ Error in autoRejectExpiredPendingProducts:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Renter từ chối SubOrder đã được partial confirm
+   * - Hủy toàn bộ SubOrder
+   * - Hoàn tiền 100% (cả sản phẩm đã confirm)
+   * - Cập nhật MasterOrder status
+   */
+  async renterRejectSubOrder(subOrderId, renterId, reason) {
+    const session = await mongoose.startSession();
+    session.startTransaction();
+
+    try {
+      console.log('📦 Renter reject SubOrder:', {
+        subOrderId,
+        renterId,
+        reason
+      });
+
+      // Tìm SubOrder và validate
+      const subOrder = await SubOrder.findById(subOrderId).populate('masterOrder').session(session);
+
+      if (!subOrder) {
+        throw new Error('Không tìm thấy SubOrder');
+      }
+
+      // Kiểm tra quyền
+      if (subOrder.masterOrder.renter.toString() !== renterId) {
+        throw new Error('Bạn không có quyền hủy SubOrder này');
+      }
+
+      // Chỉ cho phép reject nếu status là PARTIALLY_CONFIRMED
+      if (subOrder.status !== 'PARTIALLY_CONFIRMED') {
+        throw new Error('Chỉ có thể từ chối SubOrder đã được xác nhận một phần');
+      }
+
+      // Tính tổng số tiền cần hoàn (bao gồm cả sản phẩm đã confirm)
+      const totalRefund =
+        (subOrder.pricing?.subtotalRental || 0) +
+        (subOrder.pricing?.subtotalDeposit || 0) +
+        (subOrder.pricing?.shippingFee || 0);
+
+      console.log('💰 Total refund amount:', totalRefund);
+
+      // Cập nhật trạng thái SubOrder
+      subOrder.status = 'RENTER_REJECTED';
+      subOrder.renterRejection = {
+        rejectedAt: new Date(),
+        reason: reason || 'Không đồng ý với số lượng sản phẩm đã xác nhận'
+      };
+
+      // Đánh dấu tất cả sản phẩm là REJECTED
+      for (const productItem of subOrder.products) {
+        if (productItem.confirmationStatus !== 'REJECTED') {
+          productItem.confirmationStatus = 'REJECTED';
+          productItem.rejectedAt = new Date();
+          productItem.rejectionReason = reason || 'Người thuê từ chối SubOrder';
+        }
+      }
+
+      await subOrder.save({ session });
+
+      // Hoàn tiền vào ví
+      if (totalRefund > 0) {
+        await this.refundRejectedProducts(
+          subOrder.masterOrder,
+          subOrder,
+          totalRefund,
+          reason || 'Người thuê từ chối SubOrder',
+          session
+        );
+      }
+
+      // Cập nhật MasterOrder
+      const masterOrder = subOrder.masterOrder;
+      await this.updateMasterOrderConfirmationSummary(masterOrder._id, session);
+      await this.updateMasterOrderStatus(masterOrder._id, session);
+
+      // Gửi thông báo cho owner
+      await this.sendPartialConfirmationNotification(subOrder, masterOrder, 'RENTER_REJECTED');
+
+      await session.commitTransaction();
+      session.endSession();
+
+      console.log('✅ Đã từ chối SubOrder và hoàn tiền thành công');
+
+      return {
+        subOrder,
+        refundAmount: totalRefund
+      };
+    } catch (error) {
+      await session.abortTransaction();
+      session.endSession();
+      console.error('❌ Error in renterRejectSubOrder:', error);
+      throw error;
+    }
   }
 }
 

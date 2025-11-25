@@ -12,7 +12,17 @@ const contractSchema = new mongoose.Schema(
     order: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'Order',
-      required: true
+      required: false // Made optional since we might use subOrder instead
+    },
+    subOrder: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'SubOrder',
+      required: false // For partial confirmation contracts
+    },
+    masterOrder: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'MasterOrder',
+      required: false // Reference to MasterOrder
     },
     owner: {
       type: mongoose.Schema.Types.ObjectId,
@@ -141,6 +151,8 @@ const contractSchema = new mongoose.Schema(
 // Indexes
 contractSchema.index({ contractNumber: 1 });
 contractSchema.index({ order: 1 });
+contractSchema.index({ subOrder: 1 });
+contractSchema.index({ masterOrder: 1 });
 contractSchema.index({ owner: 1, status: 1 });
 contractSchema.index({ renter: 1, status: 1 });
 contractSchema.index({ status: 1 });
