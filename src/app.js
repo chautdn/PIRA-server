@@ -30,6 +30,11 @@ const { startPromotionCronJob, runImmediately } = require('./scripts/promotionCr
 startPromotionCronJob();
 runImmediately(); // Run cleanup on startup
 
+// Initialize partial confirmation cron job
+const { startPartialConfirmationCron } = require('./scripts/partialConfirmationCron');
+startPartialConfirmationCron();
+console.log('✅ Partial confirmation cron job initialized');
+
 // Log Socket.IO events for monitoring
 io.engine.on('connection_error', (err) => {
   console.error('Socket.IO connection error:', err);

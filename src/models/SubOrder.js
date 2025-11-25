@@ -223,6 +223,9 @@ const subOrderSchema = new mongoose.Schema(
         'PENDING_OWNER_CONFIRMATION',
         'OWNER_CONFIRMED',
         'OWNER_REJECTED',
+        'PARTIALLY_CONFIRMED', // Một phần sản phẩm được xác nhận
+        'PARTIALLY_REJECTED', // Một phần sản phẩm bị từ chối
+        'RENTER_REJECTED', // Người thuê từ chối SubOrder đã partially confirmed
         'READY_FOR_CONTRACT',
         'CONTRACT_SIGNED',
         'PROCESSING',
@@ -249,10 +252,29 @@ const subOrderSchema = new mongoose.Schema(
       notes: String
     },
 
+    // Từ chối từ người thuê
+    renterRejection: {
+      rejectedAt: Date,
+      reason: String
+    },
+
     // Hợp đồng
     contract: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'Contract'
+    },
+
+    // Trạng thái hợp đồng
+    contractStatus: {
+      status: {
+        type: String,
+        enum: ['NOT_REQUIRED', 'PENDING', 'OWNER_SIGNED', 'RENTER_SIGNED', 'COMPLETED'],
+        default: 'NOT_REQUIRED'
+      },
+      createdAt: Date,
+      ownerSignedAt: Date,
+      renterSignedAt: Date,
+      completedAt: Date
     },
 
     // Ghi chú
