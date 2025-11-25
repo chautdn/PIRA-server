@@ -1302,7 +1302,6 @@ class RentalOrderController {
       return res.status(400).json({
         success: false,
         message: error.message || 'Không thể từ chối SubOrder'
->>>>>>> develop
       });
     }
   }
