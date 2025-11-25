@@ -73,6 +73,12 @@ const signContractValidation = [
 router.post('/create-draft', createDraftOrderValidation, RentalOrderController.createDraftOrder);
 
 /**
+ * Calculate deposit for current cart
+ * GET /api/rental-orders/calculate-deposit
+ */
+router.get('/calculate-deposit', RentalOrderController.calculateDeposit);
+
+/**
  * Bước 1b: Tạo đơn thuê với thanh toán (renter pays upfront)
  * POST /api/rental-orders/create-paid
  */
@@ -81,7 +87,16 @@ const createPaidOrderValidation = [
   body('paymentMethod')
     .isIn(['WALLET', 'BANK_TRANSFER', 'PAYOS', 'COD'])
     .withMessage('Phương thức thanh toán không hợp lệ'),
-  body('totalAmount').isFloat({ min: 0 }).withMessage('Tổng tiền không hợp lệ')
+  body('totalAmount').isFloat({ min: 0 }).withMessage('Tổng tiền không hợp lệ'),
+  // COD specific validation
+  body('depositAmount')
+    .if(body('paymentMethod').equals('COD'))
+    .isFloat({ min: 1 })
+    .withMessage('COD orders require a valid deposit amount'),
+  body('depositPaymentMethod')
+    .if(body('paymentMethod').equals('COD'))
+    .isIn(['WALLET', 'PAYOS', 'BANK_TRANSFER'])
+    .withMessage('COD orders require a valid deposit payment method')
 ];
 router.post('/create-paid', createPaidOrderValidation, RentalOrderController.createPaidOrder);
 
@@ -132,6 +147,16 @@ router.post(
   '/:masterOrderId/generate-contracts',
   [param('masterOrderId').isMongoId().withMessage('ID đơn hàng không hợp lệ'), validateRequest],
   RentalOrderController.generateContracts
+);
+
+/**
+ * Lấy chi tiết hợp đồng
+ * GET /api/rental-orders/contracts/:contractId
+ */
+router.get(
+  '/contracts/:contractId',
+  [param('contractId').isMongoId().withMessage('ID hợp đồng không hợp lệ'), validateRequest],
+  RentalOrderController.getContractDetail
 );
 
 /**
@@ -331,6 +356,113 @@ router.put(
     validateRequest
   ],
   RentalOrderController.updateSubOrderShipping
+);
+
+/**
+ * Lấy availability calendar cho product từ SubOrder data
+ * GET /api/rental-orders/products/:productId/availability-calendar
+ */
+router.get(
+  '/products/:productId/availability-calendar',
+  [
+    param('productId').isMongoId().withMessage('ID sản phẩm không hợp lệ'),
+    query('startDate').isISO8601().withMessage('Ngày bắt đầu không hợp lệ'),
+    query('endDate').isISO8601().withMessage('Ngày kết thúc không hợp lệ'),
+    validateRequest
+  ],
+  RentalOrderController.getProductAvailabilityCalendar
+);
+
+/**
+ * Handle PayOS payment callbacks
+ * GET /api/rental-orders/payment-success
+ * GET /api/rental-orders/payment-cancel
+ */
+router.get('/payment-success', RentalOrderController.handlePaymentSuccess);
+router.get('/payment-cancel', RentalOrderController.handlePaymentCancel);
+
+/**
+ * Verify PayOS payment for rental order
+ * POST /api/rental-orders/:masterOrderId/verify-payment
+ */
+router.post(
+  '/:masterOrderId/verify-payment',
+  [
+    param('masterOrderId').isMongoId().withMessage('Invalid master order ID'),
+    body('orderCode').notEmpty().withMessage('Order code is required'),
+    validateRequest
+  ],
+  RentalOrderController.verifyPayOSPayment
+);
+
+// ============================================================================
+// PARTIAL CONFIRMATION ROUTES (XÁC NHẬN MỘT PHẦN)
+// ============================================================================
+
+/**
+ * Owner xác nhận một phần sản phẩm trong SubOrder
+ * POST /api/rental-orders/suborders/:subOrderId/partial-confirm
+ * Body: { confirmedProductIds: ['productItemId1', 'productItemId2', ...] }
+ */
+router.post(
+  '/suborders/:subOrderId/partial-confirm',
+  [
+    param('subOrderId').isMongoId().withMessage('ID SubOrder không hợp lệ'),
+    body('confirmedProductIds')
+      .isArray({ min: 1 })
+      .withMessage('Phải chọn ít nhất 1 sản phẩm để xác nhận'),
+    body('confirmedProductIds.*').isString().withMessage('ID sản phẩm không hợp lệ'),
+    validateRequest
+  ],
+  RentalOrderController.partialConfirmSubOrder
+);
+
+/**
+ * Lấy danh sách SubOrder cần xác nhận của owner
+ * GET /api/rental-orders/owner/pending-confirmation
+ */
+router.get(
+  '/owner/pending-confirmation',
+  [
+    query('page').optional().isInt({ min: 1 }).withMessage('Trang không hợp lệ'),
+    query('limit').optional().isInt({ min: 1, max: 50 }).withMessage('Giới hạn không hợp lệ'),
+    validateRequest
+  ],
+  RentalOrderController.getOwnerPendingConfirmation
+);
+
+/**
+ * Lấy chi tiết SubOrder để owner xác nhận
+ * GET /api/rental-orders/suborders/:subOrderId/for-confirmation
+ */
+router.get(
+  '/suborders/:subOrderId/for-confirmation',
+  [param('subOrderId').isMongoId().withMessage('ID SubOrder không hợp lệ'), validateRequest],
+  RentalOrderController.getSubOrderForConfirmation
+);
+
+/**
+ * Lấy tổng quan confirmation của MasterOrder (cho renter)
+ * GET /api/rental-orders/:masterOrderId/confirmation-summary
+ */
+router.get(
+  '/:masterOrderId/confirmation-summary',
+  [param('masterOrderId').isMongoId().withMessage('ID MasterOrder không hợp lệ'), validateRequest],
+  RentalOrderController.getConfirmationSummary
+);
+
+/**
+ * Renter từ chối SubOrder đã được partial confirm
+ * POST /api/rental-orders/suborders/:subOrderId/renter-reject
+ */
+router.post(
+  '/suborders/:subOrderId/renter-reject',
+  [
+    param('subOrderId').isMongoId().withMessage('ID SubOrder không hợp lệ'),
+    body('reason').optional().isString().withMessage('Lý do phải là chuỗi ký tự'),
+    validateRequest
+  ],
+  RentalOrderController.renterRejectSubOrder
 );
 
 // Register routes

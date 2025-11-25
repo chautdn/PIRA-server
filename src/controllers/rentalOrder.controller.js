@@ -86,8 +86,19 @@ class RentalOrderController {
   async createPaidOrder(req, res) {
     try {
       const userId = req.user.id;
-      const { rentalPeriod, deliveryAddress, deliveryMethod, paymentMethod, totalAmount } =
-        req.body;
+      const {
+        rentalPeriod,
+        deliveryAddress,
+        deliveryMethod,
+        paymentMethod,
+        totalAmount,
+        paymentTransactionId,
+        paymentMessage,
+        // COD specific fields
+        depositAmount,
+        depositPaymentMethod,
+        depositTransactionId
+      } = req.body;
 
       console.log('📥 POST /api/rental-orders/create-paid');
       console.log('📋 Request body:', JSON.stringify(req.body, null, 2));
@@ -98,7 +109,13 @@ class RentalOrderController {
         deliveryAddress,
         deliveryMethod,
         paymentMethod,
-        totalAmount
+        totalAmount,
+        paymentTransactionId,
+        paymentMessage,
+        // Include COD specific fields
+        depositAmount,
+        depositPaymentMethod,
+        depositTransactionId
       });
 
       if (!masterOrder) {
@@ -261,6 +278,90 @@ class RentalOrderController {
   }
 
   /**
+   * Lấy chi tiết hợp đồng
+   * GET /api/rental-orders/contracts/:contractId
+   */
+  async getContractDetail(req, res) {
+    try {
+      const userId = req.user.id;
+      const { contractId } = req.params;
+
+      console.log('📥 GET /api/rental-orders/contracts/:contractId');
+      console.log('Contract ID:', contractId);
+      console.log('User ID:', userId);
+
+      const contract = await Contract.findById(contractId)
+        .populate('subOrder')
+        .populate('masterOrder')
+        .populate({
+          path: 'product',
+          select: 'title name images price'
+        })
+        .populate({
+          path: 'owner',
+          select: 'profile email phone'
+        })
+        .populate({
+          path: 'renter',
+          select: 'profile email phone'
+        });
+
+      if (!contract) {
+        throw new NotFoundError('Không tìm thấy hợp đồng');
+      }
+
+      // Kiểm tra quyền truy cập
+      const isOwner = contract.owner._id.toString() === userId;
+      const isRenter = contract.renter._id.toString() === userId;
+
+      if (!isOwner && !isRenter) {
+        throw new ForbiddenError('Bạn không có quyền xem hợp đồng này');
+      }
+
+      // Xác định canSign dựa trên status và role
+      let canSign = false;
+      let signMessage = '';
+
+      if (isOwner) {
+        // Owner có thể ký nếu chưa ký và status = PENDING_OWNER
+        canSign =
+          !contract.signatures.owner.signed &&
+          (contract.status === 'PENDING_OWNER' || contract.status === 'PENDING_SIGNATURE');
+        if (contract.signatures.owner.signed) {
+          signMessage = 'Bạn đã ký hợp đồng này rồi';
+        }
+      } else if (isRenter) {
+        // Renter chỉ có thể ký nếu owner đã ký và status = PENDING_RENTER
+        const ownerSigned = contract.signatures.owner.signed;
+        canSign =
+          !contract.signatures.renter.signed && ownerSigned && contract.status === 'PENDING_RENTER';
+
+        if (!ownerSigned) {
+          signMessage = 'Chờ chủ đồ ký hợp đồng trước';
+        } else if (contract.signatures.renter.signed) {
+          signMessage = 'Bạn đã ký hợp đồng này rồi';
+        }
+      }
+
+      return new SuccessResponse({
+        message: 'Lấy chi tiết hợp đồng thành công',
+        metadata: {
+          contract,
+          userRole: isOwner ? 'OWNER' : 'RENTER',
+          canSign,
+          signMessage
+        }
+      }).send(res);
+    } catch (error) {
+      console.error('❌ Error in getContractDetail:', error);
+      return res.status(400).json({
+        success: false,
+        message: error.message || 'Không thể lấy chi tiết hợp đồng'
+      });
+    }
+  }
+
+  /**
    * Lấy danh sách đơn hàng của người thuê
    * GET /api/rental-orders/my-orders
    */
@@ -383,12 +484,12 @@ class RentalOrderController {
         throw new ForbiddenError('Không có quyền xem đơn hàng này');
       }
 
-      return new SuccessResponse({
-        message: 'Lấy chi tiết đơn hàng thành công',
-        metadata: {
+      return new SuccessResponse(
+        {
           masterOrder
-        }
-      }).send(res);
+        },
+        'Lấy chi tiết đơn hàng thành công'
+      ).send(res);
     } catch (error) {
       throw new BadRequest(error.message);
     }
@@ -752,46 +853,410 @@ class RentalOrderController {
   }
 
   /**
-   * Lấy danh sách sản phẩm đang được thuê (active rentals) cho chủ sản phẩm
-   * GET /api/rental-orders/owner-active-rentals
+   * Get deposit calculation for current cart
+   * GET /api/rental-orders/calculate-deposit
    */
-  async getOwnerActiveRentals(req, res) {
+  async calculateDeposit(req, res) {
     try {
-      console.log('📥 GET /api/rental-orders/owner-active-rentals');
-      console.log('👤 req.user:', req.user);
+      const userId = req.user.id;
 
-      if (!req.user || !req.user.id) {
-        return res.status(401).json({
-          success: false,
-          message: 'User not authenticated'
-        });
-      }
+      console.log('📥 GET /api/rental-orders/calculate-deposit');
+      console.log('👤 User ID:', userId);
 
-      const ownerId = req.user.id;
-      const { page, limit } = req.query;
+      const depositInfo = await RentalOrderService.calculateDepositFromCart(userId);
 
-      console.log('👤 Owner ID:', ownerId);
-      console.log('📋 Query params:', { page, limit });
+      return new SuccessResponse({
+        message: 'Tính toán tiền cọc thành công',
+        metadata: {
+          totalDeposit: depositInfo.totalDeposit,
+          breakdown: depositInfo.breakdown,
+          formattedAmount: depositInfo.totalDeposit.toLocaleString('vi-VN') + 'đ'
+        }
+      }).send(res);
+    } catch (error) {
+      console.error('❌ Error in calculateDeposit:', error);
+      return res.status(400).json({
+        success: false,
+        message: error.message || 'Không thể tính toán tiền cọc'
+      });
+    }
+  }
 
-      const activeRentals = await RentalOrderService.getActiveRentalsByOwner(ownerId, {
-        page: parseInt(page) || 1,
-        limit: parseInt(limit) || 20
+  /**
+   * Lấy availability calendar cho product từ SubOrder data
+   * GET /api/rental-orders/products/:productId/availability-calendar
+   */
+  async getProductAvailabilityCalendar(req, res) {
+    try {
+      const { productId } = req.params;
+      const { startDate, endDate } = req.query;
+
+      console.log(`📥 GET availability calendar for product ${productId}`);
+      console.log(`📅 Date range: ${startDate} to ${endDate}`);
+
+      const calendar = await RentalOrderService.getProductAvailabilityFromSubOrders(
+        productId,
+        startDate,
+        endDate
+      );
+
+      console.log(`📊 Calendar response:`, {
+        productId: calendar.productId,
+        productTitle: calendar.productTitle,
+        calendarDays: calendar.calendar?.length,
+        firstDay: calendar.calendar?.[0]
       });
 
-      console.log('✅ Active rentals found:', activeRentals.data.length);
+      return new SuccessResponse({
+        message: 'Lấy lịch availability thành công',
+        metadata: calendar
+      }).send(res);
+    } catch (error) {
+      console.error('❌ Error getting availability calendar:', error);
+      return res.status(400).json({
+        success: false,
+        message: error.message || 'Không thể lấy lịch availability'
+      });
+    }
+  }
+
+  /**
+   * Handle PayOS payment success callback
+   * GET /api/rental-orders/payment-success
+   */
+  async handlePaymentSuccess(req, res) {
+    try {
+      const { orderCode, cancel, status } = req.query;
+
+      console.log('📥 Rental payment callback:', { orderCode, cancel, status });
+
+      if (cancel === 'true' || status === 'CANCELLED') {
+        // Payment was cancelled - redirect to rental payment cancel page
+        return res.redirect(
+          `${process.env.CLIENT_URL || 'http://localhost:3000'}/payment/cancelled?orderCode=${orderCode}`
+        );
+      }
+
+      if (status === 'PAID') {
+        // Payment successful - redirect to rental payment success page
+        return res.redirect(
+          `${process.env.CLIENT_URL || 'http://localhost:3000'}/payment/success?orderCode=${orderCode}`
+        );
+      }
+
+      // Default case - redirect to pending page
+      return res.redirect(
+        `${process.env.CLIENT_URL || 'http://localhost:3000'}/payment/pending?orderCode=${orderCode}`
+      );
+    } catch (error) {
+      console.error('❌ Error handling rental payment callback:', error);
+      return res.redirect(`${process.env.CLIENT_URL || 'http://localhost:3000'}/payment/error`);
+    }
+  }
+
+  /**
+   * Handle general PayOS payment cancel callback
+   * GET /api/rental-orders/payment-cancel
+   */
+  async handlePaymentCancel(req, res) {
+    try {
+      const { orderCode } = req.query;
+
+      console.log('📥 Rental payment cancel callback:', { orderCode });
+
+      // Redirect to rental payment cancelled page
+      return res.redirect(
+        `${process.env.CLIENT_URL || 'http://localhost:3000'}/payment/cancelled?orderCode=${orderCode}`
+      );
+    } catch (error) {
+      console.error('❌ Error handling rental payment cancel:', error);
+      return res.redirect(`${process.env.CLIENT_URL || 'http://localhost:3000'}/payment/error`);
+    }
+  }
+
+  /**
+   * Verify and complete PayOS payment for rental order
+   * POST /api/rental-orders/:masterOrderId/verify-payment
+   */
+  async verifyPayOSPayment(req, res) {
+    try {
+      const { masterOrderId } = req.params;
+      const { orderCode } = req.body;
+
+      if (!orderCode) {
+        throw new BadRequest('Order code is required');
+      }
+
+      const result = await RentalOrderService.verifyAndCompletePayOSPayment(
+        masterOrderId,
+        orderCode
+      );
 
       return res.status(200).json({
         success: true,
-        message: 'Lấy danh sách sản phẩm đang cho thuê thành công',
-        metadata: {
-          activeRentals
+        message: result.message,
+        data: {
+          order: result.order
         }
       });
     } catch (error) {
-      console.error('❌ Error in getOwnerActiveRentals:', error);
+      console.error('❌ Error verifying PayOS payment:', error);
       return res.status(400).json({
         success: false,
-        message: error.message || 'Không thể lấy danh sách sản phẩm đang cho thuê'
+        message: error.message || 'Không thể xác nhận thanh toán'
+      });
+    }
+  }
+
+  // ============================================================================
+  // API XÁC NHẬN MỘT PHẦN SẢN PHẨM (PARTIAL CONFIRMATION)
+  // ============================================================================
+
+  /**
+   * Owner xác nhận một phần sản phẩm trong SubOrder
+   * POST /api/rental-orders/suborders/:subOrderId/partial-confirm
+   * Body: { confirmedProductIds: ['productItemId1', 'productItemId2', ...] }
+   */
+  async partialConfirmSubOrder(req, res) {
+    try {
+      const ownerId = req.user.id;
+      const { subOrderId } = req.params;
+      const { confirmedProductIds } = req.body;
+
+      console.log('📥 POST /api/rental-orders/suborders/:subOrderId/partial-confirm');
+      console.log('SubOrder ID:', subOrderId);
+      console.log('Owner ID:', ownerId);
+      console.log('Confirmed Product IDs:', confirmedProductIds);
+
+      // Validation
+      if (!confirmedProductIds || !Array.isArray(confirmedProductIds)) {
+        throw new BadRequest('Danh sách sản phẩm xác nhận không hợp lệ');
+      }
+
+      if (confirmedProductIds.length === 0) {
+        throw new BadRequest('Phải chọn ít nhất 1 sản phẩm để xác nhận');
+      }
+
+      // Gọi service
+      const subOrder = await RentalOrderService.partialConfirmSubOrder(
+        subOrderId,
+        ownerId,
+        confirmedProductIds
+      );
+
+      return new SuccessResponse({
+        message: `Đã xác nhận ${confirmedProductIds.length} sản phẩm thành công`,
+        metadata: {
+          subOrder,
+          confirmedCount: confirmedProductIds.length,
+          totalCount: subOrder.products.length
+        }
+      }).send(res);
+    } catch (error) {
+      console.error('❌ Error in partialConfirmSubOrder:', error);
+      return res.status(400).json({
+        success: false,
+        message: error.message || 'Không thể xác nhận đơn hàng'
+      });
+    }
+  }
+
+  /**
+   * Lấy danh sách SubOrder cần xác nhận của owner
+   * GET /api/rental-orders/owner/pending-confirmation
+   */
+  async getOwnerPendingConfirmation(req, res) {
+    try {
+      const ownerId = req.user.id;
+      const { page = 1, limit = 10 } = req.query;
+
+      console.log('📥 GET /api/rental-orders/owner/pending-confirmation');
+      console.log('Owner ID:', ownerId);
+
+      const skip = (parseInt(page) - 1) * parseInt(limit);
+
+      // Tìm các SubOrder đang chờ xác nhận của owner này
+      const subOrders = await SubOrder.find({
+        owner: ownerId,
+        status: 'PENDING_OWNER_CONFIRMATION'
+      })
+        .populate('masterOrder', 'masterOrderNumber deliveryAddress ownerConfirmationDeadline')
+        .populate({
+          path: 'products.product',
+          select: 'title name images price deposit availability'
+        })
+        .populate('owner', 'profile.fullName profile.phone email')
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(parseInt(limit));
+
+      const total = await SubOrder.countDocuments({
+        owner: ownerId,
+        status: 'PENDING_OWNER_CONFIRMATION'
+      });
+
+      return new SuccessResponse({
+        message: 'Lấy danh sách đơn hàng chờ xác nhận thành công',
+        metadata: {
+          subOrders,
+          pagination: {
+            page: parseInt(page),
+            limit: parseInt(limit),
+            total,
+            totalPages: Math.ceil(total / parseInt(limit))
+          }
+        }
+      }).send(res);
+    } catch (error) {
+      console.error('❌ Error in getOwnerPendingConfirmation:', error);
+      return res.status(400).json({
+        success: false,
+        message: error.message || 'Không thể lấy danh sách đơn hàng'
+      });
+    }
+  }
+
+  /**
+   * Lấy chi tiết SubOrder để owner xác nhận
+   * GET /api/rental-orders/suborders/:subOrderId/for-confirmation
+   */
+  async getSubOrderForConfirmation(req, res) {
+    try {
+      const ownerId = req.user.id;
+      const { subOrderId } = req.params;
+
+      console.log('📥 GET /api/rental-orders/suborders/:subOrderId/for-confirmation');
+      console.log('SubOrder ID:', subOrderId);
+      console.log('Owner ID:', ownerId);
+
+      const subOrder = await SubOrder.findOne({
+        _id: subOrderId,
+        owner: ownerId
+      })
+        .populate('masterOrder')
+        .populate({
+          path: 'products.product',
+          select: 'title name images price deposit availability category owner'
+        })
+        .populate('owner', 'profile.fullName profile.phone email address');
+
+      if (!subOrder) {
+        throw new NotFoundError('Không tìm thấy đơn hàng hoặc không có quyền truy cập');
+      }
+
+      // Tính toán thông tin tổng hợp
+      const summary = {
+        totalProducts: subOrder.products.length,
+        confirmedProducts: subOrder.products.filter((p) => p.confirmationStatus === 'CONFIRMED')
+          .length,
+        rejectedProducts: subOrder.products.filter((p) => p.confirmationStatus === 'REJECTED')
+          .length,
+        pendingProducts: subOrder.products.filter((p) => p.confirmationStatus === 'PENDING').length,
+        totalAmount:
+          subOrder.pricing.subtotalRental +
+          subOrder.pricing.subtotalDeposit +
+          subOrder.pricing.shippingFee,
+        deadline: subOrder.masterOrder.ownerConfirmationDeadline
+      };
+
+      return new SuccessResponse({
+        message: 'Lấy chi tiết đơn hàng thành công',
+        metadata: {
+          subOrder,
+          summary
+        }
+      }).send(res);
+    } catch (error) {
+      console.error('❌ Error in getSubOrderForConfirmation:', error);
+      return res.status(400).json({
+        success: false,
+        message: error.message || 'Không thể lấy chi tiết đơn hàng'
+      });
+    }
+  }
+
+  /**
+   * Lấy tổng quan confirmation của MasterOrder
+   * GET /api/rental-orders/:masterOrderId/confirmation-summary
+   */
+  async getConfirmationSummary(req, res) {
+    try {
+      const userId = req.user.id;
+      const { masterOrderId } = req.params;
+
+      console.log('📥 GET /api/rental-orders/:masterOrderId/confirmation-summary');
+      console.log('MasterOrder ID:', masterOrderId);
+      console.log('User ID:', userId);
+
+      const masterOrder = await MasterOrder.findOne({
+        _id: masterOrderId,
+        renter: userId
+      }).populate({
+        path: 'subOrders',
+        populate: [
+          {
+            path: 'products.product',
+            select: 'title name images'
+          },
+          {
+            path: 'owner',
+            select: 'profile'
+          }
+        ]
+      });
+
+      if (!masterOrder) {
+        throw new NotFoundError('Không tìm thấy đơn hàng');
+      }
+
+      return new SuccessResponse({
+        message: 'Lấy tổng quan xác nhận thành công',
+        metadata: {
+          masterOrderNumber: masterOrder.masterOrderNumber,
+          status: masterOrder.status,
+          confirmationSummary: masterOrder.confirmationSummary,
+          subOrders: masterOrder.subOrders
+        }
+      }).send(res);
+    } catch (error) {
+      console.error('❌ Error in getConfirmationSummary:', error);
+      return res.status(400).json({
+        success: false,
+        message: error.message || 'Không thể lấy tổng quan xác nhận'
+      });
+    }
+  }
+
+  /**
+   * Renter từ chối SubOrder đã được partial confirm
+   * POST /api/rental-orders/suborders/:subOrderId/renter-reject
+   */
+  async renterRejectSubOrder(req, res) {
+    try {
+      const userId = req.user.id;
+      const { subOrderId } = req.params;
+      const { reason } = req.body;
+
+      console.log('📥 POST /api/rental-orders/suborders/:subOrderId/renter-reject');
+      console.log('SubOrder ID:', subOrderId);
+      console.log('Renter ID:', userId);
+      console.log('Reason:', reason);
+
+      const result = await RentalOrderService.renterRejectSubOrder(
+        subOrderId,
+        userId,
+        reason || 'Không đủ số lượng sản phẩm mong muốn'
+      );
+
+      return new SuccessResponse({
+        message: 'Đã hủy SubOrder và hoàn tiền thành công',
+        metadata: result
+      }).send(res);
+    } catch (error) {
+      console.error('❌ Error in renterRejectSubOrder:', error);
+      return res.status(400).json({
+        success: false,
+        message: error.message || 'Không thể từ chối SubOrder'
       });
     }
   }

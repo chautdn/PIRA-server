@@ -90,8 +90,11 @@ const masterOrderSchema = new mongoose.Schema(
       enum: [
         'DRAFT', // Đơn tạm
         'PENDING_PAYMENT', // Chờ thanh toán
+        'AWAITING_PAYMENT', // Đang chờ user hoàn tất thanh toán PayOS
         'PAYMENT_COMPLETED', // Đã thanh toán
         'PENDING_CONFIRMATION', // Chờ xác nhận từ chủ
+        'CONFIRMED', // Tất cả sản phẩm đã được xác nhận
+        'PARTIALLY_CANCELLED', // Một phần sản phẩm bị hủy
         'READY_FOR_CONTRACT', // Sẵn sàng ký hợp đồng
         'CONTRACT_SIGNED', // Đã ký hợp đồng
         'PROCESSING', // Đang xử lý
@@ -124,6 +127,13 @@ const masterOrderSchema = new mongoose.Schema(
 
     notes: String,
 
+    // 🕐 Owner confirmation deadline for paid orders
+    ownerConfirmationDeadline: {
+      type: Date,
+      default: null,
+      index: true // For efficient queries of expired orders
+    },
+
     // Thông tin hủy đơn
     cancellation: {
       cancelledBy: {
@@ -137,6 +147,17 @@ const masterOrderSchema = new mongoose.Schema(
         type: String,
         enum: ['PENDING', 'PROCESSING', 'COMPLETED', 'FAILED']
       }
+    },
+
+    // Tổng hợp trạng thái xác nhận (dùng cho xác nhận một phần)
+    confirmationSummary: {
+      totalProducts: { type: Number, default: 0 },
+      confirmedProducts: { type: Number, default: 0 },
+      rejectedProducts: { type: Number, default: 0 },
+      pendingProducts: { type: Number, default: 0 },
+      totalConfirmedAmount: { type: Number, default: 0 },
+      totalRejectedAmount: { type: Number, default: 0 },
+      totalRefundedAmount: { type: Number, default: 0 }
     }
   },
   {

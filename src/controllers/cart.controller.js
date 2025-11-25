@@ -91,6 +91,24 @@ class CartController {
   });
 
   /**
+   * @desc Update rental dates by itemId
+   * @route PUT /api/cart/item/:itemId/rental
+   * @access Private
+   */
+  updateRentalByItemId = asyncHandler(async (req, res) => {
+    const { itemId } = req.params;
+    const { rental } = req.body;
+
+    if (!rental) {
+      throw new BadRequest('Thông tin thuê là bắt buộc');
+    }
+
+    const cart = await cartService.updateRentalByItemId(req.user._id, itemId, rental);
+
+    new SuccessResponse(cart, 'Đã cập nhật thông tin thuê').send(res);
+  });
+
+  /**
    * @desc Remove item from cart by itemId
    * @route DELETE /api/cart/item/:itemId
    * @access Private
