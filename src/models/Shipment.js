@@ -14,6 +14,10 @@ const shipmentSchema = new mongoose.Schema(
       ref: 'Order',
       required: true
     },
+    subOrder: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'SubOrder'
+    },
     shipper: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'User'
@@ -90,8 +94,16 @@ const shipmentSchema = new mongoose.Schema(
         enum: ['EXCELLENT', 'GOOD', 'FAIR', 'DAMAGED']
       },
       notes: String,
-      photos: [String]
-    }
+      photos: [String],
+      checkedAt: Date
+    },
+
+    // Rental Transfer tracking
+    rentalTransferred: {
+      type: Boolean,
+      default: false
+    },
+    rentalTransferredAt: Date
   },
   {
     timestamps: true,
@@ -101,6 +113,9 @@ const shipmentSchema = new mongoose.Schema(
 
 shipmentSchema.index({ shipmentId: 1 });
 shipmentSchema.index({ order: 1 });
+shipmentSchema.index({ subOrder: 1 });
 shipmentSchema.index({ shipper: 1, status: 1 });
+shipmentSchema.index({ status: 1 });
+shipmentSchema.index({ rentalTransferred: 1 });
 
 module.exports = mongoose.model('Shipment', shipmentSchema);

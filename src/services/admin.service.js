@@ -1,7 +1,6 @@
 const User = require('../models/User');
 const Product = require('../models/Product');
 const Category = require('../models/Category');
-const Order = require('../models/MasterOrder');
 const Report = require('../models/Report');
 
 class AdminService {

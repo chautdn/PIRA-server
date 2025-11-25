@@ -1,4 +1,3 @@
-const MasterOrder = require('../models/MasterOrder');
 const SubOrder = require('../models/SubOrder');
 const Product = require('../models/Product');
 const User = require('../models/User');
@@ -12,6 +11,9 @@ class RentalOrderService {
      * Người thuê hủy SubOrder (sau khi chủ đã xác nhận)
      */
     async renterCancelSubOrder(subOrderId, renterId, reason) {
+      // Lấy MasterOrder sau khi cần dùng
+      const MasterOrder = require('../models/MasterOrder');
+      
       // Tìm subOrder thuộc về renter và trạng thái OWNER_CONFIRMED
       const subOrder = await SubOrder.findOne({
         _id: subOrderId,
@@ -214,6 +216,9 @@ class RentalOrderService {
         }))
       );
 
+      // Require MasterOrder model here to avoid top-level circular requires
+      const MasterOrder = require('../models/MasterOrder');
+
       // Tạo masterOrderNumber
       const orderNumber = `MO${Date.now()}${Math.random().toString(36).substr(2, 5).toUpperCase()}`;
 
@@ -332,6 +337,9 @@ class RentalOrderService {
     } = orderData;
 
     try {
+      // Require MasterOrder locally to avoid circular require issues
+      const MasterOrder = require('../models/MasterOrder');
+
       console.log('🚀 Creating paid order for renter:', renterId);
       console.log('💳 Payment method:', paymentMethod);
       console.log('💰 Total amount:', totalAmount);
@@ -449,6 +457,7 @@ class RentalOrderService {
    */
   async processWalletPayment(masterOrderId, paymentData) {
     const { transactionId, amount } = paymentData;
+    const Transaction = require('../models/Transaction');
 
     try {
       console.log('💳 Processing wallet payment - deducting from user wallet');
@@ -483,12 +492,127 @@ class RentalOrderService {
         );
       }
 
-      // Deduct amount from wallet
+      // === STEP 1: Deduct amount from renter wallet ===
+      const renterPreviousBalance = wallet.balance.available;
       wallet.balance.available -= amount;
-      await wallet.save();
+      
+      // Record transaction for renter (outgoing payment)
+      if (!wallet.transactions) {
+        wallet.transactions = [];
+      }
+      wallet.transactions.push({
+        type: 'PAYMENT',
+        amount: amount,
+        description: `Thanh toán đơn thuê (Order: ${masterOrder.masterOrderNumber})`,
+        relatedOrder: masterOrderId,
+        timestamp: new Date(),
+        status: 'COMPLETED'
+      });
 
-      console.log('✅ Wallet payment successful');
-      console.log('💳 New wallet balance:', wallet.balance.available);
+      await wallet.save();
+      console.log('✅ Deducted from renter wallet');
+      console.log('💳 Renter new balance:', wallet.balance.available);
+
+      // === STEP 2: Transfer to admin wallet ===
+      console.log('\n[Payment] Transferring to admin wallet...');
+      
+      // Find admin user
+      let admin = await User.findOne({ role: 'ADMIN' }).populate('wallet');
+      if (!admin) {
+        admin = await User.findOne({ role: 'SYSTEM_ADMIN' }).populate('wallet');
+      }
+      if (!admin) {
+        throw new Error('Admin user not found');
+      }
+
+      console.log(`✅ Admin found: ${admin.email}`);
+
+      // Create admin wallet if doesn't exist
+      if (!admin.wallet) {
+        console.log('[Payment] Creating admin wallet...');
+        const newWallet = new Wallet({
+          user: admin._id,
+          balance: {
+            available: 0,
+            frozen: 0,
+            pending: 0
+          },
+          currency: 'VND',
+          status: 'ACTIVE'
+        });
+        await newWallet.save();
+        admin.wallet = newWallet._id;
+        await admin.save();
+        console.log('✅ Created admin wallet');
+      }
+
+      // Get admin wallet
+      const adminWallet = await Wallet.findById(admin.wallet);
+      if (!adminWallet) {
+        throw new Error('Admin wallet not found after creation');
+      }
+
+      const adminPreviousBalance = adminWallet.balance.available;
+      adminWallet.balance.available += amount;
+
+      // Record transaction for admin (incoming payment)
+      if (!adminWallet.transactions) {
+        adminWallet.transactions = [];
+      }
+      adminWallet.transactions.push({
+        type: 'PAYMENT',
+        amount: amount,
+        description: `Nhận tiền từ renter (Order: ${masterOrder.masterOrderNumber})`,
+        relatedOrder: masterOrderId,
+        timestamp: new Date(),
+        status: 'COMPLETED'
+      });
+
+      await adminWallet.save();
+      console.log('✅ Added to admin wallet');
+      console.log('💳 Admin new balance:', adminWallet.balance.available);
+
+      // === STEP 3: Create transaction records ===
+      // Transaction for renter (outgoing)
+      const renterTransaction = new Transaction({
+        user: userId,
+        wallet: wallet._id,
+        type: 'order_payment',
+        amount: amount,
+        status: 'success',
+        description: `Thanh toán đơn thuê (Order: ${masterOrder.masterOrderNumber})`,
+        reference: masterOrderId.toString(),
+        paymentMethod: 'wallet',
+        metadata: {
+          masterOrderId: masterOrderId.toString(),
+          renterPayment: true,
+          description: 'Renter paid for rental order'
+        },
+        processedAt: new Date()
+      });
+      await renterTransaction.save();
+
+      // Transaction for admin (incoming)
+      const adminTransaction = new Transaction({
+        user: admin._id,
+        wallet: adminWallet._id,
+        type: 'order_payment',
+        amount: amount,
+        status: 'success',
+        description: `Nhận tiền từ renter (Order: ${masterOrder.masterOrderNumber})`,
+        reference: masterOrderId.toString(),
+        paymentMethod: 'wallet',
+        metadata: {
+          masterOrderId: masterOrderId.toString(),
+          renterId: userId.toString(),
+          adminPaymentReceived: true,
+          description: 'Admin received payment from renter'
+        },
+        processedAt: new Date()
+      });
+      await adminTransaction.save();
+
+      console.log('✅ Transaction records created');
 
       return {
         transactionId: transactionId,
@@ -497,11 +621,14 @@ class RentalOrderService {
         status: 'SUCCESS',
         processedAt: new Date(),
         paymentDetails: {
-          previousBalance: wallet.balance.available + amount,
-          newBalance: wallet.balance.available,
+          renterPreviousBalance: renterPreviousBalance,
+          renterNewBalance: wallet.balance.available,
+          adminPreviousBalance: adminPreviousBalance,
+          adminNewBalance: adminWallet.balance.available,
           deductedAmount: amount,
-          walletId: wallet._id,
-          message: 'Thanh toán từ ví thành công'
+          renterWalletId: wallet._id,
+          adminWalletId: adminWallet._id,
+          message: 'Thanh toán từ ví thành công - Tiền đã chuyển đến admin'
         }
       };
     } catch (error) {
@@ -1039,13 +1166,13 @@ class RentalOrderService {
                   // Calculate 8% platform fee from rental amount (excluding deposit and shipping)
                   const rentalAmount = masterOrder.totalAmount - masterOrder.totalShippingFee;
                   const platformFeePercentage = 0.08; // 8%
-                  const platformFee = Math.round(rentalAmount * platformFeePercentage);
+                  const totalPlatformFee = Math.round(rentalAmount * platformFeePercentage);
                   
                   console.log(`💰 [Platform Fee] Rental amount: ${rentalAmount}`);
-                  console.log(`📊 [Platform Fee] Platform fee (8%): ${platformFee}`);
+                  console.log(`📊 [Platform Fee] Total platform fee (8%): ${totalPlatformFee}`);
 
                   // Update master order with platform fee BEFORE saving
-                  masterOrder.platformFee = platformFee;
+                  masterOrder.platformFee = totalPlatformFee;
                   
                   // Get unique owners from all confirmed suborders
                   const owners = [...new Set(
@@ -1056,18 +1183,25 @@ class RentalOrderService {
                   
                   console.log(`👥 [Platform Fee] Number of owners to charge: ${owners.length}`);
 
-                  // For each owner, deduct platform fee from their wallet and transfer to admin
+                  // Divide platform fee equally among all owners
+                  const platformFeePerOwner = Math.round(totalPlatformFee / owners.length);
+                  console.log(`💵 [Platform Fee] Platform fee per owner: ${platformFeePerOwner} (total: ${totalPlatformFee})`);
+
+                  // For each owner, deduct their share of platform fee from their wallet and transfer to admin
+                  let totalChargedToAdmin = 0;
                   for (const ownerId of owners) {
                     try {
-                      const result = await this.chargePlatformFeeToOwner(ownerId, masterOrder._id, platformFee);
+                      const result = await this.chargePlatformFeeToOwner(ownerId, masterOrder._id, platformFeePerOwner);
                       console.log(`✅ [Platform Fee] Charged for owner ${ownerId}:`);
                       console.log(`   Owner new balance: ${result.ownerNewBalance}`);
                       console.log(`   Admin new balance: ${result.adminNewBalance}`);
+                      totalChargedToAdmin += platformFeePerOwner;
                     } catch (error) {
                       console.error(`❌ [Platform Fee] Error charging for owner ${ownerId}:`, error.message);
                       throw error; // Re-throw to fail the entire operation if fee charging fails
                     }
                   }
+                  console.log(`✅ [Platform Fee] Total charged to all owners: ${totalChargedToAdmin}`);
                 } catch (error) {
                   console.error('❌ [Platform Fee] Error in platform fee calculation or charging:', error.message);
                   console.error('   Stack:', error.stack);
@@ -1092,6 +1226,41 @@ class RentalOrderService {
           }
       } catch (err) {
         console.error('Error updating master order after owner confirm:', err);
+      }
+    }
+
+    // 🎯 AUTO-TRIGGER TRANSFER when both renter and owner are confirmed
+    // Check if this SubOrder has both owner and renter confirmations
+    if (status === 'CONFIRMED' && subOrder.renterConfirmation && 
+        subOrder.renterConfirmation.status === 'CONFIRMED') {
+      
+      console.log('\n[Auto Transfer] Both owner and renter confirmed - triggering auto transfer');
+      
+      try {
+        // Update status to ACTIVE to trigger transfer
+        subOrder.status = 'ACTIVE';
+        await subOrder.save();
+        
+        // Trigger transfer
+        const transferResult = await this.transferRentalToOwner(subOrderId);
+        
+        if (transferResult.success) {
+          console.log('✅ [Auto Transfer] Transfer successful');
+          console.log(`   Amount: ${transferResult.amount.toLocaleString('vi-VN')}đ`);
+          console.log(`   Admin balance: ${transferResult.adminNewBalance.toLocaleString('vi-VN')}đ`);
+          console.log(`   Owner balance: ${transferResult.ownerNewBalance.toLocaleString('vi-VN')}đ`);
+        } else {
+          console.warn('⚠️  [Auto Transfer] Transfer warning:', transferResult.message);
+          // Revert status back if transfer failed
+          subOrder.status = 'OWNER_CONFIRMED';
+          await subOrder.save();
+        }
+      } catch (error) {
+        console.error('❌ [Auto Transfer] Error during auto transfer:', error.message);
+        // Revert status back on error
+        subOrder.status = 'OWNER_CONFIRMED';
+        await subOrder.save();
+        // Don't throw - let ownerConfirmOrder complete successfully
       }
     }
 
@@ -1146,6 +1315,41 @@ class RentalOrderService {
       if (allReady) {
         masterOrder.status = 'READY_FOR_CONTRACT';
         await masterOrder.save();
+      }
+
+      // 🎯 AUTO-TRIGGER TRANSFER when both renter and owner are confirmed
+      // Check if this SubOrder has both owner and renter confirmations
+      if (subOrder.ownerConfirmation && subOrder.ownerConfirmation.status === 'CONFIRMED' &&
+          subOrder.renterConfirmation && subOrder.renterConfirmation.status === 'CONFIRMED') {
+        
+        console.log('\n[Auto Transfer] Both owner and renter confirmed - triggering auto transfer');
+        
+        try {
+          // Update status to ACTIVE to trigger transfer
+          subOrder.status = 'ACTIVE';
+          await subOrder.save();
+          
+          // Trigger transfer
+          const transferResult = await this.transferRentalToOwner(subOrderId);
+          
+          if (transferResult.success) {
+            console.log('✅ [Auto Transfer] Transfer successful');
+            console.log(`   Amount: ${transferResult.amount.toLocaleString('vi-VN')}đ`);
+            console.log(`   Admin balance: ${transferResult.adminNewBalance.toLocaleString('vi-VN')}đ`);
+            console.log(`   Owner balance: ${transferResult.ownerNewBalance.toLocaleString('vi-VN')}đ`);
+          } else {
+            console.warn('⚠️  [Auto Transfer] Transfer warning:', transferResult.message);
+            // Revert status back if transfer failed
+            subOrder.status = 'READY_FOR_CONTRACT';
+            await subOrder.save();
+          }
+        } catch (error) {
+          console.error('❌ [Auto Transfer] Error during auto transfer:', error.message);
+          // Revert status back on error
+          subOrder.status = 'READY_FOR_CONTRACT';
+          await subOrder.save();
+          // Don't throw - let renterConfirmOrder complete successfully
+        }
       }
     } catch (err) {
       console.error('Error while updating master order after renter confirm:', err);
@@ -1787,24 +1991,55 @@ class RentalOrderService {
         console.log('   deliveryMethod:', masterOrder?.deliveryMethod);
         
         if (masterOrder && masterOrder.paymentMethod === 'COD' && masterOrder.deliveryMethod === 'PICKUP') {
-          console.log('🎯 COD + PICKUP detected - charging platform fee');
+          console.log('🎯 COD + PICKUP detected - need to calculate and charge platform fee');
           
-          // Calculate 8% platform fee from rental amount (excluding deposit and shipping)
-          const rentalAmount = masterOrder.totalAmount - masterOrder.totalShippingFee;
-          const platformFeePercentage = 0.08; // 8%
-          const platformFee = Math.round(rentalAmount * platformFeePercentage);
+          // Check if this is the first confirmation - if so, charge the fee
+          // Get all suborders to see how many are confirmed now
+          const allSubOrders = await SubOrder.find({ masterOrder: masterOrder._id });
+          const confirmedCount = allSubOrders.filter(so => so.status === 'OWNER_CONFIRMED').length;
           
-          console.log(`💰 Rental amount: ${rentalAmount}`);
-          console.log(`📊 Platform fee (8%): ${platformFee}`);
+          console.log(`[Platform Fee] Confirmed suborders count: ${confirmedCount}`);
+          
+          // Only charge fee once when ALL suborders are confirmed
+          const allConfirmed = allSubOrders.every((so) => so.status === 'OWNER_CONFIRMED');
+          
+          if (allConfirmed) {
+            console.log('[Platform Fee] All suborders confirmed - calculating and charging platform fee');
+            
+            // Calculate 8% platform fee from rental amount (excluding deposit and shipping)
+            const rentalAmount = masterOrder.totalAmount - masterOrder.totalShippingFee;
+            const platformFeePercentage = 0.08; // 8%
+            const totalPlatformFee = Math.round(rentalAmount * platformFeePercentage);
+            
+            console.log(`💰 Rental amount: ${rentalAmount}`);
+            console.log(`📊 Total platform fee (8%): ${totalPlatformFee}`);
 
-          // Update master order with platform fee
-          masterOrder.platformFee = platformFee;
-          await masterOrder.save();
-          console.log('✅ platformFee saved to masterOrder');
+            // Update master order with platform fee
+            masterOrder.platformFee = totalPlatformFee;
+            await masterOrder.save();
+            console.log('✅ platformFee saved to masterOrder');
 
-          // Charge platform fee to this owner
-          const result = await this.chargePlatformFeeToOwner(ownerId, masterOrder._id, platformFee);
-          console.log(`✅ Platform fee charged for owner ${ownerId}:`, result);
+            // Get unique owners
+            const owners = [...new Set(
+              allSubOrders
+                .filter(so => so.status === 'OWNER_CONFIRMED')
+                .map(so => so.owner.toString())
+            )];
+            
+            console.log(`👥 Number of owners to charge: ${owners.length}`);
+            
+            // Divide platform fee equally among all owners
+            const platformFeePerOwner = Math.round(totalPlatformFee / owners.length);
+            console.log(`💵 Platform fee per owner: ${platformFeePerOwner}`);
+
+            // Charge each owner their share
+            for (const ownerIdToCharge of owners) {
+              const result = await this.chargePlatformFeeToOwner(ownerIdToCharge, masterOrder._id, platformFeePerOwner);
+              console.log(`✅ Platform fee charged for owner ${ownerIdToCharge}:`, result);
+            }
+          } else {
+            console.log('[Platform Fee] Not all suborders confirmed yet - skipping fee charge');
+          }
         } else {
           console.log('⚠️  Conditions not met for platform fee:');
           console.log('   Is COD?', masterOrder?.paymentMethod === 'COD');
@@ -2183,6 +2418,244 @@ class RentalOrderService {
       return subOrder;
     } catch (error) {
       console.error('❌ Error updating SubOrder shipping:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Chuyển tiền thuê từ ví admin sang ví owner khi renter xác nhận đã nhận hàng
+   * Renter xác nhận nhận hàng => SubOrder.status = ACTIVE
+   * Lúc này hệ thống tự động chuyển tiền thuê (không cọc) từ admin sang owner
+   */
+  async transferRentalToOwner(subOrderId) {
+    const Transaction = require('../models/Transaction');
+    const Wallet = require('../models/Wallet');
+
+    try {
+      console.log('\n[Rental Transfer] ======== START TRANSFERRING RENTAL TO OWNER ========');
+      console.log(`[Rental Transfer] SubOrder ID: ${subOrderId}`);
+
+      // Lấy thông tin SubOrder
+      const subOrder = await SubOrder.findById(subOrderId).populate([
+        { path: 'masterOrder', populate: { path: 'renter' } },
+        'owner'
+      ]);
+
+      if (!subOrder) {
+        throw new Error(`SubOrder ${subOrderId} not found`);
+      }
+
+      console.log(`[Rental Transfer] SubOrder Status: ${subOrder.status}`);
+      console.log(`[Rental Transfer] Owner ID: ${subOrder.owner._id}`);
+      console.log(`[Rental Transfer] Rental Amount: ${subOrder.pricing.subtotalRental}`);
+
+      // Kiểm tra SubOrder có ở trạng thái ACTIVE không
+      // Nếu UI chưa có nút xác nhận, ta chỉ xử lý khi status được cập nhật thành ACTIVE
+      if (subOrder.status !== 'ACTIVE') {
+        console.log(`[Rental Transfer] ⚠️  SubOrder status is ${subOrder.status}, not ACTIVE - skipping transfer`);
+        return {
+          success: false,
+          message: `SubOrder is in ${subOrder.status} status, expected ACTIVE`,
+          transferred: false
+        };
+      }
+
+      // Lấy tiền thuê (không bao gồm cọc)
+      const rentalAmount = subOrder.pricing.subtotalRental;
+
+      if (rentalAmount <= 0) {
+        console.log(`[Rental Transfer] ⚠️  Rental amount is 0 or negative: ${rentalAmount}`);
+        return {
+          success: false,
+          message: 'Rental amount is 0',
+          transferred: false
+        };
+      }
+
+      // Lấy ví của admin
+      console.log(`[Rental Transfer] Looking for admin user...`);
+      let admin = await User.findOne({ role: 'ADMIN' }).populate('wallet');
+      if (!admin) {
+        console.log(`[Rental Transfer] ADMIN role not found, trying SYSTEM_ADMIN...`);
+        admin = await User.findOne({ role: 'SYSTEM_ADMIN' }).populate('wallet');
+      }
+      if (!admin) {
+        throw new Error('Admin user not found');
+      }
+
+      console.log(`✅ [Rental Transfer] Admin found: ${admin.email} (ID: ${admin._id})`);
+      console.log(`💳 [Rental Transfer] Admin wallet balance before transfer: ${admin.wallet?.balance.available || 0}`);
+
+      // Kiểm tra admin có ví không, nếu không thì tạo
+      if (!admin.wallet) {
+        console.log(`[Rental Transfer] Creating new wallet for admin...`);
+        const newWallet = new Wallet({
+          user: admin._id,
+          balance: {
+            available: 0,
+            frozen: 0,
+            pending: 0
+          },
+          currency: 'VND',
+          status: 'ACTIVE'
+        });
+        await newWallet.save();
+        admin.wallet = newWallet._id;
+        await admin.save();
+        console.log('✅ [Rental Transfer] Created admin wallet');
+      }
+
+      // Lấy ví của admin (refresh nếu cần)
+      const adminWallet = await Wallet.findById(admin.wallet);
+      if (!adminWallet) {
+        throw new Error('Admin wallet not found after creation');
+      }
+
+      console.log(`💳 [Rental Transfer] Admin wallet balance before deduction: ${adminWallet.balance.available}`);
+
+      // Kiểm tra ví admin có đủ tiền không
+      if (adminWallet.balance.available < rentalAmount) {
+        console.error(`❌ [Rental Transfer] Admin wallet insufficient balance`);
+        console.error(`   Available: ${adminWallet.balance.available}, Need: ${rentalAmount}`);
+        throw new Error(`Admin wallet insufficient balance. Available: ${adminWallet.balance.available}, Need: ${rentalAmount}`);
+      }
+
+      // Lấy ví của owner
+      const owner = await User.findById(subOrder.owner._id).populate('wallet');
+      if (!owner) {
+        throw new Error(`Owner ${subOrder.owner._id} not found`);
+      }
+
+      console.log(`✅ [Rental Transfer] Owner found: ${owner.email}`);
+      console.log(`💳 [Rental Transfer] Owner wallet balance before transfer: ${owner.wallet?.balance.available || 0}`);
+
+      // Tạo ví cho owner nếu chưa có
+      if (!owner.wallet) {
+        console.log(`[Rental Transfer] Creating new wallet for owner...`);
+        const newWallet = new Wallet({
+          user: owner._id,
+          balance: {
+            available: 0,
+            frozen: 0,
+            pending: 0
+          },
+          currency: 'VND',
+          status: 'ACTIVE'
+        });
+        await newWallet.save();
+        owner.wallet = newWallet._id;
+        await owner.save();
+        console.log('✅ [Rental Transfer] Created owner wallet');
+      }
+
+      // Lấy ví của owner (refresh)
+      const ownerWallet = await Wallet.findById(owner.wallet);
+      if (!ownerWallet) {
+        throw new Error('Owner wallet not found after creation');
+      }
+
+      // === STEP 1: Deduct from admin wallet ===
+      adminWallet.balance.available -= rentalAmount;
+      
+      // Record transaction for admin (outgoing)
+      if (!adminWallet.transactions) {
+        adminWallet.transactions = [];
+      }
+      adminWallet.transactions.push({
+        type: 'PAYMENT',
+        amount: rentalAmount,
+        description: `Chuyển tiền thuê cho owner (SubOrder: ${subOrder.subOrderNumber})`,
+        relatedOrder: subOrderId,
+        timestamp: new Date(),
+        status: 'COMPLETED'
+      });
+
+      await adminWallet.save();
+      console.log(`✅ [Rental Transfer] Deducted ${rentalAmount} from admin wallet`);
+      console.log(`💳 [Rental Transfer] Admin new balance: ${adminWallet.balance.available}`);
+
+      // === STEP 2: Add to owner wallet ===
+      ownerWallet.balance.available += rentalAmount;
+
+      // Record transaction for owner (incoming)
+      if (!ownerWallet.transactions) {
+        ownerWallet.transactions = [];
+      }
+      ownerWallet.transactions.push({
+        type: 'PAYMENT',
+        amount: rentalAmount,
+        description: `Nhận tiền thuê từ hệ thống (SubOrder: ${subOrder.subOrderNumber})`,
+        relatedOrder: subOrderId,
+        timestamp: new Date(),
+        status: 'COMPLETED'
+      });
+
+      await ownerWallet.save();
+      console.log(`✅ [Rental Transfer] Added ${rentalAmount} to owner wallet`);
+      console.log(`💳 [Rental Transfer] Owner new balance: ${ownerWallet.balance.available}`);
+
+      // === STEP 3: Create transaction records ===
+      // Transaction for admin (outgoing)
+      const adminTransaction = new Transaction({
+        user: admin._id,
+        wallet: adminWallet._id,
+        type: 'order_payment',
+        amount: rentalAmount,
+        status: 'success',
+        description: `Chuyển tiền thuê cho owner (SubOrder: ${subOrder.subOrderNumber})`,
+        reference: subOrderId.toString(),
+        paymentMethod: 'wallet',
+        metadata: {
+          subOrderId: subOrderId.toString(),
+          masterOrderId: subOrder.masterOrder._id.toString(),
+          rentalAmount: rentalAmount,
+          ownerId: subOrder.owner._id.toString(),
+          renterId: subOrder.masterOrder.renter._id.toString(),
+          description: 'Rental transfer payment to owner'
+        },
+        processedAt: new Date()
+      });
+      await adminTransaction.save();
+      console.log(`✅ [Rental Transfer] Created transaction record for admin`);
+
+      // Transaction for owner (incoming)
+      const ownerTransaction = new Transaction({
+        user: owner._id,
+        wallet: ownerWallet._id,
+        type: 'order_payment',
+        amount: rentalAmount,
+        status: 'success',
+        description: `Nhận tiền thuê từ hệ thống (SubOrder: ${subOrder.subOrderNumber})`,
+        reference: subOrderId.toString(),
+        paymentMethod: 'wallet',
+        metadata: {
+          subOrderId: subOrderId.toString(),
+          masterOrderId: subOrder.masterOrder._id.toString(),
+          rentalAmount: rentalAmount,
+          adminId: admin._id.toString(),
+          renterId: subOrder.masterOrder.renter._id.toString(),
+          description: 'Rental transfer payment received from system'
+        },
+        processedAt: new Date()
+      });
+      await ownerTransaction.save();
+      console.log(`✅ [Rental Transfer] Created transaction record for owner`);
+
+      console.log(`[Rental Transfer] ======== END TRANSFERRING RENTAL TO OWNER ========\n`);
+
+      return {
+        success: true,
+        transferred: true,
+        amount: rentalAmount,
+        adminNewBalance: adminWallet.balance.available,
+        ownerNewBalance: ownerWallet.balance.available,
+        adminTransactionId: adminTransaction._id,
+        ownerTransactionId: ownerTransaction._id,
+        message: `Successfully transferred ${rentalAmount} to owner`
+      };
+    } catch (error) {
+      console.error(`❌ [Rental Transfer] Error in transferRentalToOwner:`, error.message);
+      console.error(`[Rental Transfer] Stack:`, error.stack);
       throw error;
     }
   }
