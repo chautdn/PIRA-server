@@ -452,6 +452,129 @@ class AdminService {
     };
   }
 
+  // ========== USER DETAILS (Orders, Products, Bank) ==========
+  async getUserOrders(userId) {
+    const mongoose = require('mongoose');
+    if (!mongoose.Types.ObjectId.isValid(userId)) {
+      throw new Error('ID người dùng không hợp lệ');
+    }
+
+    try {
+      const user = await User.findById(userId);
+      if (!user) {
+        throw new Error('Không tìm thấy người dùng');
+      }
+
+      // If user is OWNER, get orders containing their products through SubOrders
+      if (user.role === 'OWNER') {
+        const SubOrder = require('../models/SubOrder');
+        
+        // Find all SubOrders where the product belongs to this owner
+        const subOrders = await SubOrder.find({})
+          .populate({
+            path: 'product',
+            match: { owner: userId },
+            select: 'title images pricing status condition'
+          })
+          .populate({
+            path: 'masterOrder',
+            populate: {
+              path: 'renter',
+              select: 'profile.firstName profile.lastName email phone'
+            }
+          })
+          .sort({ createdAt: -1 })
+          .limit(50);
+
+        // Filter out subOrders where product didn't match (owner is different)
+        const filteredSubOrders = subOrders.filter(subOrder => subOrder.product);
+
+        return filteredSubOrders;
+      } else {
+        // If user is RENTER, get their rental orders
+        const orders = await Order.find({ renter: userId })
+          .populate('subOrders')
+          .populate({
+            path: 'subOrders',
+            populate: {
+              path: 'product',
+              select: 'title images pricing status owner',
+              populate: {
+                path: 'owner',
+                select: 'profile.firstName profile.lastName email'
+              }
+            }
+          })
+          .sort({ createdAt: -1 })
+          .limit(50);
+
+        return orders;
+      }
+    } catch (error) {
+      if (error.message === 'Không tìm thấy người dùng' || error.message === 'ID người dùng không hợp lệ') {
+        throw error;
+      }
+      throw new Error(`Lỗi khi lấy đơn hàng: ${error.message}`);
+    }
+  }
+
+  async getUserProducts(userId) {
+    const mongoose = require('mongoose');
+    if (!mongoose.Types.ObjectId.isValid(userId)) {
+      throw new Error('ID người dùng không hợp lệ');
+    }
+
+    try {
+      const user = await User.findById(userId);
+      if (!user) {
+        throw new Error('Không tìm thấy người dùng');
+      }
+
+      // Only get products for OWNER role
+      if (user.role === 'OWNER') {
+        const products = await Product.find({ owner: userId })
+          .populate('category', 'name icon')
+          .populate('subCategory', 'name')
+          .sort({ createdAt: -1 })
+          .limit(50);
+
+        return products;
+      }
+
+      return [];
+    } catch (error) {
+      if (error.message === 'Không tìm thấy người dùng' || error.message === 'ID người dùng không hợp lệ') {
+        throw error;
+      }
+      throw new Error(`Lỗi khi lấy sản phẩm: ${error.message}`);
+    }
+  }
+
+  async getUserBankAccount(userId) {
+    const mongoose = require('mongoose');
+    if (!mongoose.Types.ObjectId.isValid(userId)) {
+      throw new Error('ID người dùng không hợp lệ');
+    }
+
+    try {
+      const user = await User.findById(userId).select('bankAccount');
+      if (!user) {
+        throw new Error('Không tìm thấy người dùng');
+      }
+
+      return {
+        bankAccount: user.bankAccount || null,
+        verified: user.bankAccount?.isVerified || false,
+        status: user.bankAccount?.status || 'PENDING'
+      };
+    } catch (error) {
+      if (error.message === 'Không tìm thấy người dùng' || error.message === 'ID người dùng không hợp lệ') {
+        throw error;
+      }
+      throw new Error(`Lỗi khi lấy thông tin ngân hàng: ${error.message}`);
+    }
+  }
+
   // ========== PRODUCT MANAGEMENT ==========
   async getAllProducts(filters) {
     const { page = 1, limit = 10, status, search, category, sortBy = 'createdAt', sortOrder = 'desc' } = filters;

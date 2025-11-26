@@ -134,6 +134,52 @@ class AdminController {
     }
   }
 
+  // ========== USER DETAILS (Orders, Products, Bank) ==========
+  async getUserOrders(req, res) {
+    try {
+      const { userId } = req.params;
+      const orders = await adminService.getUserOrders(userId);
+      return responseUtils.success(res, orders, 'Lấy đơn hàng của người dùng thành công');
+    } catch (error) {
+      if (error.message === 'ID người dùng không hợp lệ') {
+        return responseUtils.error(res, error.message, 400);
+      } else if (error.message === 'Không tìm thấy người dùng') {
+        return responseUtils.error(res, error.message, 404);
+      }
+      return responseUtils.error(res, error.message, 500);
+    }
+  }
+
+  async getUserProducts(req, res) {
+    try {
+      const { userId } = req.params;
+      const products = await adminService.getUserProducts(userId);
+      return responseUtils.success(res, products, 'Lấy sản phẩm của người dùng thành công');
+    } catch (error) {
+      if (error.message === 'ID người dùng không hợp lệ') {
+        return responseUtils.error(res, error.message, 400);
+      } else if (error.message === 'Không tìm thấy người dùng') {
+        return responseUtils.error(res, error.message, 404);
+      }
+      return responseUtils.error(res, error.message, 500);
+    }
+  }
+
+  async getUserBankAccount(req, res) {
+    try {
+      const { userId } = req.params;
+      const bankAccount = await adminService.getUserBankAccount(userId);
+      return responseUtils.success(res, bankAccount, 'Lấy thông tin ngân hàng của người dùng thành công');
+    } catch (error) {
+      if (error.message === 'ID người dùng không hợp lệ') {
+        return responseUtils.error(res, error.message, 400);
+      } else if (error.message === 'Không tìm thấy người dùng') {
+        return responseUtils.error(res, error.message, 404);
+      }
+      return responseUtils.error(res, error.message, 500);
+    }
+  }
+
   // ========== PRODUCT MANAGEMENT ==========
   async getAllProducts(req, res) {
     try {
