@@ -220,12 +220,12 @@ node seeds/seed-owner-products.js
 
 ### Rental Orders Created
 
-| Sub Order | Product     | Status                     | Dates                               | Notes                 |
-| --------- | ----------- | -------------------------- | ----------------------------------- | --------------------- |
-| SO-XXX-1  | Sony A7 IV  | PENDING_OWNER_CONFIRMATION | Starts in 2 days                    | Awaiting owner action |
-| SO-XXX-2  | MacBook Pro | ACTIVE                     | Started 3 days ago, ends in 11 days | Currently in use      |
-| SO-XXX-3  | GoPro #1    | ACTIVE                     | Started yesterday, ends in 4 days   | Currently in use      |
-| SO-XXX-4  | GoPro #2    | ACTIVE                     | Started today, ends in 3 days       | Currently in use      |
+| Sub Order | Product     | Status               | Dates                               | Notes                 |
+| --------- | ----------- | -------------------- | ----------------------------------- | --------------------- |
+| SO-XXX-1  | Sony A7 IV  | PENDING_CONFIRMATION | Starts in 2 days                    | Awaiting owner action |
+| SO-XXX-2  | MacBook Pro | ACTIVE               | Started 3 days ago, ends in 11 days | Currently in use      |
+| SO-XXX-3  | GoPro #1    | ACTIVE               | Started yesterday, ends in 4 days   | Currently in use      |
+| SO-XXX-4  | GoPro #2    | ACTIVE               | Started today, ends in 3 days       | Currently in use      |
 
 ## Testing Scenarios
 
@@ -347,7 +347,7 @@ Expected: Only safe fields can be modified
 
 ### Rental Request Status
 
-- **PENDING_OWNER_CONFIRMATION**: Owner must approve/reject
+- **PENDING_CONFIRMATION**: Owner must approve/reject
 - **ACTIVE**: Rental is ongoing
 - **COMPLETED**: Rental finished, product returned
 - **CANCELLED**: Rental was cancelled

@@ -123,20 +123,83 @@ const subOrderSchema = new mongoose.Schema(
           }
         },
         // Thêm confirmation status cho từng product item
-        confirmationStatus: {
+        // Thêm delivery/shipping status cho từng product
+        productStatus: {
           type: String,
-          enum: ['PENDING', 'CONFIRMED', 'REJECTED'],
+          enum: [
+            // Confirmation Phase
+            'PENDING', // Chờ owner xác nhận
+            'CONFIRMED', // Owner đã xác nhận
+            'REJECTED', // Owner từ chối
+
+            // Delivery Phase         // Chờ shipper nhận hàng giao
+            'SHIPPER_CONFIRMED', // Shipper đã xác nhận nhận hàng
+            'IN_TRANSIT', // Đang vận chuyển đến người thuê
+            'DELIVERED', // Đã giao cho người thuê
+            'DELIVERY_FAILED', // Giao hàng thất bại
+
+            // Active Rental Phase
+            'ACTIVE', // Đang trong thời gian thuê
+            'DISPUTED', // Có tranh chấp
+
+            // Return Phase
+            'RETURN_REQUESTED', // Người thuê yêu cầu trả (bình thường hoặc sớm)
+            'EARLY_RETURN_REQUESTED', // Yêu cầu trả sớm (cần approval)
+            'RETURN_SHIPPER_CONFIRMED', // Shipper xác nhận nhận hàng trả
+            'RETURNING', // Đang trả hàng về owner
+            'RETURNED', // Đã trả về cho owner
+            'RETURN_FAILED', // Trả hàng thất bại
+
+            // Final States
+            'COMPLETED', // Hoàn thành
+            'CANCELLED' // Đã hủy
+          ],
           default: 'PENDING'
         },
+
+        // Shipment References
+        deliveryShipment: {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: 'Shipment'
+        },
+        returnShipment: {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: 'Shipment'
+        },
+
+        // Early Return Info
+        earlyReturn: {
+          //Returner's info(name, phone, email)
+          returner: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: 'User'
+          },
+          requested: {
+            type: Boolean,
+            default: false
+          },
+          requestedAt: Date,
+          reason: String
+        },
+
         rejectionReason: String,
         confirmedAt: Date,
         rejectedAt: Date,
+        actualReturnDate: Date, // Ngày trả thực tế (cho early return)
         totalRental: Number,
         totalDeposit: Number,
         totalShippingFee: {
           type: Number,
           default: 0 // Individual product shipping fee
-        }
+        },
+
+        // Disputes liên quan đến product này
+        disputes: [
+          {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: 'Dispute'
+          }
+        ]
       }
     ],
 
@@ -219,22 +282,23 @@ const subOrderSchema = new mongoose.Schema(
     status: {
       type: String,
       enum: [
-        'DRAFT',
-        'PENDING_OWNER_CONFIRMATION',
-        'OWNER_CONFIRMED',
-        'OWNER_REJECTED',
-        'PARTIALLY_CONFIRMED', // Một phần sản phẩm được xác nhận
-        'PARTIALLY_REJECTED', // Một phần sản phẩm bị từ chối
-        'RENTER_REJECTED', // Người thuê từ chối SubOrder đã partially confirmed
-        'READY_FOR_CONTRACT',
-        'CONTRACT_SIGNED',
-        'PROCESSING',
-        'SHIPPED',
-        'DELIVERED',
-        'ACTIVE',
-        'RETURNED',
-        'COMPLETED',
-        'CANCELLED'
+        // Order Creation
+        'DRAFT', // Đơn nháp
+        'PENDING_CONFIRMATION', // Chờ owner xác nhận
+
+        // Confirmation Results
+        'OWNER_CONFIRMED', // Owner xác nhận tất cả
+        'OWNER_REJECTED', // Owner từ chối tất cả
+        'PARTIALLY_CONFIRMED', // Owner xác nhận một phần
+        'RENTER_REJECTED', // Renter từ chối đơn partial
+
+        // Contract & Payment
+        'READY_FOR_CONTRACT', // Sẵn sàng ký hợp đồng
+        'CONTRACT_SIGNED', // Đã ký hợp đồng
+
+        // Final States
+        'COMPLETED', // Hoàn thành
+        'CANCELLED' // Đã hủy
       ],
       default: 'DRAFT'
     },
@@ -319,7 +383,7 @@ subOrderSchema.virtual('grandTotal').get(function () {
 subOrderSchema.virtual('confirmedAmount').get(function () {
   if (!this.products) return 0;
   return this.products.reduce((total, item) => {
-    if (item.confirmationStatus === 'CONFIRMED') {
+    if (item.status === 'CONFIRMED') {
       return total + (item.totalRental || 0) + (item.totalDeposit || 0);
     }
     return total;
@@ -329,7 +393,7 @@ subOrderSchema.virtual('confirmedAmount').get(function () {
 subOrderSchema.virtual('rejectedAmount').get(function () {
   if (!this.products) return 0;
   return this.products.reduce((total, item) => {
-    if (item.confirmationStatus === 'REJECTED') {
+    if (item.status === 'REJECTED') {
       return total + (item.totalRental || 0) + (item.totalDeposit || 0);
     }
     return total;
@@ -339,7 +403,7 @@ subOrderSchema.virtual('rejectedAmount').get(function () {
 subOrderSchema.virtual('pendingAmount').get(function () {
   if (!this.products) return 0;
   return this.products.reduce((total, item) => {
-    if (item.confirmationStatus === 'PENDING') {
+    if (item.status === 'PENDING') {
       return total + (item.totalRental || 0) + (item.totalDeposit || 0);
     }
     return total;
