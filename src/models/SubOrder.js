@@ -296,6 +296,9 @@ const subOrderSchema = new mongoose.Schema(
         'READY_FOR_CONTRACT', // Sẵn sàng ký hợp đồng
         'CONTRACT_SIGNED', // Đã ký hợp đồng
 
+        // Delivery / Renter confirmation
+        'DELIVERED', // Renter đã xác nhận đã nhận hàng (kích hoạt chuyển tiền)
+
         // Final States
         'COMPLETED', // Hoàn thành
         'CANCELLED' // Đã hủy

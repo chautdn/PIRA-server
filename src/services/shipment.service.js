@@ -73,7 +73,8 @@ class ShipmentService {
     shipment.status = 'DELIVERED';
     // mark renter confirmation on subOrder if available
     if (shipment.subOrder) {
-      shipment.subOrder.status = 'CONFIRM_DELIVERED';
+      // DELIVERED is the renter confirmation status
+      shipment.subOrder.status = 'DELIVERED';
       await shipment.subOrder.save();
 
       // Transfer payment to owner via system wallet
@@ -98,7 +99,8 @@ class ShipmentService {
     for (const s of shipments) {
       try {
         if (s.subOrder) {
-          s.subOrder.status = 'CONFIRM_DELIVERED';
+          // Auto-confirm as DELIVERED (renter confirmation auto after threshold)
+          s.subOrder.status = 'DELIVERED';
           await s.subOrder.save();
 
           const ownerId = s.subOrder.owner;

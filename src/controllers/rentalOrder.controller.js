@@ -2,6 +2,9 @@ const RentalOrderService = require('../services/rentalOrder.service');
 const MasterOrder = require('../models/MasterOrder');
 const SubOrder = require('../models/SubOrder');
 const Contract = require('../models/Contract');
+const Shipment = require('../models/Shipment');
+const ShipmentService = require('../services/shipment.service');
+const SystemWalletService = require('../services/systemWallet.service');
 const { SuccessResponse } = require('../core/success');
 const { BadRequest, NotFoundError, ForbiddenError } = require('../core/error');
 
@@ -1303,6 +1306,61 @@ class RentalOrderController {
         success: false,
         message: error.message || 'Không thể từ chối SubOrder'
       });
+    }
+  }
+
+  // Renter confirms delivery for a suborder (tries to find related shipment and confirm)
+  async renterConfirmDelivery(req, res) {
+    try {
+      const userId = req.user.id;
+      const subOrderId = req.params.id;
+
+      // Try to find a Shipment linked to this SubOrder
+      const shipment = await Shipment.findOne({ subOrder: subOrderId }).populate('subOrder');
+
+      if (shipment) {
+        // DELIVERED is set by the renter's confirmation (the button).
+        // If subOrder already marked DELIVERED, return current data to avoid double actions.
+        if (shipment.subOrder && shipment.subOrder.status === 'DELIVERED') {
+          return res.json({ status: 'success', data: shipment.subOrder });
+        }
+
+        const result = await ShipmentService.renterConfirmDelivered(shipment._id, userId);
+        return res.json({ status: 'success', data: result });
+      }
+
+      // Fallback: no shipment found, operate directly on SubOrder
+      const subOrder = await SubOrder.findById(subOrderId);
+      if (!subOrder) return res.status(404).json({ status: 'error', message: 'SubOrder not found' });
+
+      const masterOrder = await MasterOrder.findById(subOrder.masterOrder);
+      if (!masterOrder) return res.status(404).json({ status: 'error', message: 'MasterOrder not found' });
+      if (String(masterOrder.renter) !== String(userId)) return res.status(403).json({ status: 'error', message: 'No permission' });
+
+      // If subOrder is already marked DELIVERED, return immediately
+      if (subOrder.status === 'DELIVERED') {
+        return res.json({ status: 'success', data: subOrder });
+      }
+
+      // Mark as DELIVERED per renter confirmation
+      subOrder.status = 'DELIVERED';
+      await subOrder.save();
+
+      // Transfer payment to owner via SystemWallet (best-effort)
+      try {
+        const ownerId = subOrder.owner;
+        const amount = subOrder.pricing?.totalAmount || 0;
+        if (amount > 0) {
+          await SystemWalletService.transferToUser(process.env.SYSTEM_ADMIN_ID || null, ownerId, amount, `Auto transfer for subOrder ${subOrder._id}`);
+        }
+      } catch (err) {
+        console.error('Failed to transfer payment to owner (fallback):', err.message);
+      }
+
+      return res.json({ status: 'success', data: subOrder });
+    } catch (error) {
+      console.error('renterConfirmDelivery error', error.message);
+      return res.status(400).json({ status: 'error', message: error.message });
     }
   }
 }
