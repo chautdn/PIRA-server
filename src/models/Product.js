@@ -143,6 +143,7 @@ const productSchema = new mongoose.Schema(
         type: Boolean,
         default: true
       },
+      bufferDays: { type: Number, default: 1 },
       quantity: {
         type: Number,
         default: 1,

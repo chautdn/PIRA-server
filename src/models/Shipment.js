@@ -9,10 +9,21 @@ const shipmentSchema = new mongoose.Schema(
     },
 
     // Relationships
-    order: {
+    subOrder: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'SubOrder',
       required: true
+    },
+    // Reference đến product cụ thể trong SubOrder.products array
+    productId: {
+      type: mongoose.Schema.Types.ObjectId,
+      required: true
+    },
+    // Index của product trong mảng products của SubOrder
+    productIndex: {
+      type: Number,
+      required: true,
+      min: 0
     },
     shipper: {
       type: mongoose.Schema.Types.ObjectId,
@@ -22,8 +33,17 @@ const shipmentSchema = new mongoose.Schema(
     // Shipment Type
     type: {
       type: String,
-      enum: ['PICKUP', 'DELIVERY', 'RETURN'],
+      enum: ['DELIVERY', 'RETURN'],
       required: true
+    },
+
+    // Return Type (nếu là RETURN)
+    returnType: {
+      type: String,
+      enum: ['NORMAL', 'EARLY'], // Trả đúng hạn hoặc trả sớm
+      required: function () {
+        return this.type === 'RETURN';
+      }
     },
 
     // Locations
@@ -64,7 +84,14 @@ const shipmentSchema = new mongoose.Schema(
     // Status
     status: {
       type: String,
-      enum: ['PENDING', 'ASSIGNED', 'IN_TRANSIT', 'DELIVERED', 'FAILED', 'CANCELLED'],
+      enum: [
+        'PENDING', // Chờ shipper nhận
+        'SHIPPER_CONFIRMED', // Shipper đã xác nhận
+        'IN_TRANSIT', // Đang vận chuyển
+        'DELIVERED', // Đã giao thành công
+        'FAILED', // Giao/trả thất bại
+        'CANCELLED' // Đã hủy
+      ],
       default: 'PENDING'
     },
 
@@ -74,7 +101,8 @@ const shipmentSchema = new mongoose.Schema(
       deliveredAt: Date,
       notes: String,
       photos: [String],
-      signature: String
+      signature: String,
+      failureReason: String // Lý do thất bại
     },
 
     // Delivery Fee
@@ -83,15 +111,28 @@ const shipmentSchema = new mongoose.Schema(
       default: 0
     },
 
-    // Quality Check
+    // Quality Check (đặc biệt quan trọng cho RETURN)
     qualityCheck: {
       condition: {
         type: String,
         enum: ['EXCELLENT', 'GOOD', 'FAIR', 'DAMAGED']
       },
       notes: String,
-      photos: [String]
-    }
+      photos: [String],
+      checkedBy: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'User'
+      },
+      checkedAt: Date
+    },
+
+    // Disputes liên quan
+    disputes: [
+      {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'Dispute'
+      }
+    ]
   },
   {
     timestamps: true,
@@ -100,7 +141,8 @@ const shipmentSchema = new mongoose.Schema(
 );
 
 shipmentSchema.index({ shipmentId: 1 });
-shipmentSchema.index({ order: 1 });
+shipmentSchema.index({ subOrder: 1, productId: 1 });
 shipmentSchema.index({ shipper: 1, status: 1 });
+shipmentSchema.index({ type: 1, status: 1 });
 
 module.exports = mongoose.model('Shipment', shipmentSchema);

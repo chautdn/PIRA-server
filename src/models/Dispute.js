@@ -9,10 +9,25 @@ const disputeSchema = new mongoose.Schema(
     },
 
     // Relationships
-    order: {
+    subOrder: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: 'Order',
+      ref: 'SubOrder',
       required: true
+    },
+    // Reference đến product cụ thể
+    productId: {
+      type: mongoose.Schema.Types.ObjectId,
+      required: true
+    },
+    productIndex: {
+      type: Number,
+      required: true,
+      min: 0
+    },
+    // Shipment liên quan (nếu có)
+    shipment: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Shipment'
     },
     complainant: {
       type: mongoose.Schema.Types.ObjectId,
@@ -33,11 +48,13 @@ const disputeSchema = new mongoose.Schema(
     type: {
       type: String,
       enum: [
-        'PRODUCT_DAMAGE',
-        'LATE_RETURN',
-        'NOT_AS_DESCRIBED',
-        'PAYMENT_ISSUE',
-        'DELIVERY_ISSUE',
+        'PRODUCT_DAMAGE', // Sản phẩm bị hỏng
+        'PRODUCT_NOT_AS_DESCRIBED', // Không đúng mô tả
+        'DELIVERY_ISSUE', // Vấn đề giao hàng
+        'MISSING_ITEMS', // Thiếu hàng
+        'RETURN_ISSUE', // Vấn đề trả hàng
+        'DAMAGED_ON_RETURN', // Hư hỏng khi trả
+        'LATE_RETURN', // Trả hàng trễ
         'OTHER'
       ],
       required: true
@@ -66,7 +83,14 @@ const disputeSchema = new mongoose.Schema(
     // Status
     status: {
       type: String,
-      enum: ['OPEN', 'IN_PROGRESS', 'RESOLVED', 'CLOSED', 'ESCALATED'],
+      enum: [
+        'OPEN', // Mới tạo
+        'IN_PROGRESS', // Đang xử lý
+        'PENDING_EVIDENCE', // Chờ bằng chứng bổ sung
+        'ESCALATED', // Đã chuyển lên cấp cao hơn
+        'RESOLVED', // Đã giải quyết
+        'CLOSED' // Đã đóng
+      ],
       default: 'OPEN'
     },
 
@@ -88,6 +112,19 @@ const disputeSchema = new mongoose.Schema(
       compensationTo: {
         type: mongoose.Schema.Types.ObjectId,
         ref: 'User'
+      },
+      // Refund hoặc penalty
+      financialImpact: {
+        refundAmount: Number,
+        penaltyAmount: Number,
+        paidBy: {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: 'User'
+        },
+        paidTo: {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: 'User'
+        }
       }
     },
 
@@ -114,7 +151,7 @@ const disputeSchema = new mongoose.Schema(
 );
 
 disputeSchema.index({ disputeId: 1 });
-disputeSchema.index({ order: 1 });
+disputeSchema.index({ subOrder: 1, productId: 1 });
 disputeSchema.index({ complainant: 1 });
 disputeSchema.index({ status: 1, priority: 1 });
 

@@ -1,0 +1,8 @@
+// Placeholder file to ensure reports folder is tracked in git
+// Actual report files are gitignored
+
+// Example report structure:
+// reports/
+// ├── DEPLOYMENT_REPORT.md
+// ├── POSTMAN_TEST_GUIDE.md
+// └── RENTAL_SYSTEM_README.md

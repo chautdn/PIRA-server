@@ -36,7 +36,7 @@ class ContractGenerator {
         <div class="parties">
             <div class="party">
                 <h3>BÊN CHO THUÊ (Bên A)</h3>
-                <p><strong>Họ tên:</strong> ${order.owner.fullName || order.owner.profile?.firstName + ' ' + order.owner.profile?.lastName}</p>
+                <p><strong>Họ tên:</strong> ${ order.owner.profile?.firstName + ' ' + order.owner.profile?.lastName}</p>
                 <p><strong>Email:</strong> ${order.owner.email}</p>
                 <p><strong>Số điện thoại:</strong> ${order.owner.phone || order.owner.profile?.phone || 'N/A'}</p>
             </div>

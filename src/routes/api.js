@@ -34,6 +34,7 @@ require('./rentalOrder.routes');
 require('./report.routes');
 require('./wishlist.routes');
 require('./systemWallet.routes');
+require('./earlyReturn.routes.register');
 
 // Withdrawal routes
 const withdrawalRoutes = require('./withdrawal.routes');

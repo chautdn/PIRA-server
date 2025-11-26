@@ -37,9 +37,11 @@ class VietMapService {
 
       const response = await axios.get(url, {
         params: {
-          ...params,
-          point: `${lonOwner},${latOwner}`,
-          point: `${lonUser},${latUser}`
+          'api-version': '1.1',
+          apikey: this.apiKey,
+          point: [`${lonOwner},${latOwner}`, `${lonUser},${latUser}`],
+          vehicle: 'motorcycle',
+          optimize: 'true'
         }
       });
 
