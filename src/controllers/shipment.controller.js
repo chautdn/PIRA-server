@@ -1,0 +1,126 @@
+const ShipmentService = require('../services/shipment.service');
+const RentalOrderService = require('../services/rentalOrder.service');
+const User = require('../models/User');
+const SubOrder = require('../models/SubOrder');
+
+class ShipmentController {
+  async createShipment(req, res) {
+    try {
+      const payload = req.body || {};
+      const ownerId = req.user?._id;
+
+      // Validate subOrder belongs to owner
+      if (!payload.subOrder) return res.status(400).json({ status: 'error', message: 'subOrder is required' });
+      const subOrder = await SubOrder.findById(payload.subOrder);
+      if (!subOrder) return res.status(404).json({ status: 'error', message: 'SubOrder not found' });
+      if (String(subOrder.owner) !== String(ownerId)) return res.status(403).json({ status: 'error', message: 'You are not owner of this suborder' });
+
+      // If a shipperId is provided, ensure it exists
+      if (payload.shipper) {
+        const shipper = await User.findById(payload.shipper);
+        if (!shipper || shipper.role !== 'SHIPPER') {
+          return res.status(400).json({ status: 'error', message: 'Invalid shipper selected' });
+        }
+      }
+
+      payload.createdBy = ownerId;
+      payload.status = 'PENDING'; // owner sent request to shipper
+
+      const shipment = await ShipmentService.createShipment(payload);
+      return res.json({ status: 'success', message: 'Shipment request created', data: shipment });
+    } catch (err) {
+      console.error('createShipment error', err.message);
+      return res.status(400).json({ status: 'error', message: err.message });
+    }
+  }
+
+  async getShipment(req, res) {
+    try {
+      const shipment = await ShipmentService.getShipment(req.params.id);
+      if (!shipment) return res.status(404).json({ status: 'error', message: 'Not found' });
+      return res.json({ status: 'success', data: shipment });
+    } catch (err) {
+      console.error('getShipment error', err.message);
+      return res.status(400).json({ status: 'error', message: err.message });
+    }
+  }
+
+  async shipperAccept(req, res) {
+    try {
+      // only shipper can accept
+      if (req.user.role !== 'SHIPPER') return res.status(403).json({ status: 'error', message: 'Only shippers can accept shipments' });
+
+      const shipment = await ShipmentService.shipperAccept(req.params.id, req.user._id);
+      return res.json({ status: 'success', data: shipment });
+    } catch (err) {
+      console.error('shipperAccept error', err.message);
+      return res.status(400).json({ status: 'error', message: err.message });
+    }
+  }
+
+  async listMyShipments(req, res) {
+    try {
+      if (req.user.role !== 'SHIPPER') return res.status(403).json({ status: 'error', message: 'Only shippers can view their shipments' });
+      const shipments = await ShipmentService.listByShipper(req.user._id);
+      return res.json({ status: 'success', data: shipments });
+    } catch (err) {
+      console.error('listMyShipments error', err.message);
+      return res.status(400).json({ status: 'error', message: err.message });
+    }
+  }
+
+  // List shippers by ward or district
+  async listShippers(req, res) {
+    try {
+      const { ward, district, city } = req.query;
+      const filter = { role: 'SHIPPER', status: 'ACTIVE' };
+
+      // Use ward if provided (some users may store ward in address.ward)
+      if (ward) {
+        filter['address.ward'] = ward;
+      } else if (district) {
+        filter['address.district'] = district;
+      } else if (city) {
+        filter['address.city'] = city;
+      }
+
+      const shippers = await User.find(filter).select('profile firstName lastName profile avatar phone address');
+      return res.json({ status: 'success', data: shippers });
+    } catch (err) {
+      console.error('listShippers error', err.message);
+      return res.status(400).json({ status: 'error', message: err.message });
+    }
+  }
+
+  async pickup(req, res) {
+    try {
+      const shipment = await ShipmentService.updatePickup(req.params.id, req.body);
+      return res.json({ status: 'success', data: shipment });
+    } catch (err) {
+      console.error('pickup error', err.message);
+      return res.status(400).json({ status: 'error', message: err.message });
+    }
+  }
+
+  async deliver(req, res) {
+    try {
+      const shipment = await ShipmentService.markDelivered(req.params.id, req.body);
+      return res.json({ status: 'success', data: shipment });
+    } catch (err) {
+      console.error('deliver error', err.message);
+      return res.status(400).json({ status: 'error', message: err.message });
+    }
+  }
+
+  async renterConfirm(req, res) {
+    try {
+      const shipment = await ShipmentService.renterConfirmDelivered(req.params.id, req.user._id);
+      return res.json({ status: 'success', data: shipment });
+    } catch (err) {
+      console.error('renterConfirm error', err.message);
+      return res.status(400).json({ status: 'error', message: err.message });
+    }
+  }
+}
+
+module.exports = new ShipmentController();
