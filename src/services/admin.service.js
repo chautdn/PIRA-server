@@ -2,6 +2,7 @@ const User = require('../models/User');
 const Product = require('../models/Product');
 const Category = require('../models/Category');
 const Order = require('../models/MasterOrder');
+const SubOrder = require('../models/SubOrder');
 const Report = require('../models/Report');
 
 class AdminService {
@@ -127,17 +128,86 @@ class AdminService {
 
     const skip = (page - 1) * limit;
 
-    const [users, total] = await Promise.all([
+    const [users, total, stats] = await Promise.all([
       User.find(query)
         .select('-password')
         .sort({ createdAt: -1 })
         .skip(skip)
         .limit(parseInt(limit)),
-      User.countDocuments(query)
+      User.countDocuments(query),
+      // Get overall stats (not affected by search/role/status filters)
+      User.aggregate([
+        {
+          $facet: {
+            statusStats: [
+              {
+                $group: {
+                  _id: '$status',
+                  count: { $sum: 1 }
+                }
+              }
+            ],
+            roleStats: [
+              {
+                $group: {
+                  _id: '$role',
+                  count: { $sum: 1 }
+                }
+              }
+            ],
+            total: [
+              {
+                $count: 'count'
+              }
+            ]
+          }
+        }
+      ])
     ]);
+
+    // Process stats
+    const userStats = {
+      total: 0,
+      active: 0,
+      inactive: 0,
+      suspended: 0,
+      owners: 0,
+      renters: 0,
+      admins: 0
+    };
+
+    if (stats && stats.length > 0) {
+      const { statusStats, roleStats, total: totalCount } = stats[0];
+      
+      // Total users
+      userStats.total = totalCount && totalCount.length > 0 ? totalCount[0].count : 0;
+      
+      // Status stats
+      statusStats.forEach(stat => {
+        if (stat._id === 'ACTIVE') {
+          userStats.active = stat.count;
+        } else if (stat._id === 'INACTIVE') {
+          userStats.inactive = stat.count;
+        } else if (stat._id === 'SUSPENDED') {
+          userStats.suspended = stat.count;
+        }
+      });
+      
+      // Role stats
+      roleStats.forEach(stat => {
+        if (stat._id === 'OWNER') {
+          userStats.owners = stat.count;
+        } else if (stat._id === 'RENTER') {
+          userStats.renters = stat.count;
+        } else if (stat._id === 'ADMIN') {
+          userStats.admins = stat.count;
+        }
+      });
+    }
 
     return {
       users,
+      stats: userStats,
       pagination: {
         currentPage: parseInt(page),
         totalPages: Math.ceil(total / limit),
@@ -307,61 +377,38 @@ class AdminService {
     }
   }
 
-  async updateUserCreditScore(userId, creditScore, adminId) {
-    // Validate ObjectId format
-    const mongoose = require('mongoose');
-    if (!mongoose.Types.ObjectId.isValid(userId)) {
-      throw new Error('ID người dùng không hợp lệ');
-    }
+  // async updateUserCreditScore(userId, creditScore, adminId) {
+  //   // Validate ObjectId format
+  //   const mongoose = require('mongoose');
+  //   if (!mongoose.Types.ObjectId.isValid(userId)) {
+  //     throw new Error('ID người dùng không hợp lệ');
+  //   }
 
-    // Validate creditScore
-    const score = parseInt(creditScore);
-    if (isNaN(score) || score < 0 || score > 1000) {
-      throw new Error('Điểm tín dụng phải là số từ 0 đến 1000');
-    }
+  //   // Validate creditScore
+  //   const score = parseInt(creditScore);
+  //   if (isNaN(score) || score < 0 || score > 1000) {
+  //     throw new Error('Điểm tín dụng phải là số từ 0 đến 1000');
+  //   }
 
-    if (userId === adminId) {
-      throw new Error('Không thể thay đổi điểm tín dụng của chính mình');
-    }
+  //   if (userId === adminId) {
+  //     throw new Error('Không thể thay đổi điểm tín dụng của chính mình');
+  //   }
 
-    const user = await User.findByIdAndUpdate(
-      userId,
-      { 
-        creditScore: score,
-        updatedAt: new Date()
-      },
-      { new: true, runValidators: true }
-    ).select('-password');
+  //   const user = await User.findByIdAndUpdate(
+  //     userId,
+  //     { 
+  //       creditScore: score,
+  //       updatedAt: new Date()
+  //     },
+  //     { new: true, runValidators: true }
+  //   ).select('-password');
 
-    if (!user) {
-      throw new Error('Không tìm thấy người dùng');
-    }
+  //   if (!user) {
+  //     throw new Error('Không tìm thấy người dùng');
+  //   }
 
-    return user;
-  }
-
-  async deleteUser(userId, adminId) {
-    if (userId === adminId) {
-      throw new Error('Không thể xóa tài khoản của chính mình');
-    }
-
-    const user = await User.findById(userId);
-    if (!user) {
-      throw new Error('Không tìm thấy người dùng');
-    }
-
-    // Check if user has active orders
-    const activeOrders = await Order.countDocuments({ 
-      user: userId, 
-      status: { $in: ['PENDING', 'CONFIRMED', 'IN_PROGRESS'] }
-    });
-
-    if (activeOrders > 0) {
-      throw new Error('Không thể xóa người dùng có đơn hàng đang xử lý');
-    }
-
-    await User.findByIdAndDelete(userId);
-  }
+  //   return user;
+  // }
 
   async bulkUpdateUsers(userIds, updateData, adminId) {
     // Validate userIds
@@ -405,9 +452,132 @@ class AdminService {
     };
   }
 
+  // ========== USER DETAILS (Orders, Products, Bank) ==========
+  async getUserOrders(userId) {
+    const mongoose = require('mongoose');
+    if (!mongoose.Types.ObjectId.isValid(userId)) {
+      throw new Error('ID người dùng không hợp lệ');
+    }
+
+    try {
+      const user = await User.findById(userId);
+      if (!user) {
+        throw new Error('Không tìm thấy người dùng');
+      }
+
+      // If user is OWNER, get orders containing their products through SubOrders
+      if (user.role === 'OWNER') {
+        const SubOrder = require('../models/SubOrder');
+        
+        // Find all SubOrders where the product belongs to this owner
+        const subOrders = await SubOrder.find({})
+          .populate({
+            path: 'product',
+            match: { owner: userId },
+            select: 'title images pricing status condition'
+          })
+          .populate({
+            path: 'masterOrder',
+            populate: {
+              path: 'renter',
+              select: 'profile.firstName profile.lastName email phone'
+            }
+          })
+          .sort({ createdAt: -1 })
+          .limit(50);
+
+        // Filter out subOrders where product didn't match (owner is different)
+        const filteredSubOrders = subOrders.filter(subOrder => subOrder.product);
+
+        return filteredSubOrders;
+      } else {
+        // If user is RENTER, get their rental orders
+        const orders = await Order.find({ renter: userId })
+          .populate('subOrders')
+          .populate({
+            path: 'subOrders',
+            populate: {
+              path: 'product',
+              select: 'title images pricing status owner',
+              populate: {
+                path: 'owner',
+                select: 'profile.firstName profile.lastName email'
+              }
+            }
+          })
+          .sort({ createdAt: -1 })
+          .limit(50);
+
+        return orders;
+      }
+    } catch (error) {
+      if (error.message === 'Không tìm thấy người dùng' || error.message === 'ID người dùng không hợp lệ') {
+        throw error;
+      }
+      throw new Error(`Lỗi khi lấy đơn hàng: ${error.message}`);
+    }
+  }
+
+  async getUserProducts(userId) {
+    const mongoose = require('mongoose');
+    if (!mongoose.Types.ObjectId.isValid(userId)) {
+      throw new Error('ID người dùng không hợp lệ');
+    }
+
+    try {
+      const user = await User.findById(userId);
+      if (!user) {
+        throw new Error('Không tìm thấy người dùng');
+      }
+
+      // Only get products for OWNER role
+      if (user.role === 'OWNER') {
+        const products = await Product.find({ owner: userId })
+          .populate('category', 'name icon')
+          .populate('subCategory', 'name')
+          .sort({ createdAt: -1 })
+          .limit(50);
+
+        return products;
+      }
+
+      return [];
+    } catch (error) {
+      if (error.message === 'Không tìm thấy người dùng' || error.message === 'ID người dùng không hợp lệ') {
+        throw error;
+      }
+      throw new Error(`Lỗi khi lấy sản phẩm: ${error.message}`);
+    }
+  }
+
+  async getUserBankAccount(userId) {
+    const mongoose = require('mongoose');
+    if (!mongoose.Types.ObjectId.isValid(userId)) {
+      throw new Error('ID người dùng không hợp lệ');
+    }
+
+    try {
+      const user = await User.findById(userId).select('bankAccount');
+      if (!user) {
+        throw new Error('Không tìm thấy người dùng');
+      }
+
+      return {
+        bankAccount: user.bankAccount || null,
+        verified: user.bankAccount?.isVerified || false,
+        status: user.bankAccount?.status || 'PENDING'
+      };
+    } catch (error) {
+      if (error.message === 'Không tìm thấy người dùng' || error.message === 'ID người dùng không hợp lệ') {
+        throw error;
+      }
+      throw new Error(`Lỗi khi lấy thông tin ngân hàng: ${error.message}`);
+    }
+  }
+
   // ========== PRODUCT MANAGEMENT ==========
   async getAllProducts(filters) {
-    const { page = 1, limit = 10, status, search, category } = filters;
+    const { page = 1, limit = 10, status, search, category, sortBy = 'createdAt', sortOrder = 'desc' } = filters;
     
     let query = {};
 
@@ -417,7 +587,7 @@ class AdminService {
 
     if (search) {
       query.$or = [
-        { name: { $regex: search, $options: 'i' } },
+        { title: { $regex: search, $options: 'i' } },
         { description: { $regex: search, $options: 'i' } }
       ];
     }
@@ -426,118 +596,397 @@ class AdminService {
       query.category = category;
     }
 
-    const skip = (page - 1) * limit;
+     const skip = (parseInt(page) - 1) * parseInt(limit);
 
-    const [products, total] = await Promise.all([
-      Product.find(query)
-        .populate('owner', 'profile.firstName profile.lastName email')
-        .populate('category', 'name')
-        .sort({ createdAt: -1 })
-        .skip(skip)
-        .limit(parseInt(limit)),
-      Product.countDocuments(query)
-    ]);
+    const sortOptions = {};
+    sortOptions[sortBy] = sortOrder === 'desc' ? -1 : 1;
 
-    return {
-      products,
-      pagination: {
-        currentPage: parseInt(page),
-        totalPages: Math.ceil(total / limit),
-        totalProducts: total,
-        limit: parseInt(limit)
-      }
-    };
-  }
+    try {
+      const [products, total] = await Promise.all([
+        Product.find(query)
+          .populate('owner', 'fullName username email phone profile')
+          .populate('category', 'name slug level priority')
+          .populate('subCategory', 'name slug level priority')
+          .sort(sortOptions)
+          .skip(skip)
+          .limit(parseInt(limit)),
+        Product.countDocuments(query)
+      ]);
 
-  async approveProduct(productId, adminId) {
-    const product = await Product.findByIdAndUpdate(
-      productId,
-      { 
-        status: 'APPROVED',
-        'moderation.approvedBy': adminId,
-        'moderation.approvedAt': new Date(),
-        updatedAt: new Date()
-      },
-      { new: true }
-    ).populate('owner', 'profile.firstName profile.lastName email');
-
-    if (!product) {
-      throw new Error('Không tìm thấy sản phẩm');
+      return {
+        products,
+        pagination: {
+          currentPage: parseInt(page),
+          totalPages: Math.ceil(total / parseInt(limit)),
+          totalProducts: total,
+          limit: parseInt(limit)
+        }
+      };
+    } catch (error) {
+      console.error('Error in getAllProducts:', error);
+      throw new Error(`Lỗi khi lấy danh sách sản phẩm: ${error.message}`);
     }
-
-    return product;
   }
-
-  async rejectProduct(productId, reason, adminId) {
-    if (!reason) {
-      throw new Error('Vui lòng nhập lý do từ chối');
-    }
-
-    const product = await Product.findByIdAndUpdate(
-      productId,
-      { 
-        status: 'REJECTED',
-        'moderation.rejectedBy': adminId,
-        'moderation.rejectedAt': new Date(),
-        'moderation.rejectionReason': reason,
-        updatedAt: new Date()
-      },
-      { new: true }
-    ).populate('owner', 'profile.firstName profile.lastName email');
-
-    if (!product) {
-      throw new Error('Không tìm thấy sản phẩm');
-    }
-
-    return product;
-  }
-
-  // ========== CATEGORY MANAGEMENT ==========
-  async getAllCategories() {
-    return await Category.find().sort({ name: 1 });
-  }
-
-  async createCategory(categoryData, adminId) {
-    const category = new Category({
-      ...categoryData,
-      createdBy: adminId
-    });
-
-    await category.save();
-    return category;
-  }
-
-  async updateCategory(categoryId, updateData, adminId) {
-    const category = await Category.findByIdAndUpdate(
-      categoryId,
-      { 
-        ...updateData,
-        updatedBy: adminId,
-        updatedAt: new Date()
-      },
-      { new: true, runValidators: true }
-    );
-
-    if (!category) {
-      throw new Error('Không tìm thấy danh mục');
-    }
-
-    return category;
-  }
-
-  async deleteCategory(categoryId, adminId) {
-    // Check if any products are using this category
-    const productCount = await Product.countDocuments({ category: categoryId });
+  async getProductById(productId) {
+    console.log('=== Admin Service getProductById ===');
+    console.log('ProductId received:', productId);
+    console.log('ProductId type:', typeof productId);
     
-    if (productCount > 0) {
-      throw new Error(`Không thể xóa danh mục vì có ${productCount} sản phẩm đang sử dụng`);
+    // Validate productId
+    if (!productId) {
+      console.log('ProductId is missing');
+      throw new Error('ID sản phẩm không hợp lệ');
     }
 
-    const category = await Category.findByIdAndDelete(categoryId);
-    if (!category) {
-      throw new Error('Không tìm thấy danh mục');
+    const mongoose = require('mongoose');
+    if (!mongoose.Types.ObjectId.isValid(productId)) {
+      console.log('ProductId is not a valid ObjectId:', productId);
+      throw new Error('ID sản phẩm không hợp lệ');
+    }
+
+    try {
+      console.log('Searching for product in database...');
+      const product = await Product.findById(productId)
+        .populate('owner', 'fullName username email phone profile createdAt')
+        .populate('category', 'name slug description')
+        .populate('subCategory', 'name slug description')
+        .lean(); // Convert to plain object for better performance
+
+      console.log('Database query completed');
+      console.log('Product found:', !!product);
+      
+      if (!product) {
+        console.log('Product not found in database');
+        throw new Error('Không tìm thấy sản phẩm');
+      }
+
+      // Calculate real-time metrics from Review collection
+      const Review = require('../models/Review');
+      const reviewStats = await Review.aggregate([
+        {
+          $match: {
+            product: new mongoose.Types.ObjectId(productId),
+            status: 'APPROVED' // Only count approved reviews
+          }
+        },
+        {
+          $group: {
+            _id: null,
+            averageRating: { $avg: '$rating' },
+            reviewCount: { $sum: 1 }
+          }
+        }
+      ]);
+
+      // Update product metrics with real data from reviews
+      if (reviewStats.length > 0) {
+        product.metrics = product.metrics || {};
+        product.metrics.averageRating = Math.round(reviewStats[0].averageRating * 10) / 10; // Round to 1 decimal
+        product.metrics.reviewCount = reviewStats[0].reviewCount;
+        console.log('Updated metrics from reviews:', product.metrics);
+      } else {
+        // No reviews yet
+        product.metrics = product.metrics || {};
+        product.metrics.averageRating = 0;
+        product.metrics.reviewCount = 0;
+        console.log('No approved reviews found for this product');
+      }
+
+      console.log('Product data retrieved successfully');
+      console.log('Product title:', product.title);
+      console.log('Product status:', product.status);
+      console.log('Product owner:', product.owner?.email);
+      console.log('Product metrics:', product.metrics);
+      
+      return product;
+    } catch (error) {
+      console.error('=== Admin Service getProductById ERROR ===');
+      console.error('Error during database query:', error.message);
+      console.error('Error stack:', error.stack);
+      console.error('========================================');
+      
+      if (error.message === 'Không tìm thấy sản phẩm') {
+        throw error;
+      }
+      
+      throw new Error('Lỗi khi truy xuất dữ liệu sản phẩm');
     }
   }
+
+  async updateProductStatus(productId, status, adminId) {
+    console.log('=== Admin Service updateProductStatus ===');
+    console.log('Input params:', { productId, status, adminId });
+    
+    // Validate productId
+    if (!productId) {
+      throw new Error('ID sản phẩm không hợp lệ');
+    }
+
+    const mongoose = require('mongoose');
+    if (!mongoose.Types.ObjectId.isValid(productId)) {
+      throw new Error('ID sản phẩm không hợp lệ');
+    }
+
+    // Validate status
+    const validStatuses = ['DRAFT', 'PENDING', 'ACTIVE', 'RENTED', 'INACTIVE', 'SUSPENDED'];
+    if (!validStatuses.includes(status)) {
+      throw new Error(`Trạng thái không hợp lệ. Trạng thái hợp lệ: ${validStatuses.join(', ')}`);
+    }
+
+    try {
+      const updateData = { 
+        status,
+        updatedAt: new Date()
+      };
+
+      // Add moderation info based on status
+      if (status === 'ACTIVE') {
+        updateData['moderation.approvedBy'] = adminId;
+        updateData['moderation.approvedAt'] = new Date();
+      } else if (status === 'SUSPENDED') {
+        updateData['moderation.suspendedBy'] = adminId;
+        updateData['moderation.suspendedAt'] = new Date();
+      }
+
+      console.log('Updating product with data:', updateData);
+      
+      const product = await Product.findByIdAndUpdate(
+        productId,
+        updateData,
+        { new: true, runValidators: true }
+      )
+      .populate('owner', 'fullName username email phone')
+      .populate('category', 'name slug');
+
+      if (!product) {
+        throw new Error('Không tìm thấy sản phẩm');
+      }
+
+      console.log('Product status updated successfully:', product.status);
+
+      // Gửi email thông báo nếu sản phẩm bị đình chỉ
+      if (status === 'SUSPENDED' && product.owner && product.owner.email) {
+        try {
+          const sendMail = require('../utils/mailer');
+          const emailTemplates = require('../utils/emailTemplates');
+          
+          const ownerName = product.owner.fullName || product.owner.username || 'Chủ sản phẩm';
+          const suspendedAt = new Date().toLocaleString('vi-VN', {
+            year: 'numeric',
+            month: 'long',
+            day: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit'
+          });
+          
+          const suspensionReason = product.moderation?.suspensionReason || 'Sản phẩm vi phạm quy định của hệ thống';
+          
+          await sendMail({
+            email: product.owner.email,
+            subject: '⚠️ Thông báo: Sản phẩm của bạn đã bị đình chỉ',
+            html: emailTemplates.productSuspendedEmail(
+              ownerName,
+              product.title,
+              suspensionReason,
+              suspendedAt
+            )
+          });
+          
+          console.log('Suspension notification email sent to:', product.owner.email);
+        } catch (emailError) {
+          console.error('Error sending suspension email:', emailError.message);
+          // Không throw error để không ảnh hưởng đến việc đình chỉ sản phẩm
+        }
+      }
+
+      return product;
+    } catch (error) {
+      console.error('Error updating product status:', error.message);
+      
+      if (error.message === 'Không tìm thấy sản phẩm') {
+        throw error;
+      }
+      
+      throw new Error('Lỗi khi cập nhật trạng thái sản phẩm');
+    }
+  }
+
+  // async approveProduct(productId, adminId) {
+  //   const product = await Product.findByIdAndUpdate(
+  //     productId,
+  //     { 
+  //       status: 'APPROVED',
+  //       'moderation.approvedBy': adminId,
+  //       'moderation.approvedAt': new Date(),
+  //       updatedAt: new Date()
+  //     },
+  //     { new: true }
+  //   ).populate('owner', 'profile.firstName profile.lastName email');
+
+  //   if (!product) {
+  //     throw new Error('Không tìm thấy sản phẩm');
+  //   }
+
+  //   return product;
+  // }
+
+  // async rejectProduct(productId, reason, adminId) {
+  //   if (!reason) {
+  //     throw new Error('Vui lòng nhập lý do từ chối');
+  //   }
+
+  //   const product = await Product.findByIdAndUpdate(
+  //     productId,
+  //     { 
+  //       status: 'REJECTED',
+  //       'moderation.rejectedBy': adminId,
+  //       'moderation.rejectedAt': new Date(),
+  //       'moderation.rejectionReason': reason,
+  //       updatedAt: new Date()
+  //     },
+  //     { new: true }
+  //   ).populate('owner', 'profile.firstName profile.lastName email');
+
+  //   if (!product) {
+  //     throw new Error('Không tìm thấy sản phẩm');
+  //   }
+
+  //   return product;
+  // }
+
+  async suspendProduct(productId, adminId, reason = '') {
+    console.log('=== Admin Service suspendProduct ===');
+    console.log('Input params:', { productId, adminId, reason });
+    
+    // Validate productId
+    if (!productId) {
+      throw new Error('ID sản phẩm không hợp lệ');
+    }
+
+    const mongoose = require('mongoose');
+    if (!mongoose.Types.ObjectId.isValid(productId)) {
+      throw new Error('ID sản phẩm không hợp lệ');
+    }
+
+    try {
+      const updateData = { 
+        status: 'SUSPENDED',
+        updatedAt: new Date(),
+        'moderation.suspendedBy': adminId,
+        'moderation.suspendedAt': new Date()
+      };
+
+      if (reason) {
+        updateData['moderation.suspensionReason'] = reason;
+      }
+
+      console.log('Suspending product with data:', updateData);
+      
+      const product = await Product.findByIdAndUpdate(
+        productId,
+        updateData,
+        { new: true, runValidators: true }
+      )
+      .populate('owner', 'fullName username email phone')
+      .populate('category', 'name slug');
+
+      if (!product) {
+        throw new Error('Không tìm thấy sản phẩm');
+      }
+
+      console.log('Product suspended successfully:', product._id);
+
+      // Gửi email thông báo cho chủ sản phẩm
+      if (product.owner && product.owner.email) {
+        try {
+          const sendMail = require('../utils/mailer');
+          const emailTemplates = require('../utils/emailTemplates');
+          
+          const ownerName = product.owner.fullName || product.owner.username || 'Chủ sản phẩm';
+          const suspendedAt = new Date().toLocaleString('vi-VN', {
+            year: 'numeric',
+            month: 'long',
+            day: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit'
+          });
+          
+          await sendMail({
+            email: product.owner.email,
+            subject: '⚠️ Thông báo: Sản phẩm của bạn đã bị đình chỉ',
+            html: emailTemplates.productSuspendedEmail(
+              ownerName,
+              product.title,
+              reason || 'Sản phẩm vi phạm quy định của hệ thống',
+              suspendedAt
+            )
+          });
+          
+          console.log('Suspension notification email sent to:', product.owner.email);
+        } catch (emailError) {
+          console.error('Error sending suspension email:', emailError.message);
+          // Không throw error để không ảnh hưởng đến việc đình chỉ sản phẩm
+        }
+      }
+
+      return product;
+    } catch (error) {
+      console.error('Error suspending product:', error.message);
+      
+      if (error.message === 'Không tìm thấy sản phẩm') {
+        throw error;
+      }
+      
+      throw new Error('Lỗi khi đình chỉ sản phẩm');
+    }
+  }
+
+  // // ========== CATEGORY MANAGEMENT ==========
+  // async getAllCategories() {
+  //   return await Category.find().sort({ name: 1 });
+  // }
+
+  // async createCategory(categoryData, adminId) {
+  //   const category = new Category({
+  //     ...categoryData,
+  //     createdBy: adminId
+  //   });
+
+  //   await category.save();
+  //   return category;
+  // }
+
+  // async updateCategory(categoryId, updateData, adminId) {
+  //   const category = await Category.findByIdAndUpdate(
+  //     categoryId,
+  //     { 
+  //       ...updateData,
+  //       updatedBy: adminId,
+  //       updatedAt: new Date()
+  //     },
+  //     { new: true, runValidators: true }
+  //   );
+
+  //   if (!category) {
+  //     throw new Error('Không tìm thấy danh mục');
+  //   }
+
+  //   return category;
+  // }
+
+  // async deleteCategory(categoryId, adminId) {
+  //   // Check if any products are using this category
+  //   const productCount = await Product.countDocuments({ category: categoryId });
+    
+  //   if (productCount > 0) {
+  //     throw new Error(`Không thể xóa danh mục vì có ${productCount} sản phẩm đang sử dụng`);
+  //   }
+
+  //   const category = await Category.findByIdAndDelete(categoryId);
+  //   if (!category) {
+  //     throw new Error('Không tìm thấy danh mục');
+  //   }
+  // }
 
   // ========== ORDER MANAGEMENT ==========
   async getAllOrders(filters) {
@@ -550,23 +999,61 @@ class AdminService {
     }
 
     if (search) {
-      query.orderNumber = { $regex: search, $options: 'i' };
+      query.masterOrderNumber = { $regex: search, $options: 'i' };
     }
 
     const skip = (page - 1) * limit;
 
-    const [orders, total] = await Promise.all([
+    const [orders, total, stats] = await Promise.all([
       Order.find(query)
-        .populate('user', 'profile.firstName profile.lastName email')
-        .populate('items.product', 'name images price')
+        .populate('renter', 'fullName username email phone profile')
+        .populate({
+          path: 'subOrders',
+          populate: [
+            { path: 'owner', select: 'fullName username email' },
+            { path: 'products.product', select: 'title images pricing' }
+          ]
+        })
         .sort({ createdAt: -1 })
         .skip(skip)
         .limit(parseInt(limit)),
-      Order.countDocuments(query)
+      Order.countDocuments(query),
+      // Get overall stats (not affected by search/status filters)
+      Order.aggregate([
+        {
+          $group: {
+            _id: '$status',
+            count: { $sum: 1 }
+          }
+        }
+      ])
     ]);
+
+    // Process stats
+    const statusStats = {
+      total: 0,
+      active: 0,
+      pending: 0,
+      completed: 0,
+      cancelled: 0
+    };
+
+    stats.forEach(stat => {
+      statusStats.total += stat.count;
+      if (stat._id === 'ACTIVE') {
+        statusStats.active = stat.count;
+      } else if (stat._id === 'PENDING' || stat._id === 'PENDING_PAYMENT' || stat._id === 'PENDING_CONFIRMATION') {
+        statusStats.pending += stat.count;
+      } else if (stat._id === 'COMPLETED') {
+        statusStats.completed = stat.count;
+      } else if (stat._id === 'CANCELLED') {
+        statusStats.cancelled = stat.count;
+      }
+    });
 
     return {
       orders,
+      stats: statusStats,
       pagination: {
         currentPage: parseInt(page),
         totalPages: Math.ceil(total / limit),
@@ -578,9 +1065,24 @@ class AdminService {
 
   async getOrderById(orderId) {
     const order = await Order.findById(orderId)
-      .populate('user', 'profile.firstName profile.lastName email phone')
-      .populate('items.product', 'name images price category')
-      .populate('items.product.category', 'name');
+      .populate('renter', 'fullName username email phone profile address')
+      .populate({
+        path: 'subOrders',
+        populate: [
+          { 
+            path: 'owner', 
+            select: 'fullName username email phone profile' 
+          },
+          { 
+            path: 'products.product', 
+            select: 'title description images pricing status category',
+            populate: {
+              path: 'category',
+              select: 'name slug'
+            }
+          }
+        ]
+      });
 
     if (!order) {
       throw new Error('Không tìm thấy đơn hàng');
@@ -589,82 +1091,147 @@ class AdminService {
     return order;
   }
 
-  // ========== REPORT MANAGEMENT ==========
-  async getAllReports(filters) {
-    const { page = 1, limit = 10, type, status } = filters;
-    
-    let query = {};
+  async updateOrderStatus(orderId, status) {
+    const validStatuses = [
+      'DRAFT',
+      'PENDING_PAYMENT',
+      'PAYMENT_COMPLETED',
+      'PENDING_CONFIRMATION',
+      'READY_FOR_CONTRACT',
+      'CONTRACT_SIGNED',
+      'PROCESSING',
+      'DELIVERED',
+      'ACTIVE',
+      'COMPLETED',
+      'CANCELLED'
+    ];
 
-    if (type && type !== 'all') {
-      query.type = type;
+    if (!validStatuses.includes(status)) {
+      throw new Error('Trạng thái không hợp lệ');
     }
 
-    if (status && status !== 'all') {
-      query.status = status;
+    const order = await Order.findByIdAndUpdate(
+      orderId,
+      { status },
+      { new: true }
+    )
+      .populate('renter', 'fullName username email')
+      .populate('subOrders');
+
+    if (!order) {
+      throw new Error('Không tìm thấy đơn hàng');
     }
 
-    const skip = (page - 1) * limit;
-
-    const [reports, total] = await Promise.all([
-      Report.find(query)
-        .populate('reporter', 'profile.firstName profile.lastName email')
-        .populate('reportedUser', 'profile.firstName profile.lastName email')
-        .populate('reportedProduct', 'name images')
-        .sort({ createdAt: -1 })
-        .skip(skip)
-        .limit(parseInt(limit)),
-      Report.countDocuments(query)
-    ]);
-
-    return {
-      reports,
-      pagination: {
-        currentPage: parseInt(page),
-        totalPages: Math.ceil(total / limit),
-        totalReports: total,
-        limit: parseInt(limit)
-      }
-    };
+    return order;
   }
 
-  async resolveReport(reportId, action, note, adminId) {
-    const validActions = ['DISMISS', 'WARNING', 'SUSPEND', 'BAN'];
-    if (!validActions.includes(action)) {
-      throw new Error('Hành động không hợp lệ');
-    }
+ // ========== REPORT MANAGEMENT ==========
+  async getAllReports(filters) {
+    try {
+      const { page = 1, limit = 10, search, reportType, status } = filters;
+      const skip = (page - 1) * limit;
+      
+      // Build filter query
+      let query = {};
+      
+      if (search) {
+        query.$or = [
+          { reason: { $regex: search, $options: 'i' } },
+          { description: { $regex: search, $options: 'i' } },
+          { adminNotes: { $regex: search, $options: 'i' } }
+        ];
+      }
+      
+      if (reportType) {
+        query.reportType = reportType;
+      }
+      
+      if (status) {
+        query.status = status;
+      }
 
-    const report = await Report.findByIdAndUpdate(
-      reportId,
-      { 
-        status: 'RESOLVED',
-        resolution: {
-          action,
-          note,
-          resolvedBy: adminId,
-          resolvedAt: new Date()
-        },
-        updatedAt: new Date()
-      },
-      { new: true }
-    ).populate('reporter', 'profile.firstName profile.lastName email')
-     .populate('reportedUser', 'profile.firstName profile.lastName email');
+      const [reports, total] = await Promise.all([
+        Report.find(query)
+          .populate('reporter', 'fullName email avatar')
+          .populate('reportedItem', 'title images price status')
+          .sort({ createdAt: -1 })
+          .skip(skip)
+          .limit(parseInt(limit)),
+        Report.countDocuments(query)
+      ]);
 
-    if (!report) {
-      throw new Error('Không tìm thấy báo cáo');
-    }
-
-    // Apply action to reported user if needed
-    if (report.reportedUser && ['SUSPEND', 'BAN'].includes(action)) {
-      await User.findByIdAndUpdate(
-        report.reportedUser._id,
-        { 
-          status: action === 'SUSPEND' ? 'SUSPENDED' : 'INACTIVE',
-          updatedAt: new Date()
+      return {
+        reports,
+        pagination: {
+          currentPage: parseInt(page),
+          totalPages: Math.ceil(total / limit),
+          total,
+          limit: parseInt(limit)
         }
-      );
+      };
+    } catch (error) {
+      throw new Error(`Lỗi khi lấy danh sách báo cáo: ${error.message}`);
     }
+  }
 
-    return report;
+  async getReportById(reportId) {
+    try {
+      const report = await Report.findById(reportId)
+        .populate('reporter', 'fullName username email avatar phone address status createdAt isKycVerified profile')
+        .populate('reportedItem', 'title description images price status owner category createdAt viewCount')
+        .populate({
+          path: 'reportedItem',
+          populate: {
+            path: 'owner',
+            select: 'fullName username email avatar phone status createdAt isKycVerified profile'
+          }
+        })
+        .populate({
+          path: 'reportedItem',
+          populate: {
+            path: 'category',
+            select: 'name'
+          }
+        });
+
+      return report;
+    } catch (error) {
+      throw new Error(`Lỗi khi lấy chi tiết báo cáo: ${error.message}`);
+    }
+  }
+
+  async updateReportStatus(reportId, status, adminNotes) {
+    try {
+      const validStatuses = ['PENDING', 'REVIEWED', 'RESOLVED', 'DISMISSED'];
+      if (!validStatuses.includes(status)) {
+        throw new Error('Trạng thái không hợp lệ');
+      }
+
+      const updateData = {
+        status,
+        updatedAt: new Date()
+      };
+
+      if (adminNotes) {
+        updateData.adminNotes = adminNotes;
+      }
+
+      const updatedReport = await Report.findByIdAndUpdate(
+        reportId,
+        updateData,
+        { new: true }
+      )
+        .populate('reporter', 'fullName email avatar')
+        .populate('reportedItem', 'title images price status');
+
+      if (!updatedReport) {
+        throw new Error('Không tìm thấy báo cáo');
+      }
+
+      return updatedReport;
+    } catch (error) {
+      throw new Error(`Lỗi khi cập nhật trạng thái báo cáo: ${error.message}`);
+    }
   }
 
   // ========== SYSTEM SETTINGS ==========
@@ -698,6 +1265,261 @@ class AdminService {
       updatedBy: adminId,
       updatedAt: new Date()
     };
+  }
+
+  // ========== BANK ACCOUNT VERIFICATION ==========
+  /**
+   * Get all bank accounts with filters
+   */
+  async getAllBankAccounts(filters = {}) {
+    try {
+      const {
+        page = 1,
+        limit = 10,
+        search,
+        status,
+        bankCode
+      } = filters;
+
+      const skip = (page - 1) * limit;
+      const query = {
+        'bankAccount.accountNumber': { $exists: true, $ne: null }
+      };
+
+      // Filter by verification status
+      if (status) {
+        query['bankAccount.status'] = status.toUpperCase();
+      }
+
+      // Filter by bank code
+      if (bankCode) {
+        query['bankAccount.bankCode'] = bankCode.toUpperCase();
+      }
+
+      // Search by account number, account holder name, or user email
+      if (search) {
+        query.$or = [
+          { 'bankAccount.accountNumber': { $regex: search, $options: 'i' } },
+          { 'bankAccount.accountHolderName': { $regex: search, $options: 'i' } },
+          { email: { $regex: search, $options: 'i' } }
+        ];
+      }
+
+      // Get bank accounts with pagination
+      const [bankAccounts, total] = await Promise.all([
+        User.find(query)
+          .select('email profile.firstName profile.lastName bankAccount role status')
+          .skip(skip)
+          .limit(parseInt(limit))
+          .sort({ 'bankAccount.addedAt': -1 })
+          .lean(),
+        User.countDocuments(query)
+      ]);
+
+      // Get statistics
+      const stats = await User.aggregate([
+        {
+          $match: {
+            'bankAccount.accountNumber': { $exists: true, $ne: null }
+          }
+        },
+        {
+          $facet: {
+            statusStats: [
+              {
+                $group: {
+                  _id: '$bankAccount.status',
+                  count: { $sum: 1 }
+                }
+              }
+            ],
+            total: [
+              {
+                $count: 'count'
+              }
+            ]
+          }
+        }
+      ]);
+
+      const statusCounts = {};
+      if (stats[0]?.statusStats) {
+        stats[0].statusStats.forEach(stat => {
+          statusCounts[stat._id?.toLowerCase() || 'pending'] = stat.count;
+        });
+      }
+
+      return {
+        bankAccounts,
+        pagination: {
+          currentPage: parseInt(page),
+          totalPages: Math.ceil(total / limit),
+          totalBankAccounts: total,
+          limit: parseInt(limit)
+        },
+        stats: {
+          total: stats[0]?.total[0]?.count || 0,
+          pending: statusCounts.pending || 0,
+          verified: statusCounts.verified || 0,
+          rejected: statusCounts.rejected || 0
+        }
+      };
+    } catch (error) {
+      throw new Error(`Lỗi khi lấy danh sách tài khoản ngân hàng: ${error.message}`);
+    }
+  }
+
+  /**
+   * Get bank account detail by user ID
+   */
+  async getBankAccountById(userId) {
+    try {
+      const user = await User.findById(userId)
+        .select('email profile bankAccount role status verification cccd')
+        .lean();
+
+      if (!user) {
+        throw new Error('Không tìm thấy người dùng');
+      }
+
+      if (!user.bankAccount || !user.bankAccount.accountNumber) {
+        throw new Error('Người dùng chưa có tài khoản ngân hàng');
+      }
+
+      return user;
+    } catch (error) {
+      throw new Error(`Lỗi khi lấy chi tiết tài khoản ngân hàng: ${error.message}`);
+    }
+  }
+
+  /**
+   * Verify bank account
+   */
+  async verifyBankAccount(userId, adminNote = '') {
+    try {
+      console.log('verifyBankAccount service called with:', { userId, adminNote });
+      
+      const user = await User.findById(userId);
+      console.log('User found:', user ? 'Yes' : 'No');
+
+      if (!user) {
+        throw new Error('Không tìm thấy người dùng');
+      }
+
+      console.log('User bankAccount:', user.bankAccount);
+
+      if (!user.bankAccount || !user.bankAccount.accountNumber) {
+        throw new Error('Người dùng chưa có tài khoản ngân hàng');
+      }
+
+      if (user.bankAccount.status === 'VERIFIED') {
+        throw new Error('Tài khoản ngân hàng đã được xác minh');
+      }
+
+      // Update bank account status
+      user.bankAccount.status = 'VERIFIED';
+      user.bankAccount.isVerified = true;
+      user.bankAccount.verifiedAt = new Date();
+      user.bankAccount.adminNote = adminNote;
+
+      // Clean invalid gender value if exists
+      if (user.profile && user.profile.gender && !['MALE', 'FEMALE', 'OTHER'].includes(user.profile.gender)) {
+        console.log('Cleaning invalid gender value:', user.profile.gender);
+        user.profile.gender = undefined;
+      }
+
+      console.log('Saving user with updated bank account...');
+      await user.save();
+      console.log('User saved successfully');
+
+      return user;
+    } catch (error) {
+      console.error('Error in verifyBankAccount service:', error);
+      throw new Error(`Lỗi khi xác minh tài khoản ngân hàng: ${error.message}`);
+    }
+  }
+
+  /**
+   * Reject bank account verification
+   */
+  async rejectBankAccount(userId, rejectionReason) {
+    try {
+      const user = await User.findById(userId);
+
+      if (!user) {
+        throw new Error('Không tìm thấy người dùng');
+      }
+
+      if (!user.bankAccount || !user.bankAccount.accountNumber) {
+        throw new Error('Người dùng chưa có tài khoản ngân hàng');
+      }
+
+      if (user.bankAccount.status === 'REJECTED') {
+        throw new Error('Tài khoản ngân hàng đã bị từ chối');
+      }
+
+      // Update bank account status
+      user.bankAccount.status = 'REJECTED';
+      user.bankAccount.isVerified = false;
+      user.bankAccount.rejectionReason = rejectionReason;
+      user.bankAccount.rejectedAt = new Date();
+
+      // Clean invalid gender value if exists
+      if (user.profile && user.profile.gender && !['MALE', 'FEMALE', 'OTHER'].includes(user.profile.gender)) {
+        user.profile.gender = undefined;
+      }
+
+      await user.save();
+
+      return user;
+    } catch (error) {
+      throw new Error(`Lỗi khi từ chối xác minh tài khoản ngân hàng: ${error.message}`);
+    }
+  }
+
+  /**
+   * Update bank account status
+   */
+  async updateBankAccountStatus(userId, status, note = '') {
+    try {
+      const user = await User.findById(userId);
+
+      if (!user) {
+        throw new Error('Không tìm thấy người dùng');
+      }
+
+      if (!user.bankAccount || !user.bankAccount.accountNumber) {
+        throw new Error('Người dùng chưa có tài khoản ngân hàng');
+      }
+
+      const validStatuses = ['PENDING', 'VERIFIED', 'REJECTED'];
+      if (!validStatuses.includes(status.toUpperCase())) {
+        throw new Error('Trạng thái không hợp lệ');
+      }
+
+      // Update bank account status
+      user.bankAccount.status = status.toUpperCase();
+      user.bankAccount.isVerified = status.toUpperCase() === 'VERIFIED';
+      
+      if (status.toUpperCase() === 'VERIFIED') {
+        user.bankAccount.verifiedAt = new Date();
+        user.bankAccount.adminNote = note;
+      } else if (status.toUpperCase() === 'REJECTED') {
+        user.bankAccount.rejectedAt = new Date();
+        user.bankAccount.rejectionReason = note;
+      }
+
+      // Clean invalid gender value if exists
+      if (user.profile && user.profile.gender && !['MALE', 'FEMALE', 'OTHER'].includes(user.profile.gender)) {
+        user.profile.gender = undefined;
+      }
+
+      await user.save();
+
+      return user;
+    } catch (error) {
+      throw new Error(`Lỗi khi cập nhật trạng thái tài khoản ngân hàng: ${error.message}`);
+    }
   }
 }
 

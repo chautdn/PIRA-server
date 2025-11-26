@@ -2,7 +2,9 @@ const express = require('express');
 const router = express.Router();
 const adminController = require('../controllers/admin.controller');
 const { authMiddleware } = require('../middleware/auth');
-const { requireRole } = require('../middleware/validation');
+const { 
+  requireRole
+} = require('../middleware/validation');
 const { registerRoute } = require('./register.routes');
 
 router.use(authMiddleware.verifyToken);
@@ -16,31 +18,45 @@ router.get('/dashboard', adminController.getDashboard);
 // ========== USER MANAGEMENT ==========
 router.get('/users', adminController.getAllUsers);
 router.get('/users/:userId', adminController.getUserById);
+router.get('/users/:userId/orders', adminController.getUserOrders);
+router.get('/users/:userId/products', adminController.getUserProducts);
+router.get('/users/:userId/bank-account', adminController.getUserBankAccount);
 // router.put('/users/:userId', adminController.updateUser);
 router.patch('/users/:userId/status', adminController.updateUserStatus);
 router.patch('/users/:userId/role', adminController.updateUserRole);
 // router.patch('/users/:userId/credit-score', adminController.updateUserCreditScore);
-router.delete('/users/:userId', adminController.deleteUser);
 router.patch('/users/bulk-update', adminController.bulkUpdateUsers);
 
 // ========== PRODUCT MANAGEMENT ==========
 router.get('/products', adminController.getAllProducts);
-router.patch('/products/:productId/approve', adminController.approveProduct);
-router.patch('/products/:productId/reject', adminController.rejectProduct);
+router.get('/products/:productId', adminController.getProductById);
+router.patch('/products/:productId/status', adminController.updateProductStatus);
+// router.patch('/products/:productId/approve', adminController.approveProduct);
+// router.patch('/products/:productId/reject', adminController.rejectProduct);
 
 // ========== CATEGORY MANAGEMENT ==========
-router.get('/categories', adminController.getAllCategories);
-router.post('/categories', adminController.createCategory);
-router.put('/categories/:categoryId', adminController.updateCategory);
-router.delete('/categories/:categoryId', adminController.deleteCategory);
+// router.get('/categories', adminController.getAllCategories);
+// router.post('/categories', adminController.createCategory);
+// router.put('/categories/:categoryId', adminController.updateCategory);
+// router.delete('/categories/:categoryId', adminController.deleteCategory);
 
 // ========== ORDER MANAGEMENT ==========
 router.get('/orders', adminController.getAllOrders);
 router.get('/orders/:orderId', adminController.getOrderById);
+router.patch('/orders/:orderId/status', adminController.updateOrderStatus);
 
 // ========== REPORT MANAGEMENT ==========
 router.get('/reports', adminController.getAllReports);
-router.patch('/reports/:reportId/resolve', adminController.resolveReport);
+router.get('/reports/:reportId', adminController.getReportById);
+router.patch('/reports/:reportId/status', adminController.updateReportStatus);
+router.patch('/reports/:reportId/suspend-product', adminController.suspendReportedProduct);
+
+// ========== BANK ACCOUNT VERIFICATION ==========
+router.get('/bank-accounts', adminController.getAllBankAccounts);
+router.get('/bank-accounts/:userId', adminController.getBankAccountById);
+router.patch('/bank-accounts/:userId/verify', adminController.verifyBankAccount);
+router.patch('/bank-accounts/:userId/reject', adminController.rejectBankAccount);
+router.patch('/bank-accounts/:userId/status', adminController.updateBankAccountStatus);
 
 // ========== SYSTEM SETTINGS ==========
 router.get('/settings', adminController.getSystemSettings);

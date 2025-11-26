@@ -150,8 +150,18 @@ const userSchema = new mongoose.Schema(
       isVerified: {
         type: Boolean,
         default: false
+        
       },
-      addedAt: Date
+      status: {
+        type: String,
+        enum: ['PENDING', 'VERIFIED', 'REJECTED'],
+        default: 'PENDING'
+      },
+      addedAt: Date,
+      verifiedAt: Date,
+      rejectedAt: Date,
+      adminNote: String,
+      rejectionReason: String
     },
 
     wallet: {
