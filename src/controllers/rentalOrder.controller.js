@@ -1192,9 +1192,9 @@ class RentalOrderController {
       // Tính toán thông tin tổng hợp
       const summary = {
         totalProducts: subOrder.products.length,
-        confirmedProducts: subOrder.products.filter((p) => p.porductStatus === 'CONFIRMED').length,
-        rejectedProducts: subOrder.products.filter((p) => p.porductStatus === 'REJECTED').length,
-        pendingProducts: subOrder.products.filter((p) => p.porductStatus === 'PENDING').length,
+        confirmedProducts: subOrder.products.filter((p) => p.productStatus === 'CONFIRMED').length,
+        rejectedProducts: subOrder.products.filter((p) => p.productStatus === 'REJECTED').length,
+        pendingProducts: subOrder.products.filter((p) => p.productStatus === 'PENDING').length,
         totalAmount:
           subOrder.pricing.subtotalRental +
           subOrder.pricing.subtotalDeposit +

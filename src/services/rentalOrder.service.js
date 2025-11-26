@@ -1027,7 +1027,7 @@ class RentalOrderService {
             quantity: productItem.quantity,
             depositPerUnit: productItem.depositRate || 0,
             totalDeposit: productDeposit,
-            porductStatus: productItem.porductStatus || 'PENDING'
+            productStatus: productItem.productStatus || 'PENDING'
           });
         }
       }
@@ -1146,7 +1146,7 @@ class RentalOrderService {
           }
         },
         // Mặc định tất cả items đều PENDING khi tạo order
-        porductStatus: 'PENDING',
+        productStatus: 'PENDING',
         totalRental,
         totalDeposit
       };
@@ -2077,7 +2077,7 @@ class RentalOrderService {
       for (const productItem of subOrder.products) {
         if (rejectedProductIds.includes(productItem.product._id.toString())) {
           // Mark as rejected
-          productItem.porductStatus = 'REJECTED';
+          productItem.productStatus = 'REJECTED';
           productItem.rejectionReason = rejectionReason;
           productItem.rejectedAt = new Date();
 
@@ -2539,12 +2539,12 @@ class RentalOrderService {
 
         if (confirmedSet.has(productIdStr)) {
           // Sản phẩm được chọn → CONFIRMED
-          productItem.porductStatus = 'CONFIRMED';
+          productItem.productStatus = 'CONFIRMED';
           productItem.confirmedAt = now;
           totalConfirmed++;
         } else {
           // Sản phẩm KHÔNG được chọn → TỰ ĐỘNG REJECTED
-          productItem.porductStatus = 'REJECTED';
+          productItem.productStatus = 'REJECTED';
           productItem.rejectedAt = now;
           productItem.rejectionReason = 'Chủ đồ chỉ xác nhận một phần đơn hàng';
           totalRejected++;
@@ -2701,10 +2701,10 @@ class RentalOrderService {
           totalProducts++;
           const itemAmount = (productItem.totalRental || 0) + (productItem.totalDeposit || 0);
 
-          if (productItem.porductStatus === 'CONFIRMED') {
+          if (productItem.productStatus === 'CONFIRMED') {
             confirmedProducts++;
             totalConfirmedAmount += itemAmount;
-          } else if (productItem.porductStatus === 'REJECTED') {
+          } else if (productItem.productStatus === 'REJECTED') {
             rejectedProducts++;
             totalRejectedAmount += itemAmount;
           } else {
@@ -2826,7 +2826,7 @@ class RentalOrderService {
 
       // Lọc ra chỉ các sản phẩm CONFIRMED
       const confirmedProducts = subOrder.products.filter(
-        (item) => item.porductStatus === 'CONFIRMED'
+        (item) => item.productStatus === 'CONFIRMED'
       );
 
       if (confirmedProducts.length === 0) {
@@ -3072,8 +3072,8 @@ class RentalOrderService {
 
           // Reject tất cả sản phẩm PENDING
           for (const productItem of subOrder.products) {
-            if (productItem.porductStatus === 'PENDING') {
-              productItem.porductStatus = 'REJECTED';
+            if (productItem.productStatus === 'PENDING') {
+              productItem.productStatus = 'REJECTED';
               productItem.rejectedAt = now;
               productItem.rejectionReason = 'Quá thời hạn xác nhận';
 
@@ -3089,7 +3089,7 @@ class RentalOrderService {
           if (hasRejection) {
             // Cập nhật trạng thái SubOrder
             const confirmedCount = subOrder.products.filter(
-              (p) => p.porductStatus === 'CONFIRMED'
+              (p) => p.productStatus === 'CONFIRMED'
             ).length;
 
             if (confirmedCount > 0) {
@@ -3187,8 +3187,8 @@ class RentalOrderService {
 
       // Đánh dấu tất cả sản phẩm là REJECTED
       for (const productItem of subOrder.products) {
-        if (productItem.porductStatus !== 'REJECTED') {
-          productItem.porductStatus = 'REJECTED';
+        if (productItem.productStatus !== 'REJECTED') {
+          productItem.productStatus = 'REJECTED';
           productItem.rejectedAt = new Date();
           productItem.rejectionReason = reason || 'Người thuê từ chối SubOrder';
         }
