@@ -5,10 +5,10 @@
 const express = require('express');
 const router = express.Router();
 const ReturnShipmentController = require('../controllers/returnShipment.controller');
-const { authMiddleware } = require('../middleware/auth.middleware');
+const { authMiddleware } = require('../middleware/auth');
 
 // All routes require authentication
-router.use(authMiddleware);
+router.use((req, res, next) => authMiddleware.verifyToken(req, res, next));
 
 /**
  * 📦 Return Shipment Routes
