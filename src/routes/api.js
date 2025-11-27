@@ -44,6 +44,10 @@ router.use('/withdrawals', withdrawalRoutes);
 const systemPromotionRoutes = require('./systemPromotion.routes');
 router.use('/system-promotions', systemPromotionRoutes);
 
+// Voucher routes
+const voucherRoutes = require('./voucher.routes');
+router.use('/vouchers', voucherRoutes);
+
 // Register all routes from the registry FIRST
 getRoutes()?.forEach(({ path, router: moduleRouter }) => {
   if (!path || typeof path !== 'string') {

@@ -119,6 +119,13 @@ const userSchema = new mongoose.Schema(
       max: 1000
     },
 
+    // Loyalty Points System
+    loyaltyPoints: {
+      type: Number,
+      default: 0,
+      min: 0
+    },
+
     // Bank Account Information (for withdrawals)
     bankAccount: {
       bankCode: {
