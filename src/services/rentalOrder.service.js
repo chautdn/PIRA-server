@@ -295,7 +295,7 @@ class RentalOrderService {
       if (paymentResult.status === 'SUCCESS' || paymentResult.status === 'PARTIALLY_PAID') {
         await SubOrder.updateMany(
           { masterOrder: draftOrder._id },
-          { status: 'PENDING_OWNER_CONFIRMATION' }
+          { status: 'PENDING_CONFIRMATION' }
         );
 
         // Set owner confirmation deadline (24h for paid orders)
@@ -303,7 +303,7 @@ class RentalOrderService {
         draftOrder.ownerConfirmationDeadline = expireTime;
         await draftOrder.save();
 
-        console.log('✅ Order confirmed and SubOrders updated to PENDING_OWNER_CONFIRMATION');
+        console.log('✅ Order confirmed and SubOrders updated to PENDING_CONFIRMATION');
       } else {
         // PENDING payment: SubOrders remain in initial status
         console.log('⏳ Order created but awaiting payment completion');
@@ -752,10 +752,7 @@ class RentalOrderService {
     masterOrder.status = 'PENDING_CONFIRMATION';
 
     // Cập nhật tất cả SubOrder
-    await SubOrder.updateMany(
-      { masterOrder: masterOrderId },
-      { status: 'PENDING_OWNER_CONFIRMATION' }
-    );
+    await SubOrder.updateMany({ masterOrder: masterOrderId }, { status: 'PENDING_CONFIRMATION' });
 
     await masterOrder.save();
 
@@ -772,7 +769,7 @@ class RentalOrderService {
     const subOrder = await SubOrder.findOne({
       _id: subOrderId,
       owner: ownerId,
-      status: 'PENDING_OWNER_CONFIRMATION'
+      status: 'PENDING_CONFIRMATION'
     }).populate('masterOrder');
 
     if (!subOrder) {
@@ -1056,7 +1053,7 @@ class RentalOrderService {
             quantity: productItem.quantity,
             depositPerUnit: productItem.depositRate || 0,
             totalDeposit: productDeposit,
-            confirmationStatus: productItem.confirmationStatus || 'PENDING'
+            porductStatus: productItem.porductStatus || 'PENDING'
           });
         }
       }
@@ -1175,7 +1172,7 @@ class RentalOrderService {
           }
         },
         // Mặc định tất cả items đều PENDING khi tạo order
-        confirmationStatus: 'PENDING',
+        porductStatus: 'PENDING',
         totalRental,
         totalDeposit
       };
@@ -2144,7 +2141,7 @@ class RentalOrderService {
       for (const productItem of subOrder.products) {
         if (rejectedProductIds.includes(productItem.product._id.toString())) {
           // Mark as rejected
-          productItem.confirmationStatus = 'REJECTED';
+          productItem.porductStatus = 'REJECTED';
           productItem.rejectionReason = rejectionReason;
           productItem.rejectedAt = new Date();
 
@@ -2423,11 +2420,8 @@ class RentalOrderService {
 
       await masterOrder.save();
 
-      // Update SubOrders to PENDING_OWNER_CONFIRMATION
-      await SubOrder.updateMany(
-        { masterOrder: masterOrderId },
-        { status: 'PENDING_OWNER_CONFIRMATION' }
-      );
+      // Update SubOrders to PENDING_CONFIRMATION
+      await SubOrder.updateMany({ masterOrder: masterOrderId }, { status: 'PENDING_CONFIRMATION' });
 
       // Set owner confirmation deadline (24h)
       const expireTime = new Date(Date.now() + 24 * 60 * 60 * 1000);
@@ -2575,7 +2569,7 @@ class RentalOrderService {
       const subOrder = await SubOrder.findOne({
         _id: subOrderId,
         owner: ownerId,
-        status: 'PENDING_OWNER_CONFIRMATION'
+        status: 'PENDING_CONFIRMATION'
       })
         .populate('masterOrder')
         .populate('products.product')
@@ -2609,12 +2603,12 @@ class RentalOrderService {
 
         if (confirmedSet.has(productIdStr)) {
           // Sản phẩm được chọn → CONFIRMED
-          productItem.confirmationStatus = 'CONFIRMED';
+          productItem.porductStatus = 'CONFIRMED';
           productItem.confirmedAt = now;
           totalConfirmed++;
         } else {
           // Sản phẩm KHÔNG được chọn → TỰ ĐỘNG REJECTED
-          productItem.confirmationStatus = 'REJECTED';
+          productItem.porductStatus = 'REJECTED';
           productItem.rejectedAt = now;
           productItem.rejectionReason = 'Chủ đồ chỉ xác nhận một phần đơn hàng';
           totalRejected++;
@@ -2771,10 +2765,10 @@ class RentalOrderService {
           totalProducts++;
           const itemAmount = (productItem.totalRental || 0) + (productItem.totalDeposit || 0);
 
-          if (productItem.confirmationStatus === 'CONFIRMED') {
+          if (productItem.porductStatus === 'CONFIRMED') {
             confirmedProducts++;
             totalConfirmedAmount += itemAmount;
-          } else if (productItem.confirmationStatus === 'REJECTED') {
+          } else if (productItem.porductStatus === 'REJECTED') {
             rejectedProducts++;
             totalRejectedAmount += itemAmount;
           } else {
@@ -2896,7 +2890,7 @@ class RentalOrderService {
 
       // Lọc ra chỉ các sản phẩm CONFIRMED
       const confirmedProducts = subOrder.products.filter(
-        (item) => item.confirmationStatus === 'CONFIRMED'
+        (item) => item.porductStatus === 'CONFIRMED'
       );
 
       if (confirmedProducts.length === 0) {
@@ -3133,7 +3127,7 @@ class RentalOrderService {
       for (const masterOrder of expiredOrders) {
         const subOrders = await SubOrder.find({
           masterOrder: masterOrder._id,
-          status: 'PENDING_OWNER_CONFIRMATION'
+          status: 'PENDING_CONFIRMATION'
         }).session(session);
 
         for (const subOrder of subOrders) {
@@ -3142,8 +3136,8 @@ class RentalOrderService {
 
           // Reject tất cả sản phẩm PENDING
           for (const productItem of subOrder.products) {
-            if (productItem.confirmationStatus === 'PENDING') {
-              productItem.confirmationStatus = 'REJECTED';
+            if (productItem.porductStatus === 'PENDING') {
+              productItem.porductStatus = 'REJECTED';
               productItem.rejectedAt = now;
               productItem.rejectionReason = 'Quá thời hạn xác nhận';
 
@@ -3159,7 +3153,7 @@ class RentalOrderService {
           if (hasRejection) {
             // Cập nhật trạng thái SubOrder
             const confirmedCount = subOrder.products.filter(
-              (p) => p.confirmationStatus === 'CONFIRMED'
+              (p) => p.porductStatus === 'CONFIRMED'
             ).length;
 
             if (confirmedCount > 0) {
@@ -3257,8 +3251,8 @@ class RentalOrderService {
 
       // Đánh dấu tất cả sản phẩm là REJECTED
       for (const productItem of subOrder.products) {
-        if (productItem.confirmationStatus !== 'REJECTED') {
-          productItem.confirmationStatus = 'REJECTED';
+        if (productItem.porductStatus !== 'REJECTED') {
+          productItem.porductStatus = 'REJECTED';
           productItem.rejectedAt = new Date();
           productItem.rejectionReason = reason || 'Người thuê từ chối SubOrder';
         }

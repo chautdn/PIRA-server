@@ -178,7 +178,30 @@ const requireRole = (requiredRole) => {
     }
   };
 };
+// ========== REPORT VALIDATIONS ==========
+const validateReportParams = [
+  param('reportId').isMongoId().withMessage('Report ID không hợp lệ'),
+  (req, res, next) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return responseUtils.error(res, 'Dữ liệu không hợp lệ', 400, errors.array());
+    }
+    next();
+  }
+];
 
+const validateReportStatusUpdate = [
+  param('reportId').isMongoId().withMessage('Report ID không hợp lệ'),
+  body('status').isIn(['PENDING', 'REVIEWED', 'RESOLVED', 'DISMISSED']).withMessage('Trạng thái không hợp lệ'),
+  body('adminNotes').optional().isLength({ max: 1000 }).withMessage('Ghi chú không được vượt quá 1000 ký tự'),
+  (req, res, next) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return responseUtils.error(res, 'Dữ liệu không hợp lệ', 400, errors.array());
+    }
+    next();
+  }
+];
 // Generic validation error handler
 const handleValidationErrors = (req, res, next) => {
   const errors = validationResult(req);
@@ -191,6 +214,8 @@ const handleValidationErrors = (req, res, next) => {
   }
   next();
 };
+
+
 
 module.exports = {
   validateRegister,

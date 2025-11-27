@@ -124,7 +124,7 @@ const subOrderSchema = new mongoose.Schema(
         },
         // Thêm confirmation status cho từng product item
         // Thêm delivery/shipping status cho từng product
-        status: {
+        productStatus: {
           type: String,
           enum: [
             // Confirmation Phase
