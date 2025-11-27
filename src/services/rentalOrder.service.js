@@ -9,6 +9,7 @@ const mongoose = require('mongoose');
 const { PayOS } = require('@payos/node');
 const Wallet = require('../models/Wallet');
 const Transaction = require('../models/Transaction');
+const SystemWalletService = require('./systemWallet.service');
 
 // Initialize PayOS
 const payos = new PayOS({
@@ -363,38 +364,28 @@ class RentalOrderService {
 
       const userId = masterOrder.renter._id;
 
-      // Get user's wallet
-      const user = await User.findById(userId).populate('wallet');
-      if (!user || !user.wallet) {
-        throw new Error('Không tìm thấy ví của người dùng');
-      }
+      // Use SystemWalletService.transferFromUser to atomically move funds
+      // from renter's wallet into the system wallet so later disbursement can occur.
+      const transfer = await SystemWalletService.transferFromUser(
+        process.env.SYSTEM_ADMIN_ID || null,
+        userId,
+        amount,
+        `Payment for order ${masterOrder.masterOrderNumber}`
+      );
 
-      const wallet = user.wallet;
-
-      // Check if wallet has sufficient balance
-      if (wallet.balance.available < amount) {
-        throw new Error(
-          `Ví không đủ số dư. Số dư hiện tại: ${wallet.balance.available.toLocaleString('vi-VN')}đ, cần: ${amount.toLocaleString('vi-VN')}đ`
-        );
-      }
-
-      // Deduct amount from wallet
-      const previousBalance = wallet.balance.available;
-      wallet.balance.available -= amount;
-      await wallet.save();
+      // transfer.transactions.user and transfer.userWallet are available
+      const userTx = transfer?.transactions?.user || null;
 
       return {
-        transactionId: transactionId,
+        transactionId: userTx?._id || transactionId,
         method: 'WALLET',
         amount: amount,
         status: 'SUCCESS',
         processedAt: new Date(),
         paymentDetails: {
-          previousBalance: wallet.balance.available + amount,
-          newBalance: wallet.balance.available,
-          deductedAmount: amount,
-          walletId: wallet._id,
-          message: 'Thanh toán từ ví thành công'
+          newBalance: transfer?.userWallet?.newBalance || null,
+          walletId: transfer?.userWallet?.walletId || null,
+          transfer
         }
       };
     } catch (error) {
@@ -2339,11 +2330,33 @@ class RentalOrderService {
         masterOrder.paymentStatus = 'PAID';
         masterOrder.status = 'PENDING_CONFIRMATION';
         console.log('📝 Setting: paymentStatus=PAID, status=PENDING_CONFIRMATION');
+
+        // Credit system wallet because external payment received by platform
+        try {
+          const creditAmount = Number(payosPaymentInfo.amount) || transaction?.amount || 0;
+          if (creditAmount > 0) {
+            await SystemWalletService.addFunds(process.env.SYSTEM_ADMIN_ID || null, creditAmount, `PayOS payment for order ${masterOrder.masterOrderNumber}`);
+            console.log('✅ Credited system wallet with PayOS amount:', creditAmount);
+          }
+        } catch (err) {
+          console.error('Failed to credit system wallet after PayOS payment:', err.message || String(err));
+        }
       } else if (isCODDeposit) {
         // Deposit payment for COD
         masterOrder.paymentStatus = 'PARTIALLY_PAID';
         masterOrder.status = 'PENDING_CONFIRMATION';
         console.log('📝 Setting: paymentStatus=PARTIALLY_PAID, status=PENDING_CONFIRMATION');
+
+        // If a transaction was created (deposit via PayOS), credit system wallet with deposit
+        try {
+          const depositAmount = transaction?.amount || Number(payosPaymentInfo.amount) || 0;
+          if (depositAmount > 0) {
+            await SystemWalletService.addFunds(process.env.SYSTEM_ADMIN_ID || null, depositAmount, `PayOS deposit for order ${masterOrder.masterOrderNumber}`);
+            console.log('✅ Credited system wallet with deposit amount:', depositAmount);
+          }
+        } catch (err) {
+          console.error('Failed to credit system wallet for deposit after PayOS:', err.message || String(err));
+        }
       }
 
       // Update payment info

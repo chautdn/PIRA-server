@@ -183,10 +183,18 @@ class SystemWalletService {
     session.startTransaction();
 
     try {
-      // Get system wallet
-      const systemWallet = await SystemWallet.findOne({}).session(session);
+      // Get or create system wallet within transaction session
+      let systemWallet = await SystemWallet.findOne({}).session(session);
       if (!systemWallet) {
-        throw new Error('System wallet not found');
+        // Create a system wallet record as part of this transaction
+        systemWallet = new SystemWallet({
+          name: 'PIRA Platform Wallet',
+          balance: { available: 0, frozen: 0, pending: 0 },
+          currency: 'VND',
+          status: 'ACTIVE'
+        });
+        await systemWallet.save({ session });
+        console.log('Created system wallet inside transferToUser transaction');
       }
 
       // Check sufficient balance
@@ -204,7 +212,10 @@ class SystemWalletService {
 
       // Deduct from system wallet
       systemWallet.balance.available -= amount;
-      systemWallet.lastModifiedBy = adminId;
+      // Only set lastModifiedBy if adminId is a valid ObjectId
+      if (adminId && adminId !== 'SYSTEM_AUTO_TRANSFER' && adminId !== null) {
+        systemWallet.lastModifiedBy = adminId;
+      }
       systemWallet.lastModifiedAt = new Date();
       await systemWallet.save({ session });
 
@@ -213,11 +224,14 @@ class SystemWalletService {
       await userWallet.save({ session });
 
       // Create transaction records
+      // Create transaction records compatible with Transaction schema
       const systemTransaction = new Transaction({
-        type: 'TRANSFER_OUT',
+        user: adminId && adminId !== 'SYSTEM_AUTO_TRANSFER' ? adminId : userId, // audit: admin if available, else fallback to recipient
+        wallet: systemWallet._id,
+        type: 'order_payment',
         amount: amount,
-        status: 'COMPLETED',
-        method: 'ADMIN_ACTION',
+        status: 'success',
+        paymentMethod: 'wallet',
         description: `Transfer to user ${userId}: ${description}`,
         metadata: {
           adminId: adminId,
@@ -228,11 +242,12 @@ class SystemWalletService {
       });
 
       const userTransaction = new Transaction({
+        user: userId,
         wallet: userWallet._id,
-        type: 'TRANSFER_IN',
+        type: 'order_payment',
         amount: amount,
-        status: 'COMPLETED',
-        method: 'ADMIN_ACTION',
+        status: 'success',
+        paymentMethod: 'wallet',
         description: `Received from system: ${description}`,
         metadata: {
           adminId: adminId,

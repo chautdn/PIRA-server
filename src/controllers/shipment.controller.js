@@ -114,8 +114,21 @@ class ShipmentController {
 
   async renterConfirm(req, res) {
     try {
-      const shipment = await ShipmentService.renterConfirmDelivered(req.params.id, req.user._id);
-      return res.json({ status: 'success', data: shipment });
+      const result = await ShipmentService.renterConfirmDelivered(req.params.id, req.user._id);
+      // result may be { shipment, transferResult } or a shipment (backwards compatibility)
+      if (result && result.shipment) {
+        return res.json({
+          status: 'success',
+          data: result.shipment,
+          transfer: {
+            result: result.transferResult || null,
+            error: result.transferError || null
+          }
+        });
+      }
+
+      // fallback - return whatever service returned
+      return res.json({ status: 'success', data: result });
     } catch (err) {
       console.error('renterConfirm error', err.message);
       return res.status(400).json({ status: 'error', message: err.message });

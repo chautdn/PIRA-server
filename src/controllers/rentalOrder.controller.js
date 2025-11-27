@@ -1315,51 +1315,111 @@ class RentalOrderController {
       const userId = req.user.id;
       const subOrderId = req.params.id;
 
+      console.log('📥 POST /api/rental-orders/suborders/:id/confirm-delivered');
+      console.log('👤 Renter ID:', userId);
+      console.log('📦 SubOrder ID:', subOrderId);
+
       // Try to find a Shipment linked to this SubOrder
       const shipment = await Shipment.findOne({ subOrder: subOrderId }).populate('subOrder');
 
       if (shipment) {
+        console.log('✅ Found shipment, processing via ShipmentService...');
         // DELIVERED is set by the renter's confirmation (the button).
         // If subOrder already marked DELIVERED, return current data to avoid double actions.
         if (shipment.subOrder && shipment.subOrder.status === 'DELIVERED') {
+          console.log('⚠️ SubOrder already marked DELIVERED, returning current state');
           return res.json({ status: 'success', data: shipment.subOrder });
         }
 
         const result = await ShipmentService.renterConfirmDelivered(shipment._id, userId);
+        // Normalize response: include shipment and transfer diagnostics
+        if (result && result.shipment) {
+          console.log('✅ Shipment confirmed and processed');
+          return res.json({
+            status: 'success',
+            data: result.shipment,
+            transfer: {
+              result: result.transferResult || null,
+              error: result.transferError || null
+            }
+          });
+        }
+
+        console.log('✅ Shipment result:', result);
         return res.json({ status: 'success', data: result });
       }
 
       // Fallback: no shipment found, operate directly on SubOrder
+      console.log('⚠️ No shipment found, operating directly on SubOrder...');
       const subOrder = await SubOrder.findById(subOrderId);
-      if (!subOrder) return res.status(404).json({ status: 'error', message: 'SubOrder not found' });
+      if (!subOrder) {
+        console.error('❌ SubOrder not found');
+        return res.status(404).json({ status: 'error', message: 'SubOrder not found' });
+      }
 
       const masterOrder = await MasterOrder.findById(subOrder.masterOrder);
-      if (!masterOrder) return res.status(404).json({ status: 'error', message: 'MasterOrder not found' });
-      if (String(masterOrder.renter) !== String(userId)) return res.status(403).json({ status: 'error', message: 'No permission' });
+      if (!masterOrder) {
+        console.error('❌ MasterOrder not found');
+        return res.status(404).json({ status: 'error', message: 'MasterOrder not found' });
+      }
+
+      if (String(masterOrder.renter) !== String(userId)) {
+        console.error('❌ Renter not authorized');
+        return res.status(403).json({ status: 'error', message: 'No permission' });
+      }
 
       // If subOrder is already marked DELIVERED, return immediately
       if (subOrder.status === 'DELIVERED') {
+        console.log('⚠️ SubOrder already marked DELIVERED');
         return res.json({ status: 'success', data: subOrder });
       }
 
       // Mark as DELIVERED per renter confirmation
+      console.log('🔄 Marking SubOrder as DELIVERED...');
       subOrder.status = 'DELIVERED';
       await subOrder.save();
 
-      // Transfer payment to owner via SystemWallet (best-effort)
+      // Transfer ONLY rental fee to owner via SystemWallet (NOT deposit)
+      let transferResult = null;
+      let transferError = null;
       try {
         const ownerId = subOrder.owner;
-        const amount = subOrder.pricing?.totalAmount || 0;
-        if (amount > 0) {
-          await SystemWalletService.transferToUser(process.env.SYSTEM_ADMIN_ID || null, ownerId, amount, `Auto transfer for subOrder ${subOrder._id}`);
+        // Only transfer rental amount, NOT deposit (deposit is held by admin for renter refund)
+        const rentalAmount = subOrder.pricing?.subtotalRental || 0;
+        const depositAmount = subOrder.pricing?.subtotalDeposit || 0;
+        
+        console.log(`💰 Payment breakdown:`);
+        console.log(`   - Rental fee (→ owner): ${rentalAmount} VND`);
+        console.log(`   - Deposit (→ admin holds): ${depositAmount} VND`);
+        console.log(`   - Attempting to transfer ${rentalAmount} VND to owner ${ownerId}`);
+
+        if (rentalAmount > 0) {
+          // Get SYSTEM_ADMIN_ID from env, or use a placeholder string for tracking
+          const adminId = process.env.SYSTEM_ADMIN_ID || 'SYSTEM_AUTO_TRANSFER';
+          transferResult = await SystemWalletService.transferToUser(
+            adminId,
+            ownerId,
+            rentalAmount,
+            `Rental fee for subOrder ${subOrder._id}`
+          );
+          console.log(`✅ Transfer successful: ${rentalAmount} VND transferred to owner ${ownerId}`);
+          console.log(`   Deposit ${depositAmount} VND remains in admin wallet for renter refund`);
+        } else {
+          console.log('⚠️ Rental amount is 0 or undefined, skipping transfer');
         }
       } catch (err) {
-        console.error('Failed to transfer payment to owner (fallback):', err.message);
+        transferError = err.message || String(err);
+        console.error(`❌ Failed to transfer payment to owner: ${transferError}`);
       }
 
-      return res.json({ status: 'success', data: subOrder });
+      console.log('📤 Returning response with transfer diagnostics');
+      return res.json({
+        status: 'success',
+        data: subOrder,
+        transfer: { result: transferResult, error: transferError }
+      });
     } catch (error) {
-      console.error('renterConfirmDelivery error', error.message);
+      console.error('❌ renterConfirmDelivery error:', error.message);
       return res.status(400).json({ status: 'error', message: error.message });
     }
   }
