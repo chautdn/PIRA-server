@@ -5,6 +5,7 @@ const User = require('../models/User');
 const Cart = require('../models/Cart');
 const Contract = require('../models/Contract');
 const VietMapService = require('./vietmap.service');
+const systemPromotionService = require('./systemPromotion.service');
 const mongoose = require('mongoose');
 const { PayOS } = require('@payos/node');
 const Wallet = require('../models/Wallet');
@@ -127,6 +128,7 @@ class RentalOrderService {
           owner: ownerId,
           ownerAddress: owner.profile.address || {},
           products: processedProducts,
+          appliedPromotions: [], // Initialize empty array for promotions
           shipping: {
             method: deliveryMethod
           },
@@ -146,6 +148,30 @@ class RentalOrderService {
           };
           subOrder.pricing.shippingFee =
             shippingInfo.fee.calculatedFee || shippingInfo.fee.breakdown?.total || 0;
+
+          // ✅ Apply system promotion discount to shipping fee
+          const discountResult = await systemPromotionService.calculateShippingDiscount(subOrder);
+
+          if (discountResult.promotion) {
+            // Update shipping fees with discount
+            subOrder.shipping.fee.discount = discountResult.discount;
+            subOrder.shipping.fee.finalFee = discountResult.finalFee;
+            subOrder.pricing.shippingFee = discountResult.finalFee;
+
+            // Add to appliedPromotions
+            subOrder.appliedPromotions = [
+              {
+                promotion: discountResult.promotion._id,
+                promotionType: 'SYSTEM',
+                discountAmount: discountResult.discount,
+                appliedTo: 'SHIPPING'
+              }
+            ];
+
+            console.log(
+              `✅ Applied system promotion ${discountResult.promotion.code}: -${discountResult.discount} VND`
+            );
+          }
         }
 
         await subOrder.save();
@@ -1838,10 +1864,48 @@ class RentalOrderService {
       // Cập nhật pricing
       subOrder.pricing.shippingFee = totalSubOrderShippingFee;
       subOrder.pricing.shippingDistance = shippingCalculation.distance.km;
+
+      // ✅ Apply system promotion discount to shipping fee
+      const discountResult = await systemPromotionService.calculateShippingDiscount(subOrder);
+
+      if (discountResult.promotion) {
+        // Update shipping fees with discount
+        subOrder.shipping.fee.discount = discountResult.discount;
+        subOrder.shipping.fee.finalFee = discountResult.finalFee;
+        subOrder.pricing.shippingFee = discountResult.finalFee;
+
+        // Ensure appliedPromotions array exists
+        if (!subOrder.appliedPromotions) {
+          subOrder.appliedPromotions = [];
+        }
+
+        // Add to appliedPromotions
+        const existingPromoIndex = subOrder.appliedPromotions.findIndex(
+          (ap) => ap.promotion.toString() === discountResult.promotion._id.toString()
+        );
+
+        const promotionData = {
+          promotion: discountResult.promotion._id,
+          promotionType: 'SYSTEM',
+          discountAmount: discountResult.discount,
+          appliedTo: 'SHIPPING'
+        };
+
+        if (existingPromoIndex >= 0) {
+          subOrder.appliedPromotions[existingPromoIndex] = promotionData;
+        } else {
+          subOrder.appliedPromotions.push(promotionData);
+        }
+
+        console.log(
+          `✅ Applied system promotion ${discountResult.promotion.code}: -${discountResult.discount} VND`
+        );
+      }
+
       subOrder.pricing.totalAmount =
         subOrder.pricing.subtotalRental +
         subOrder.pricing.subtotalDeposit +
-        totalSubOrderShippingFee;
+        subOrder.pricing.shippingFee;
 
       // Lưu SubOrder
       await subOrder.save();

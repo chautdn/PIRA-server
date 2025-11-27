@@ -13,11 +13,15 @@ class ChatGateway {
 
   setupSocketHandlers() {
     this.io.on('connection', (socket) => {
+      console.log(`[ChatGateway] 🔌 New socket connection: ${socket.id}`);
+      console.log(`[ChatGateway] Total connected clients: ${this.io.sockets.sockets.size}`);
+
       // Handle authentication
       socket.on('authenticate', async (token) => {
         try {
           await this.authenticateSocket(socket, token);
         } catch (error) {
+          console.error('[ChatGateway] ❌ Authentication failed for socket:', socket.id);
           socket.emit('auth:error', { message: 'Authentication failed' });
           socket.disconnect();
         }
@@ -44,6 +48,8 @@ class ChatGateway {
 
       // Handle disconnect
       socket.on('disconnect', () => {
+        console.log(`[ChatGateway] 🔌 Socket disconnected: ${socket.id}`);
+        console.log(`[ChatGateway] Remaining connected clients: ${this.io.sockets.sockets.size}`);
         this.handleDisconnect(socket);
       });
 
@@ -339,6 +345,63 @@ class ChatGateway {
       }
     } catch (error) {
       console.error('Error broadcasting wallet maintenance:', error);
+    }
+  }
+
+  // SYSTEM PROMOTION REAL-TIME UPDATES - NEW METHODS
+
+  // Emit system promotion created to all users
+  emitSystemPromotionCreated(promotionData) {
+    try {
+      const connectedClients = this.io.sockets.sockets.size;
+      console.log(
+        `[ChatGateway] 📡 Emitting system:promotion:created to ${connectedClients} connected clients`
+      );
+
+      this.io.emit('system:promotion:created', {
+        promotion: promotionData,
+        timestamp: new Date().toISOString()
+      });
+
+      console.log('[ChatGateway] ✅ Event emitted successfully');
+    } catch (error) {
+      console.error('[ChatGateway] ❌ Error emitting system promotion created:', error);
+    }
+  }
+
+  // Emit system promotion updated to all users
+  emitSystemPromotionUpdated(promotionData) {
+    try {
+      this.io.emit('system:promotion:updated', {
+        promotion: promotionData,
+        timestamp: new Date().toISOString()
+      });
+    } catch (error) {
+      console.error('Error emitting system promotion updated:', error);
+    }
+  }
+
+  // Emit system promotion ended to all users
+  emitSystemPromotionEnded(promotionId) {
+    try {
+      this.io.emit('system:promotion:ended', {
+        promotionId,
+        timestamp: new Date().toISOString()
+      });
+    } catch (error) {
+      console.error('Error emitting system promotion ended:', error);
+    }
+  }
+
+  // Emit promotion notification to specific user
+  emitPromotionNotification(userId, notificationData) {
+    try {
+      this.io.to(`user:${userId}`).emit('notification:promotion', {
+        notification: notificationData,
+        timestamp: new Date().toISOString()
+      });
+    } catch (error) {
+      console.error('Error emitting promotion notification:', error);
     }
   }
 
