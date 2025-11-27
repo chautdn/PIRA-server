@@ -35,10 +35,19 @@ require('./report.routes');
 require('./wishlist.routes');
 require('./systemWallet.routes');
 require('./earlyReturn.routes.register');
+require('./systemPromotion.routes');
 
 // Withdrawal routes
 const withdrawalRoutes = require('./withdrawal.routes');
 router.use('/withdrawals', withdrawalRoutes);
+
+// System Promotion routes
+const systemPromotionRoutes = require('./systemPromotion.routes');
+router.use('/system-promotions', systemPromotionRoutes);
+
+// Voucher routes
+const voucherRoutes = require('./voucher.routes');
+router.use('/vouchers', voucherRoutes);
 
 // Register all routes from the registry FIRST
 getRoutes()?.forEach(({ path, router: moduleRouter }) => {
