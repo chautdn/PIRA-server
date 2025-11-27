@@ -2571,7 +2571,10 @@ class RentalOrderService {
         owner: ownerId,
         status: 'PENDING_CONFIRMATION'
       })
-        .populate('masterOrder')
+        .populate({
+          path: 'masterOrder',
+          populate: { path: 'renter', select: 'profile.firstName phone email' }
+        })
         .populate('products.product')
         .session(session);
 
@@ -2966,8 +2969,7 @@ class RentalOrderService {
 
       // Cập nhật SubOrder với contract ID
       subOrder.contract = contract._id;
-      subOrder.contractStatus.status = 'PENDING';
-      subOrder.contractStatus.createdAt = new Date();
+
 
       if (session) {
         await subOrder.save({ session });
