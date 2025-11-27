@@ -172,9 +172,15 @@ const addBankAccount = async (userId, bankData) => {
     bankName,
     accountNumber: cleanNumber,
     accountHolderName: accountHolderName.trim().toUpperCase(),
+    status: 'PENDING',
     isVerified: false,
     addedAt: new Date()
   };
+
+  // Clean invalid gender value if exists
+  if (user.profile && user.profile.gender && !['MALE', 'FEMALE', 'OTHER'].includes(user.profile.gender)) {
+    user.profile.gender = undefined;
+  }
 
   await user.save();
   return user;
@@ -190,12 +196,43 @@ const updateBankAccount = async (userId, bankData) => {
     throw new NotFoundError('No bank account found');
   }
 
-  // Only allow updating account holder name
+  let needsReVerification = false;
+
+  // If updating bank code or account number, validate and reset verification
+  if (bankData.bankCode || bankData.accountNumber) {
+    const bankCode = bankData.bankCode || user.bankAccount.bankCode;
+    const accountNumber = bankData.accountNumber || user.bankAccount.accountNumber;
+    
+    const { bankName, cleanNumber } = validateBankAccount(bankCode, accountNumber);
+    
+    user.bankAccount.bankCode = bankCode;
+    user.bankAccount.bankName = bankName;
+    user.bankAccount.accountNumber = cleanNumber;
+    needsReVerification = true;
+  }
+
+  // Update account holder name
   if (bankData.accountHolderName) {
     if (bankData.accountHolderName.trim().length < 2) {
       throw new ValidationError('Account holder name is required');
     }
     user.bankAccount.accountHolderName = bankData.accountHolderName.trim().toUpperCase();
+    needsReVerification = true;
+  }
+
+  // Reset verification status if any critical field changed
+  if (needsReVerification) {
+    user.bankAccount.status = 'PENDING';
+    user.bankAccount.isVerified = false;
+    user.bankAccount.verifiedAt = undefined;
+    user.bankAccount.rejectedAt = undefined;
+    user.bankAccount.adminNote = undefined;
+    user.bankAccount.rejectionReason = undefined;
+  }
+
+  // Clean invalid gender value if exists
+  if (user.profile && user.profile.gender && !['MALE', 'FEMALE', 'OTHER'].includes(user.profile.gender)) {
+    user.profile.gender = undefined;
   }
 
   await user.save();

@@ -5,6 +5,7 @@ const User = require('../models/User');
 const Cart = require('../models/Cart');
 const Contract = require('../models/Contract');
 const VietMapService = require('./vietmap.service');
+const systemPromotionService = require('./systemPromotion.service');
 const mongoose = require('mongoose');
 const { PayOS } = require('@payos/node');
 const Wallet = require('../models/Wallet');
@@ -128,6 +129,7 @@ class RentalOrderService {
           owner: ownerId,
           ownerAddress: owner.profile.address || {},
           products: processedProducts,
+          appliedPromotions: [], // Initialize empty array for promotions
           shipping: {
             method: deliveryMethod
           },
@@ -147,6 +149,30 @@ class RentalOrderService {
           };
           subOrder.pricing.shippingFee =
             shippingInfo.fee.calculatedFee || shippingInfo.fee.breakdown?.total || 0;
+
+          // ✅ Apply system promotion discount to shipping fee
+          const discountResult = await systemPromotionService.calculateShippingDiscount(subOrder);
+
+          if (discountResult.promotion) {
+            // Update shipping fees with discount
+            subOrder.shipping.fee.discount = discountResult.discount;
+            subOrder.shipping.fee.finalFee = discountResult.finalFee;
+            subOrder.pricing.shippingFee = discountResult.finalFee;
+
+            // Add to appliedPromotions
+            subOrder.appliedPromotions = [
+              {
+                promotion: discountResult.promotion._id,
+                promotionType: 'SYSTEM',
+                discountAmount: discountResult.discount,
+                appliedTo: 'SHIPPING'
+              }
+            ];
+
+            console.log(
+              `✅ Applied system promotion ${discountResult.promotion.code}: -${discountResult.discount} VND`
+            );
+          }
         }
 
         await subOrder.save();
@@ -270,7 +296,7 @@ class RentalOrderService {
       if (paymentResult.status === 'SUCCESS' || paymentResult.status === 'PARTIALLY_PAID') {
         await SubOrder.updateMany(
           { masterOrder: draftOrder._id },
-          { status: 'PENDING_OWNER_CONFIRMATION' }
+          { status: 'PENDING_CONFIRMATION' }
         );
 
         // Set owner confirmation deadline (24h for paid orders)
@@ -278,7 +304,7 @@ class RentalOrderService {
         draftOrder.ownerConfirmationDeadline = expireTime;
         await draftOrder.save();
 
-        console.log('✅ Order confirmed and SubOrders updated to PENDING_OWNER_CONFIRMATION');
+        console.log('✅ Order confirmed and SubOrders updated to PENDING_CONFIRMATION');
       } else {
         // PENDING payment: SubOrders remain in initial status
         console.log('⏳ Order created but awaiting payment completion');
@@ -717,10 +743,7 @@ class RentalOrderService {
     masterOrder.status = 'PENDING_CONFIRMATION';
 
     // Cập nhật tất cả SubOrder
-    await SubOrder.updateMany(
-      { masterOrder: masterOrderId },
-      { status: 'PENDING_OWNER_CONFIRMATION' }
-    );
+    await SubOrder.updateMany({ masterOrder: masterOrderId }, { status: 'PENDING_CONFIRMATION' });
 
     await masterOrder.save();
 
@@ -737,7 +760,7 @@ class RentalOrderService {
     const subOrder = await SubOrder.findOne({
       _id: subOrderId,
       owner: ownerId,
-      status: 'PENDING_OWNER_CONFIRMATION'
+      status: 'PENDING_CONFIRMATION'
     }).populate('masterOrder');
 
     if (!subOrder) {
@@ -1021,7 +1044,7 @@ class RentalOrderService {
             quantity: productItem.quantity,
             depositPerUnit: productItem.depositRate || 0,
             totalDeposit: productDeposit,
-            confirmationStatus: productItem.confirmationStatus || 'PENDING'
+            productStatus: productItem.productStatus || 'PENDING'
           });
         }
       }
@@ -1140,7 +1163,7 @@ class RentalOrderService {
           }
         },
         // Mặc định tất cả items đều PENDING khi tạo order
-        confirmationStatus: 'PENDING',
+        productStatus: 'PENDING',
         totalRental,
         totalDeposit
       };
@@ -1313,31 +1336,7 @@ class RentalOrderService {
           status: 'CONTRACT_SIGNED'
         });
         console.log(`✅ Master Order status updated to CONTRACT_SIGNED`);
-
-        // 📦 Create both DELIVERY and RETURN shipments when all contracts are signed
-        const ShipmentService = require('./shipment.service');
-        try {
-          console.log(`\n🚀 Auto-creating shipments...`);
-          const shipmentResult = await ShipmentService.createDeliveryAndReturnShipments(masterOrderId);
-          console.log(`✅ Shipments created successfully:`, {
-            pairs: shipmentResult.pairs,
-            totalCount: shipmentResult.count
-          });
-        } catch (err) {
-          console.error('❌ CRITICAL ERROR creating shipments after contract signing:');
-          console.error('   Error message:', err.message);
-          console.error('   Error type:', err.constructor.name);
-          if (err.stack) {
-            console.error('   Stack trace:', err.stack);
-          }
-          // Don't throw - order is already in CONTRACT_SIGNED status
-          // Shipments can be created manually if needed
-          return {
-            success: false,
-            error: err.message,
-            masterOrderId: masterOrderId
-          };
-        }
+        console.log(`📝 Waiting for renter to request shipment creation...`);
       }
     } catch (error) {
       console.error('❌ Error in checkAllContractsSigned:', error.message);
@@ -1877,10 +1876,48 @@ class RentalOrderService {
       // Cập nhật pricing
       subOrder.pricing.shippingFee = totalSubOrderShippingFee;
       subOrder.pricing.shippingDistance = shippingCalculation.distance.km;
+
+      // ✅ Apply system promotion discount to shipping fee
+      const discountResult = await systemPromotionService.calculateShippingDiscount(subOrder);
+
+      if (discountResult.promotion) {
+        // Update shipping fees with discount
+        subOrder.shipping.fee.discount = discountResult.discount;
+        subOrder.shipping.fee.finalFee = discountResult.finalFee;
+        subOrder.pricing.shippingFee = discountResult.finalFee;
+
+        // Ensure appliedPromotions array exists
+        if (!subOrder.appliedPromotions) {
+          subOrder.appliedPromotions = [];
+        }
+
+        // Add to appliedPromotions
+        const existingPromoIndex = subOrder.appliedPromotions.findIndex(
+          (ap) => ap.promotion.toString() === discountResult.promotion._id.toString()
+        );
+
+        const promotionData = {
+          promotion: discountResult.promotion._id,
+          promotionType: 'SYSTEM',
+          discountAmount: discountResult.discount,
+          appliedTo: 'SHIPPING'
+        };
+
+        if (existingPromoIndex >= 0) {
+          subOrder.appliedPromotions[existingPromoIndex] = promotionData;
+        } else {
+          subOrder.appliedPromotions.push(promotionData);
+        }
+
+        console.log(
+          `✅ Applied system promotion ${discountResult.promotion.code}: -${discountResult.discount} VND`
+        );
+      }
+
       subOrder.pricing.totalAmount =
         subOrder.pricing.subtotalRental +
         subOrder.pricing.subtotalDeposit +
-        totalSubOrderShippingFee;
+        subOrder.pricing.shippingFee;
 
       // Lưu SubOrder
       await subOrder.save();
@@ -2119,7 +2156,7 @@ class RentalOrderService {
       for (const productItem of subOrder.products) {
         if (rejectedProductIds.includes(productItem.product._id.toString())) {
           // Mark as rejected
-          productItem.confirmationStatus = 'REJECTED';
+          productItem.productStatus = 'REJECTED';
           productItem.rejectionReason = rejectionReason;
           productItem.rejectedAt = new Date();
 
@@ -2420,11 +2457,8 @@ class RentalOrderService {
 
       await masterOrder.save();
 
-      // Update SubOrders to PENDING_OWNER_CONFIRMATION
-      await SubOrder.updateMany(
-        { masterOrder: masterOrderId },
-        { status: 'PENDING_OWNER_CONFIRMATION' }
-      );
+      // Update SubOrders to PENDING_CONFIRMATION
+      await SubOrder.updateMany({ masterOrder: masterOrderId }, { status: 'PENDING_CONFIRMATION' });
 
       // Set owner confirmation deadline (24h)
       const expireTime = new Date(Date.now() + 24 * 60 * 60 * 1000);
@@ -2572,7 +2606,7 @@ class RentalOrderService {
       const subOrder = await SubOrder.findOne({
         _id: subOrderId,
         owner: ownerId,
-        status: 'PENDING_OWNER_CONFIRMATION'
+        status: 'PENDING_CONFIRMATION'
       })
         .populate('masterOrder')
         .populate('products.product')
@@ -2606,12 +2640,12 @@ class RentalOrderService {
 
         if (confirmedSet.has(productIdStr)) {
           // Sản phẩm được chọn → CONFIRMED
-          productItem.confirmationStatus = 'CONFIRMED';
+          productItem.productStatus = 'CONFIRMED';
           productItem.confirmedAt = now;
           totalConfirmed++;
         } else {
           // Sản phẩm KHÔNG được chọn → TỰ ĐỘNG REJECTED
-          productItem.confirmationStatus = 'REJECTED';
+          productItem.productStatus = 'REJECTED';
           productItem.rejectedAt = now;
           productItem.rejectionReason = 'Chủ đồ chỉ xác nhận một phần đơn hàng';
           totalRejected++;
@@ -2768,10 +2802,10 @@ class RentalOrderService {
           totalProducts++;
           const itemAmount = (productItem.totalRental || 0) + (productItem.totalDeposit || 0);
 
-          if (productItem.confirmationStatus === 'CONFIRMED') {
+          if (productItem.productStatus === 'CONFIRMED') {
             confirmedProducts++;
             totalConfirmedAmount += itemAmount;
-          } else if (productItem.confirmationStatus === 'REJECTED') {
+          } else if (productItem.productStatus === 'REJECTED') {
             rejectedProducts++;
             totalRejectedAmount += itemAmount;
           } else {
@@ -2893,7 +2927,7 @@ class RentalOrderService {
 
       // Lọc ra chỉ các sản phẩm CONFIRMED
       const confirmedProducts = subOrder.products.filter(
-        (item) => item.confirmationStatus === 'CONFIRMED'
+        (item) => item.productStatus === 'CONFIRMED'
       );
 
       if (confirmedProducts.length === 0) {
@@ -3130,7 +3164,7 @@ class RentalOrderService {
       for (const masterOrder of expiredOrders) {
         const subOrders = await SubOrder.find({
           masterOrder: masterOrder._id,
-          status: 'PENDING_OWNER_CONFIRMATION'
+          status: 'PENDING_CONFIRMATION'
         }).session(session);
 
         for (const subOrder of subOrders) {
@@ -3139,8 +3173,8 @@ class RentalOrderService {
 
           // Reject tất cả sản phẩm PENDING
           for (const productItem of subOrder.products) {
-            if (productItem.confirmationStatus === 'PENDING') {
-              productItem.confirmationStatus = 'REJECTED';
+            if (productItem.productStatus === 'PENDING') {
+              productItem.productStatus = 'REJECTED';
               productItem.rejectedAt = now;
               productItem.rejectionReason = 'Quá thời hạn xác nhận';
 
@@ -3156,7 +3190,7 @@ class RentalOrderService {
           if (hasRejection) {
             // Cập nhật trạng thái SubOrder
             const confirmedCount = subOrder.products.filter(
-              (p) => p.confirmationStatus === 'CONFIRMED'
+              (p) => p.productStatus === 'CONFIRMED'
             ).length;
 
             if (confirmedCount > 0) {
@@ -3254,8 +3288,8 @@ class RentalOrderService {
 
       // Đánh dấu tất cả sản phẩm là REJECTED
       for (const productItem of subOrder.products) {
-        if (productItem.confirmationStatus !== 'REJECTED') {
-          productItem.confirmationStatus = 'REJECTED';
+        if (productItem.productStatus !== 'REJECTED') {
+          productItem.productStatus = 'REJECTED';
           productItem.rejectedAt = new Date();
           productItem.rejectionReason = reason || 'Người thuê từ chối SubOrder';
         }

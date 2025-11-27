@@ -7,6 +7,7 @@ const Wallet = require('../models/Wallet');
 const Transaction = require('../models/Transaction');
 const Review = require('../models/Review');
 const mongoose = require('mongoose');
+const voucherService = require('./voucher.service');
 
 /**
  * Early Return Request Service
@@ -338,6 +339,15 @@ class EarlyReturnRequestService {
       }
 
       // 3. Update SubOrder status
+      const subOrder = session
+        ? await SubOrder.findById(request.subOrder)
+            .populate('masterOrder', 'renter')
+            .populate('owner', '_id email')
+            .session(session)
+        : await SubOrder.findById(request.subOrder)
+            .populate('masterOrder', 'renter')
+            .populate('owner', '_id email');
+
       if (session) {
         await SubOrder.findByIdAndUpdate(request.subOrder, { status: 'RETURNED' }, { session });
       } else {
@@ -347,11 +357,52 @@ class EarlyReturnRequestService {
       // 4. Process deposit refund
       const refundResult = await this._processDepositRefundStandalone(request, session);
 
+      // 5. Award loyalty points to both owner and renter after successful return (ONLY for online payments)
+      if (subOrder && subOrder.masterOrder && subOrder.owner) {
+        try {
+          // Get full MasterOrder to check payment method
+          const fullMasterOrder = session
+            ? await MasterOrder.findById(subOrder.masterOrder._id).session(session)
+            : await MasterOrder.findById(subOrder.masterOrder._id);
+
+          const isOnlinePayment =
+            fullMasterOrder &&
+            ['WALLET', 'PAYOS', 'BANK_TRANSFER'].includes(fullMasterOrder.paymentMethod);
+
+          if (isOnlinePayment) {
+            // Award 5 points to renter
+            await voucherService.awardLoyaltyPoints(
+              subOrder.masterOrder.renter,
+              5,
+              `SubOrder returned - ${request.requestNumber} (${fullMasterOrder.paymentMethod})`
+            );
+
+            // Award 5 points to owner
+            await voucherService.awardLoyaltyPoints(
+              subOrder.owner._id,
+              5,
+              `SubOrder returned - ${request.requestNumber} (${fullMasterOrder.paymentMethod})`
+            );
+
+            console.log(
+              `✅ Loyalty points awarded to owner and renter for SubOrder return (Payment: ${fullMasterOrder.paymentMethod})`
+            );
+          } else {
+            console.log(
+              `ℹ️ Skipping loyalty points for COD order (Payment: ${fullMasterOrder?.paymentMethod})`
+            );
+          }
+        } catch (loyaltyError) {
+          console.error('❌ Error awarding loyalty points:', loyaltyError);
+          // Don't fail the whole transaction if loyalty points fail
+        }
+      }
+
       if (session) {
         await session.commitTransaction();
       }
 
-      // 5. Send notification to renter
+      // 6. Send notification to renter
       if (global.chatGateway) {
         global.chatGateway.emitToUser(request.renter.toString(), 'return-confirmed', {
           type: 'return_confirmed',
@@ -506,6 +557,11 @@ class EarlyReturnRequestService {
           // Process deposit refund (will handle session internally)
           const refundResult = await this._processDepositRefundStandalone(request, session);
 
+          // Get SubOrder details for loyalty points
+          const subOrder = await SubOrder.findById(request.subOrder)
+            .populate('masterOrder', 'renter')
+            .populate('owner', '_id email');
+
           // Update SubOrder
           if (session) {
             await SubOrder.findByIdAndUpdate(
@@ -515,6 +571,44 @@ class EarlyReturnRequestService {
             );
           } else {
             await SubOrder.findByIdAndUpdate(request.subOrder, { status: 'COMPLETED' });
+          }
+
+          // Award loyalty points to both owner and renter after completion (ONLY for online payments)
+          if (subOrder && subOrder.masterOrder && subOrder.owner) {
+            try {
+              // Get full MasterOrder to check payment method
+              const fullMasterOrder = await MasterOrder.findById(subOrder.masterOrder._id);
+              const isOnlinePayment =
+                fullMasterOrder &&
+                ['WALLET', 'PAYOS', 'BANK_TRANSFER'].includes(fullMasterOrder.paymentMethod);
+
+              if (isOnlinePayment) {
+                // Award 5 points to renter
+                await voucherService.awardLoyaltyPoints(
+                  subOrder.masterOrder.renter,
+                  5,
+                  `SubOrder ${request.requestNumber} completed (${fullMasterOrder.paymentMethod})`
+                );
+
+                // Award 5 points to owner
+                await voucherService.awardLoyaltyPoints(
+                  subOrder.owner._id,
+                  5,
+                  `SubOrder ${request.requestNumber} completed (${fullMasterOrder.paymentMethod})`
+                );
+
+                console.log(
+                  `✅ Loyalty points awarded to owner and renter for SubOrder completion (Payment: ${fullMasterOrder.paymentMethod})`
+                );
+              } else {
+                console.log(
+                  `ℹ️ Skipping loyalty points for COD order (Payment: ${fullMasterOrder?.paymentMethod})`
+                );
+              }
+            } catch (loyaltyError) {
+              console.error('❌ Error awarding loyalty points:', loyaltyError);
+              // Don't fail the whole transaction if loyalty points fail
+            }
           }
 
           // Update final status

@@ -97,7 +97,7 @@ class ShipmentController {
   async listShippers(req, res) {
     try {
       const { ward, district, city } = req.query;
-      const filter = { role: 'SHIPPER', status: 'ACTIVE' };
+      const filter = { role: 'SHIPPER' };
 
       // Use ward if provided (some users may store ward in address.ward)
       if (ward) {
@@ -108,8 +108,23 @@ class ShipmentController {
         filter['address.city'] = city;
       }
 
-      const shippers = await User.find(filter).select('profile firstName lastName profile avatar phone address');
-      return res.json({ status: 'success', data: shippers });
+      const shippers = await User.find(filter)
+        .select('_id email phone profile address')
+        .sort({ createdAt: -1 });
+      
+      // Transform data for frontend
+      const transformedShippers = shippers.map(shipper => ({
+        _id: shipper._id,
+        email: shipper.email,
+        phone: shipper.phone,
+        name: `${shipper.profile?.firstName || ''} ${shipper.profile?.lastName || ''}`.trim() || shipper.email,
+        profile: shipper.profile,
+        address: shipper.address
+      }));
+      
+      console.log(`✅ Found ${transformedShippers.length} shippers with filter:`, filter);
+      
+      return res.json({ status: 'success', data: transformedShippers });
     } catch (err) {
       console.error('listShippers error', err.message);
       return res.status(400).json({ status: 'error', message: err.message });
@@ -161,15 +176,9 @@ class ShipmentController {
 
   async createDeliveryAndReturnShipments(req, res) {
     try {
-      // Only admin or system can trigger shipment creation
-      if (req.user?.role !== 'ADMIN' && req.user?.role !== 'SYSTEM') {
-        return res.status(403).json({ 
-          status: 'error', 
-          message: 'Only admin can create shipments for orders' 
-        });
-      }
-
       const { masterOrderId } = req.params;
+      const { shipperId } = req.body;
+      
       if (!masterOrderId) {
         return res.status(400).json({ 
           status: 'error', 
@@ -177,16 +186,55 @@ class ShipmentController {
         });
       }
 
-      const result = await ShipmentService.createDeliveryAndReturnShipments(masterOrderId);
+      // Verify master order exists
+      const MasterOrder = require('../models/MasterOrder');
+      const SubOrder = require('../models/SubOrder');
+      
+      const masterOrder = await MasterOrder.findById(masterOrderId);
+      if (!masterOrder) {
+        return res.status(404).json({ 
+          status: 'error', 
+          message: 'Master order not found' 
+        });
+      }
+
+      // Check if user is admin or owner
+      if (req.user?.role === 'ADMIN') {
+        // Admin can always create shipments
+      } else {
+        // For non-admin users, check if they are one of the owners in the suborders
+        const subOrders = await SubOrder.find({ masterOrder: masterOrderId });
+        const isOwner = subOrders.some(so => String(so.owner) === String(req.user?._id));
+        
+        if (!isOwner) {
+          return res.status(403).json({ 
+            status: 'error', 
+            message: 'Only the owner or admin can request shipment creation' 
+          });
+        }
+      }
+
+      // Create shipments and assign to shipper
+      const result = await ShipmentService.createDeliveryAndReturnShipments(masterOrderId, shipperId);
 
       return res.json({ 
         status: 'success', 
-        message: `Created ${result.count} shipments (${result.pairs} pairs)`,
+        message: `Created ${result.count} shipments (${result.pairs} pairs) and assigned to shipper`,
         data: result 
       });
     } catch (err) {
-      console.error('createDeliveryAndReturnShipments error', err.message);
-      return res.status(400).json({ status: 'error', message: err.message });
+      console.error('❌ createDeliveryAndReturnShipments error:');
+      console.error('   Message:', err.message);
+      console.error('   Type:', err.constructor.name);
+      console.error('   Full error:', err);
+      if (err.stack) {
+        console.error('   Stack:', err.stack);
+      }
+      return res.status(400).json({ 
+        status: 'error', 
+        message: err.message,
+        error: process.env.NODE_ENV === 'development' ? err.toString() : undefined
+      });
     }
   }
 }

@@ -57,8 +57,10 @@ const notificationSchema = new mongoose.Schema(
       type: mongoose.Schema.Types.ObjectId,
       ref: 'Dispute'
     },
-
-
+    relatedPromotion: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Promotion'
+    },
 
     // Status
     status: {

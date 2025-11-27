@@ -1126,7 +1126,7 @@ class RentalOrderController {
       // Tìm các SubOrder đang chờ xác nhận của owner này
       const subOrders = await SubOrder.find({
         owner: ownerId,
-        status: 'PENDING_OWNER_CONFIRMATION'
+        status: 'PENDING_CONFIRMATION'
       })
         .populate('masterOrder', 'masterOrderNumber deliveryAddress ownerConfirmationDeadline')
         .populate({
@@ -1140,7 +1140,7 @@ class RentalOrderController {
 
       const total = await SubOrder.countDocuments({
         owner: ownerId,
-        status: 'PENDING_OWNER_CONFIRMATION'
+        status: 'PENDING_CONFIRMATION'
       });
 
       return new SuccessResponse({
@@ -1195,11 +1195,9 @@ class RentalOrderController {
       // Tính toán thông tin tổng hợp
       const summary = {
         totalProducts: subOrder.products.length,
-        confirmedProducts: subOrder.products.filter((p) => p.confirmationStatus === 'CONFIRMED')
-          .length,
-        rejectedProducts: subOrder.products.filter((p) => p.confirmationStatus === 'REJECTED')
-          .length,
-        pendingProducts: subOrder.products.filter((p) => p.confirmationStatus === 'PENDING').length,
+        confirmedProducts: subOrder.products.filter((p) => p.productStatus === 'CONFIRMED').length,
+        rejectedProducts: subOrder.products.filter((p) => p.productStatus === 'REJECTED').length,
+        pendingProducts: subOrder.products.filter((p) => p.productStatus === 'PENDING').length,
         totalAmount:
           subOrder.pricing.subtotalRental +
           subOrder.pricing.subtotalDeposit +

@@ -124,7 +124,7 @@ const subOrderSchema = new mongoose.Schema(
         },
         // Thêm confirmation status cho từng product item
         // Thêm delivery/shipping status cho từng product
-        status: {
+        productStatus: {
           type: String,
           enum: [
             // Confirmation Phase
@@ -249,6 +249,25 @@ const subOrderSchema = new mongoose.Schema(
       }
     },
 
+    // Applied Promotions
+    appliedPromotions: [
+      {
+        promotion: {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: 'Promotion'
+        },
+        promotionType: {
+          type: String,
+          enum: ['SYSTEM', 'PRODUCT']
+        },
+        discountAmount: Number,
+        appliedTo: {
+          type: String,
+          enum: ['SHIPPING', 'PRODUCT', 'TOTAL']
+        }
+      }
+    ],
+
     // Thông tin vận chuyển
     shipping: {
       method: {
@@ -266,6 +285,14 @@ const subOrderSchema = new mongoose.Schema(
           default: 5000 // 5,000 VND/km
         },
         totalFee: {
+          type: Number,
+          default: 0
+        },
+        discount: {
+          type: Number,
+          default: 0
+        },
+        finalFee: {
           type: Number,
           default: 0
         }

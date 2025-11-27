@@ -1,3 +1,4 @@
+
 const mongoose = require('mongoose');
 
 const shipmentSchema = new mongoose.Schema(
@@ -141,7 +142,7 @@ const shipmentSchema = new mongoose.Schema(
 );
 
 shipmentSchema.index({ shipmentId: 1 });
-shipmentSchema.index({ subOrder: 1, productId: 1 });
+shipmentSchema.index({ subOrder: 1, productId: 1, type: 1 }); // Allow DELIVERY and RETURN for same product
 shipmentSchema.index({ shipper: 1, status: 1 });
 shipmentSchema.index({ type: 1, status: 1 });
 

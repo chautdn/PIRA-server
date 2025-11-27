@@ -15,13 +15,20 @@ const promotionSchema = new mongoose.Schema(
       maxlength: 500
     },
 
-    // Promotion Code
+    // Promotion Code (optional - only for product-specific vouchers, not system promotions)
     code: {
       type: String,
-      required: true,
       unique: true,
+      sparse: true, // Allow null values
       uppercase: true,
       trim: true
+    },
+
+    // Promotion Scope
+    scope: {
+      type: String,
+      enum: ['PRODUCT', 'SYSTEM'],
+      default: 'PRODUCT'
     },
 
     // Promotion Type
@@ -111,7 +118,44 @@ const promotionSchema = new mongoose.Schema(
 
     // Media
     image: String,
-    bannerImage: String
+    bannerImage: String,
+
+    // System Promotion Configuration (for shipping discount)
+    systemPromotion: {
+      isActive: {
+        type: Boolean,
+        default: false
+      },
+      discountType: {
+        type: String,
+        enum: ['PERCENTAGE', 'FIXED_AMOUNT'],
+        default: 'PERCENTAGE'
+      },
+      shippingDiscountValue: {
+        type: Number,
+        min: 0,
+        max: 100
+      },
+      applyTo: {
+        type: String,
+        enum: ['ALL_ORDERS', 'FIRST_ORDER', 'MIN_ORDER_VALUE'],
+        default: 'ALL_ORDERS'
+      },
+      minOrderValue: Number
+    },
+
+    // Banner Display Configuration
+    banner: {
+      displayOnHome: {
+        type: Boolean,
+        default: false
+      },
+      bannerTitle: String,
+      bannerDescription: String,
+      bannerImage: String,
+      backgroundColor: String,
+      textColor: String
+    }
   },
   {
     timestamps: true,
@@ -119,7 +163,8 @@ const promotionSchema = new mongoose.Schema(
   }
 );
 
-promotionSchema.index({ code: 1 });
+// Sparse unique index on code - allows null/undefined values
+promotionSchema.index({ code: 1 }, { unique: true, sparse: true });
 promotionSchema.index({ status: 1, startDate: 1, endDate: 1 });
 
 module.exports = mongoose.model('Promotion', promotionSchema);

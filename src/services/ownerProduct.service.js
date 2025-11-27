@@ -400,12 +400,12 @@ const ownerProductService = {
       }
 
       const productItem = subOrder.products[productItemIndex];
-      if (productItem.confirmationStatus !== 'PENDING') {
+      if (productItem.productStatus !== 'PENDING') {
         throw new Error('Sản phẩm này đã được xử lý rồi');
       }
 
       // Update confirmation status
-      productItem.confirmationStatus = 'CONFIRMED';
+      productItem.productStatus = 'CONFIRMED';
       productItem.confirmedAt = new Date();
 
       await subOrder.save();
@@ -440,12 +440,12 @@ const ownerProductService = {
       }
 
       const productItem = subOrder.products[productItemIndex];
-      if (productItem.confirmationStatus !== 'PENDING') {
+      if (productItem.productStatus !== 'PENDING') {
         throw new Error('Sản phẩm này đã được xử lý rồi');
       }
 
       // Update confirmation status
-      productItem.confirmationStatus = 'REJECTED';
+      productItem.productStatus = 'REJECTED';
       productItem.rejectedAt = new Date();
       productItem.rejectionReason = reason;
 
@@ -521,7 +521,7 @@ const ownerProductService = {
       // Check for any active or pending rental requests for this product
       const activeRentals = await SubOrder.find({
         'products.product': productId,
-        'products.confirmationStatus': { $in: ['PENDING', 'CONFIRMED'] },
+        'products.productStatus': { $in: ['PENDING', 'CONFIRMED'] },
         status: {
           $nin: ['CANCELLED', 'COMPLETED', 'OWNER_REJECTED']
         }
@@ -529,14 +529,13 @@ const ownerProductService = {
 
       const hasPendingRequests = activeRentals.some((subOrder) =>
         subOrder.products.some(
-          (p) => p.product.toString() === productId.toString() && p.confirmationStatus === 'PENDING'
+          (p) => p.product.toString() === productId.toString() && p.productStatus === 'PENDING'
         )
       );
 
       const hasActiveRentals = activeRentals.some((subOrder) =>
         subOrder.products.some(
-          (p) =>
-            p.product.toString() === productId.toString() && p.confirmationStatus === 'CONFIRMED'
+          (p) => p.product.toString() === productId.toString() && p.productStatus === 'CONFIRMED'
         )
       );
 
@@ -547,14 +546,12 @@ const ownerProductService = {
         canDelete: !hasPendingRequests && !hasActiveRentals, // Can delete only if no activity
         pendingCount: activeRentals.filter((so) =>
           so.products.some(
-            (p) =>
-              p.product.toString() === productId.toString() && p.confirmationStatus === 'PENDING'
+            (p) => p.product.toString() === productId.toString() && p.productStatus === 'PENDING'
           )
         ).length,
         activeCount: activeRentals.filter((so) =>
           so.products.some(
-            (p) =>
-              p.product.toString() === productId.toString() && p.confirmationStatus === 'CONFIRMED'
+            (p) => p.product.toString() === productId.toString() && p.productStatus === 'CONFIRMED'
           )
         ).length
       };

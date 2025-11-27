@@ -279,12 +279,15 @@ class ShipmentService {
    * Create both outbound (DELIVERY) and return (RETURN) shipments when contract is signed
    * Called when all contracts for a master order are signed
    */
-  async createDeliveryAndReturnShipments(masterOrderId) {
+  async createDeliveryAndReturnShipments(masterOrderId, shipperId) {
     try {
       const MasterOrder = require('../models/MasterOrder');
       const SubOrder = require('../models/SubOrder');
 
       console.log(`\n📦 Creating shipments for master order: ${masterOrderId}`);
+      if (shipperId) {
+        console.log(`   Assigning to shipper: ${shipperId}`);
+      }
 
       if (!masterOrderId) {
         throw new Error('masterOrderId is required');
@@ -319,6 +322,7 @@ class ShipmentService {
 
       const createdShipments = [];
       let shipmentPairs = 0;
+      const errors = [];
 
       // Create shipments for each sub-order and each product
       for (let soIndex = 0; soIndex < subOrders.length; soIndex++) {
@@ -376,7 +380,7 @@ class ShipmentService {
           // OUTBOUND SHIPMENT (DELIVERY)
           try {
             console.log(`        Creating DELIVERY shipment...`);
-            const outboundShipment = await this.createShipment({
+            const deliveryPayload = {
               subOrder: subOrder._id,
               productId: product._id,
               productIndex: productIndex,
@@ -404,15 +408,38 @@ class ShipmentService {
               },
               scheduledAt: subOrder.rentalPeriod?.startDate,
               status: 'PENDING'
-            });
+            };
+            
+            console.log(`        DELIVERY Payload:`, JSON.stringify(deliveryPayload, null, 2));
+            
+            const outboundShipment = await this.createShipment(deliveryPayload);
 
             console.log(`        ✅ DELIVERY: ${outboundShipment.shipmentId}`);
+            
+            // Assign shipper if provided
+            if (shipperId) {
+              outboundShipment.shipper = shipperId;
+              await outboundShipment.save();
+              console.log(`        ✅ Assigned shipper to DELIVERY: ${shipperId}`);
+            }
+            
             createdShipments.push(outboundShipment);
-            shipmentPairs++;
+          } catch (err) {
+            const errMsg = `DELIVERY shipment creation failed for product ${product._id}: ${err.message}`;
+            console.error(`        ❌ DELIVERY Error:`, err.message);
+            console.error(`        Error type:`, err.constructor.name);
+            console.error(`        Full error:`, JSON.stringify(err, null, 2));
+            if (err.errors) {
+              console.error(`        Validation errors:`, err.errors);
+            }
+            console.error(`           Stack:`, err.stack);
+            errors.push(errMsg);
+          }
 
-            // RETURN SHIPMENT
-            console.log(`        Creating RETURN shipment...`);
-            const returnShipment = await this.createShipment({
+          // RETURN SHIPMENT
+          try {
+            console.log(`\n        🔄 Creating RETURN shipment...`);
+            const returnPayload = {
               subOrder: subOrder._id,
               productId: product._id,
               productIndex: productIndex,
@@ -441,24 +468,65 @@ class ShipmentService {
               },
               scheduledAt: subOrder.rentalPeriod?.endDate,
               status: 'PENDING'
-            });
-
-            console.log(`        ✅ RETURN: ${returnShipment.shipmentId}`);
+            };
+            
+            console.log(`        RETURN Payload keys:`, Object.keys(returnPayload));
+            console.log(`        RETURN Payload:`, JSON.stringify(returnPayload, null, 2));
+            
+            console.log(`        📤 Calling createShipment with RETURN payload...`);
+            const returnShipment = await this.createShipment(returnPayload);
+            
+            console.log(`        ✅ RETURN shipment created successfully!`);
+            console.log(`        RETURN ID: ${returnShipment._id}`);
+            console.log(`        RETURN shipmentId: ${returnShipment.shipmentId}`);
+            
+            // Assign shipper if provided
+            if (shipperId) {
+              returnShipment.shipper = shipperId;
+              await returnShipment.save();
+              console.log(`        ✅ Assigned shipper to RETURN: ${shipperId}`);
+            }
+            
             createdShipments.push(returnShipment);
+            shipmentPairs++;
+            
+            console.log(`        ✅ RETURN: ${returnShipment.shipmentId}`);
           } catch (err) {
-            console.error(`        ❌ Error:`, err.message);
-            console.error(`           Stack:`, err.stack);
+            console.error(`\n        ❌ RETURN Error DETAILS:`);
+            console.error(`        Error occurred at step: creating RETURN shipment`);
+            console.error(`        Message:`, err.message);
+            console.error(`        Type:`, err.constructor.name);
+            
+            // Log Mongoose validation errors
+            if (err.errors) {
+              console.error(`        Mongoose Validation Errors:`, Object.keys(err.errors).reduce((acc, key) => {
+                acc[key] = err.errors[key].message;
+                return acc;
+              }, {}));
+            }
+            
+            // Log the full error for debugging
+            console.error(`        Full error:`, err);
+            console.error(`        Stack:`, err.stack);
+            console.error(`\n`);
+            errors.push(`RETURN shipment creation failed for product ${product._id}: ${err.message}`);
           }
         }
       }
 
       console.log(`\n✅ SUMMARY: Created ${createdShipments.length} total shipments (${shipmentPairs} pairs)\n`);
 
+      if (errors.length > 0) {
+        console.error(`⚠️  Errors occurred during shipment creation:`);
+        errors.forEach((e, i) => console.error(`   ${i + 1}. ${e}`));
+      }
+
       return {
-        success: true,
+        success: errors.length === 0,
         count: createdShipments.length,
         pairs: shipmentPairs,
-        shipments: createdShipments
+        shipments: createdShipments,
+        errors: errors.length > 0 ? errors : undefined
       };
     } catch (error) {
       console.error('❌ Error creating delivery and return shipments:', error.message);

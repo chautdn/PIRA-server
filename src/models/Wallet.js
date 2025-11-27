@@ -33,7 +33,6 @@ const walletSchema = new mongoose.Schema(
       default: 'VND'
     },
 
-  
     status: {
       type: String,
       enum: ['ACTIVE', 'SUSPENDED', 'FROZEN'],

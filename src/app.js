@@ -13,7 +13,14 @@ connectToDatabase();
 const server = http.createServer(app);
 const io = new Server(server, {
   cors: {
-    origin: process.env.CLIENT_URL || 'http://localhost:3000',
+    origin: [
+      process.env.CLIENT_URL || 'http://localhost:3000',
+      'http://localhost:3000',
+      'http://localhost:5173',
+      /^http:\/\/10\.12\.64\.\d+:3000$/, // Allow any device on your network
+      /^http:\/\/192\.168\.\d+\.\d+:3000$/, // Allow common local networks
+      /^http:\/\/172\.\d+\.\d+\.\d+:3000$/ // Allow Docker/virtual networks
+    ],
     credentials: true
   },
   transports: ['websocket', 'polling'], // Prefer websocket
@@ -54,8 +61,9 @@ io.engine.on('connection_error', (err) => {
 });
 
 // Use server instead of app for listening
-server.listen(PORT, () => {
+server.listen(PORT, '0.0.0.0', () => {
   console.log(`Server running on http://localhost:${PORT}`);
+  console.log(`Server accessible on network: http://10.12.64.43:${PORT}`);
   console.log('Socket.IO enabled for real-time chat');
 });
 
