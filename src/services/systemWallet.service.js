@@ -336,9 +336,9 @@ class SystemWalletService {
 
       // Create transaction records
       const systemTransaction = new Transaction({
-        type: 'TRANSFER_IN',
+        type: 'transfer',
         amount: amount,
-        status: 'COMPLETED',
+        status: 'success',
         method: 'ADMIN_ACTION',
         description: `Transfer from user ${userId}: ${description}`,
         metadata: {
@@ -351,9 +351,9 @@ class SystemWalletService {
 
       const userTransaction = new Transaction({
         wallet: userWallet._id,
-        type: 'TRANSFER_OUT',
+        type: 'transfer',
         amount: amount,
-        status: 'COMPLETED',
+        status: 'success',
         method: 'ADMIN_ACTION',
         description: `Transferred to system: ${description}`,
         metadata: {
