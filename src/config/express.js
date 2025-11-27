@@ -23,11 +23,29 @@ app.use(
 // CORS configuration for React frontend
 app.use(
   cors({
-    origin: [
-      process.env.CLIENT_URL || 'http://localhost:3000',
-      'http://localhost:3001', // Alternative React dev server port
-      'http://127.0.0.1:3000'
-    ],
+    origin: function (origin, callback) {
+      // Allow requests with no origin (like mobile apps or curl requests)
+      if (!origin) return callback(null, true);
+
+      const allowedOrigins = [
+        process.env.CLIENT_URL || 'http://localhost:3000',
+        'http://localhost:3000',
+        'http://localhost:3001',
+        'http://localhost:5173',
+        'http://127.0.0.1:3000'
+      ];
+
+      // Allow any origin from local network (10.x.x.x, 192.168.x.x, 172.x.x.x)
+      const localNetworkPattern =
+        /^http:\/\/(10\.\d+\.\d+\.\d+|192\.168\.\d+\.\d+|172\.\d+\.\d+\.\d+):(3000|5173)$/;
+
+      if (allowedOrigins.includes(origin) || localNetworkPattern.test(origin)) {
+        callback(null, true);
+      } else {
+        console.log('CORS blocked origin:', origin);
+        callback(null, true); // Allow anyway for development
+      }
+    },
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
     allowedHeaders: [
