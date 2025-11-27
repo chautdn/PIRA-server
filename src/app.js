@@ -48,11 +48,6 @@ const { startShipmentCronJob } = require('./scripts/shipmentCron');
 startShipmentCronJob();
 console.log('✅ Shipment cron job initialized');
 
-// Initialize return shipment cron job
-const { startReturnShipmentCronJob } = require('./scripts/returnShipmentCron');
-startReturnShipmentCronJob();
-console.log('✅ Return shipment cron job initialized');
-
 // Log Socket.IO events for monitoring
 io.engine.on('connection_error', (err) => {
   console.error('Socket.IO connection error:', err);

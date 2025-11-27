@@ -14,6 +14,9 @@ router.get('/shippers', ShipmentController.listShippers);
 // Shipper own shipments
 router.get('/my', ShipmentController.listMyShipments);
 
+// Shipper available shipments (grouped by DELIVERY vs RETURN)
+router.get('/available', ShipmentController.listAvailableShipments);
+
 router.post('/', ShipmentController.createShipment);
 
 router.get('/:id', [param('id').isMongoId().withMessage('Invalid ID'), validateRequest], ShipmentController.getShipment);
@@ -29,5 +32,8 @@ router.post('/:id/deliver', [param('id').isMongoId().withMessage('Invalid ID'), 
 
 // Renter confirm delivery
 router.post('/:id/confirm', [param('id').isMongoId().withMessage('Invalid ID'), validateRequest], ShipmentController.renterConfirm);
+
+// Admin: Create delivery and return shipments for an order
+router.post('/order/:masterOrderId/create-shipments', [param('masterOrderId').isMongoId().withMessage('Invalid Order ID'), validateRequest], ShipmentController.createDeliveryAndReturnShipments);
 
 module.exports = router;

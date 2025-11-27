@@ -69,6 +69,30 @@ class ShipmentController {
     }
   }
 
+  /**
+   * List available PENDING shipments grouped by type (DELIVERY vs RETURN)
+   * Shipper can see which ones need to be picked up
+   */
+  async listAvailableShipments(req, res) {
+    try {
+      if (req.user.role !== 'SHIPPER') {
+        return res.status(403).json({ 
+          status: 'error', 
+          message: 'Only shippers can view available shipments' 
+        });
+      }
+      const grouped = await ShipmentService.listAvailableShipments(req.user._id);
+      return res.json({ 
+        status: 'success',
+        data: grouped,
+        message: `Available: ${grouped.DELIVERY.length} deliveries, ${grouped.RETURN.length} returns`
+      });
+    } catch (err) {
+      console.error('listAvailableShipments error', err.message);
+      return res.status(400).json({ status: 'error', message: err.message });
+    }
+  }
+
   // List shippers by ward or district
   async listShippers(req, res) {
     try {
@@ -131,6 +155,37 @@ class ShipmentController {
       return res.json({ status: 'success', data: result });
     } catch (err) {
       console.error('renterConfirm error', err.message);
+      return res.status(400).json({ status: 'error', message: err.message });
+    }
+  }
+
+  async createDeliveryAndReturnShipments(req, res) {
+    try {
+      // Only admin or system can trigger shipment creation
+      if (req.user?.role !== 'ADMIN' && req.user?.role !== 'SYSTEM') {
+        return res.status(403).json({ 
+          status: 'error', 
+          message: 'Only admin can create shipments for orders' 
+        });
+      }
+
+      const { masterOrderId } = req.params;
+      if (!masterOrderId) {
+        return res.status(400).json({ 
+          status: 'error', 
+          message: 'masterOrderId is required' 
+        });
+      }
+
+      const result = await ShipmentService.createDeliveryAndReturnShipments(masterOrderId);
+
+      return res.json({ 
+        status: 'success', 
+        message: `Created ${result.count} shipments (${result.pairs} pairs)`,
+        data: result 
+      });
+    } catch (err) {
+      console.error('createDeliveryAndReturnShipments error', err.message);
       return res.status(400).json({ status: 'error', message: err.message });
     }
   }

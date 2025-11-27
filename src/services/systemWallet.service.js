@@ -76,20 +76,34 @@ class SystemWalletService {
       await systemWallet.save({ session });
 
       // Create transaction record
-      const transaction = new Transaction({
-        type: 'DEPOSIT',
-        amount: amount,
-        status: 'COMPLETED',
-        method: 'ADMIN_ACTION',
-        description: description,
-        metadata: {
-          adminId: adminId,
-          action: 'ADD_FUNDS',
-          previousBalance: systemWallet.balance.available - amount,
-          newBalance: systemWallet.balance.available
-        }
-      });
-      await transaction.save({ session });
+      // Check if we have a valid admin user to assign this transaction to
+      let transactionUser = null;
+      if (adminId && mongoose.Types.ObjectId.isValid(adminId)) {
+        transactionUser = adminId;
+      } else {
+        // If no valid admin, skip transaction creation (system operation)
+        // Or you could create a placeholder system user in your DB
+        console.warn('⚠️ addFunds: No valid admin ObjectId provided, skipping transaction creation');
+      }
+
+      if (transactionUser) {
+        const transaction = new Transaction({
+          user: transactionUser,
+          wallet: systemWallet._id,
+          type: 'deposit',
+          amount: amount,
+          status: 'success',
+          paymentMethod: 'wallet',
+          description: description,
+          metadata: {
+            adminId: adminId,
+            action: 'ADD_FUNDS',
+            previousBalance: systemWallet.balance.available - amount,
+            newBalance: systemWallet.balance.available
+          }
+        });
+        await transaction.save({ session });
+      }
 
       await session.commitTransaction();
 
@@ -139,20 +153,33 @@ class SystemWalletService {
       await systemWallet.save({ session });
 
       // Create transaction record
-      const transaction = new Transaction({
-        type: 'WITHDRAWAL',
-        amount: amount,
-        status: 'COMPLETED',
-        method: 'ADMIN_ACTION',
-        description: description,
-        metadata: {
-          adminId: adminId,
-          action: 'DEDUCT_FUNDS',
-          previousBalance: systemWallet.balance.available + amount,
-          newBalance: systemWallet.balance.available
-        }
-      });
-      await transaction.save({ session });
+      // Check if we have a valid admin user to assign this transaction to
+      let transactionUser = null;
+      if (adminId && mongoose.Types.ObjectId.isValid(adminId)) {
+        transactionUser = adminId;
+      } else {
+        // If no valid admin, skip transaction creation (system operation)
+        console.warn('⚠️ deductFunds: No valid admin ObjectId provided, skipping transaction creation');
+      }
+
+      if (transactionUser) {
+        const transaction = new Transaction({
+          user: transactionUser,
+          wallet: systemWallet._id,
+          type: 'withdrawal',
+          amount: amount,
+          status: 'success',
+          paymentMethod: 'wallet',
+          description: description,
+          metadata: {
+            adminId: adminId,
+            action: 'DEDUCT_FUNDS',
+            previousBalance: systemWallet.balance.available + amount,
+            newBalance: systemWallet.balance.available
+          }
+        });
+        await transaction.save({ session });
+      }
 
       await session.commitTransaction();
 
@@ -334,27 +361,35 @@ class SystemWalletService {
       systemWallet.lastModifiedAt = new Date();
       await systemWallet.save({ session });
 
-      // Create transaction records
-      const systemTransaction = new Transaction({
-        type: 'transfer',
-        amount: amount,
-        status: 'success',
-        method: 'ADMIN_ACTION',
-        description: `Transfer from user ${userId}: ${description}`,
-        metadata: {
-          adminId: adminId,
-          action: 'TRANSFER_FROM_USER',
-          sourceUserId: userId,
-          sourceWalletId: userWallet._id
-        }
-      });
+      // Create transaction record
+      // Only create system transaction if we have a valid admin ObjectId
+      let systemTransaction = null;
+      if (adminId && mongoose.Types.ObjectId.isValid(adminId)) {
+        systemTransaction = new Transaction({
+          user: adminId,  // Admin user for audit trail
+          wallet: systemWallet._id,
+          type: 'withdrawal',
+          amount: amount,
+          status: 'success',
+          paymentMethod: 'wallet',
+          description: `Transfer from user ${userId}: ${description}`,
+          metadata: {
+            adminId: adminId,
+            action: 'TRANSFER_FROM_USER',
+            sourceUserId: userId,
+            sourceWalletId: userWallet._id
+          }
+        });
+        await systemTransaction.save({ session });
+      }
 
       const userTransaction = new Transaction({
+        user: userId,
         wallet: userWallet._id,
-        type: 'transfer',
+        type: 'withdrawal',
         amount: amount,
         status: 'success',
-        method: 'ADMIN_ACTION',
+        paymentMethod: 'wallet',
         description: `Transferred to system: ${description}`,
         metadata: {
           adminId: adminId,
@@ -362,8 +397,6 @@ class SystemWalletService {
           destinationWallet: 'SYSTEM'
         }
       });
-
-      await systemTransaction.save({ session });
       await userTransaction.save({ session });
 
       await session.commitTransaction();

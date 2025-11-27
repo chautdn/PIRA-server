@@ -1289,13 +1289,61 @@ class RentalOrderService {
   }
 
   async checkAllContractsSigned(masterOrderId) {
-    const subOrders = await SubOrder.find({ masterOrder: masterOrderId });
-    const allSigned = subOrders.every((so) => so.status === 'CONTRACT_SIGNED');
+    try {
+      if (!masterOrderId) {
+        console.warn('⚠️ checkAllContractsSigned: masterOrderId is null or undefined');
+        return;
+      }
 
-    if (allSigned) {
-      await MasterOrder.findByIdAndUpdate(masterOrderId, {
-        status: 'CONTRACT_SIGNED'
-      });
+      const subOrders = await SubOrder.find({ masterOrder: masterOrderId });
+      console.log(`📋 checkAllContractsSigned: Found ${subOrders.length} subOrders for master order ${masterOrderId}`);
+
+      if (subOrders.length === 0) {
+        console.warn('⚠️ No subOrders found for master order');
+        return;
+      }
+
+      const allSigned = subOrders.every((so) => so.status === 'CONTRACT_SIGNED');
+      console.log(`   Status breakdown: ${subOrders.map(so => so.status).join(', ')}`);
+      console.log(`   All signed? ${allSigned}`);
+
+      if (allSigned) {
+        // Update master order status
+        await MasterOrder.findByIdAndUpdate(masterOrderId, {
+          status: 'CONTRACT_SIGNED'
+        });
+        console.log(`✅ Master Order status updated to CONTRACT_SIGNED`);
+
+        // 📦 Create both DELIVERY and RETURN shipments when all contracts are signed
+        const ShipmentService = require('./shipment.service');
+        try {
+          console.log(`\n🚀 Auto-creating shipments...`);
+          const shipmentResult = await ShipmentService.createDeliveryAndReturnShipments(masterOrderId);
+          console.log(`✅ Shipments created successfully:`, {
+            pairs: shipmentResult.pairs,
+            totalCount: shipmentResult.count
+          });
+        } catch (err) {
+          console.error('❌ CRITICAL ERROR creating shipments after contract signing:');
+          console.error('   Error message:', err.message);
+          console.error('   Error type:', err.constructor.name);
+          if (err.stack) {
+            console.error('   Stack trace:', err.stack);
+          }
+          // Don't throw - order is already in CONTRACT_SIGNED status
+          // Shipments can be created manually if needed
+          return {
+            success: false,
+            error: err.message,
+            masterOrderId: masterOrderId
+          };
+        }
+      }
+    } catch (error) {
+      console.error('❌ Error in checkAllContractsSigned:', error.message);
+      if (error.stack) {
+        console.error('Stack trace:', error.stack);
+      }
     }
   }
 
@@ -2243,10 +2291,10 @@ class RentalOrderService {
       const transaction = new Transaction({
         user: userId,
         wallet: wallet._id,
-        type: 'REFUND',
+        type: 'refund',
         amount: amount,
         description: description,
-        status: 'COMPLETED',
+        status: 'success',
         metadata: {
           refundReason: 'ORDER_REJECTION_OR_EXPIRY',
           previousBalance: previousBalance,
