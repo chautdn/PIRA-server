@@ -35,6 +35,7 @@ require('./wishlist.routes');
 require('./systemWallet.routes');
 require('./earlyReturn.routes.register');
 require('./shipment.routes.register');
+require('./returnShipment.routes.register');
 require('./upload.routes.register');
 
 // Withdrawal routes

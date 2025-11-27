@@ -364,7 +364,35 @@ const subOrderSchema = new mongoose.Schema(
     review: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'Review'
-    }
+    },
+
+    // 🔄 Return Shipment Information
+    return: {
+      status: {
+        type: String,
+        enum: ['NOT_INITIATED', 'PENDING', 'PICKUP_CONFIRMED', 'IN_TRANSIT', 'COMPLETED'],
+        default: 'NOT_INITIATED'
+      },
+      initiatedAt: Date,
+      returnType: {
+        type: String,
+        enum: ['NORMAL', 'EARLY'],
+        default: 'NORMAL'
+      },
+      shipments: [
+        {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: 'Shipment'
+        }
+      ]
+    },
+
+    // Deposit refund information
+    depositRefunded: {
+      type: Boolean,
+      default: false
+    },
+    depositRefundedAt: Date
   },
   {
     timestamps: true,
