@@ -1120,3 +1120,6 @@ class SystemWalletService {
       session.endSession();
     }
   }
+}
+
+module.exports = new SystemWalletService();

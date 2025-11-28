@@ -1337,23 +1337,13 @@ class RentalOrderController {
         return res.status(403).json({ status: 'error', message: 'You do not have permission' });
       }
 
-      // If already marked DELIVERED, return immediately
+      // If already marked DELIVERED, return error - only 1 confirmation allowed
       if (subOrder.status === 'DELIVERED') {
-        console.log('⚠️ SubOrder already marked DELIVERED');
-        // But still need to update MasterOrder status if not ACTIVE yet
-        console.log(`   Current MasterOrder status: ${masterOrder.status}`);
-        if (masterOrder.status !== 'ACTIVE') {
-          masterOrder.status = 'ACTIVE';
-          await masterOrder.save();
-          console.log(`   ✅ MasterOrder updated to ACTIVE`);
-        }
-        // Fetch fresh data before returning
-        const freshSubOrder = await SubOrder.findById(subOrderId).populate('masterOrder');
-        const freshMasterOrder = await MasterOrder.findById(subOrder.masterOrder).populate('subOrders');
-        return res.json({ 
-          status: 'success', 
-          data: freshSubOrder,
-          masterOrder: freshMasterOrder
+        console.log('⚠️ SubOrder already marked DELIVERED - cannot confirm again');
+        return res.status(400).json({ 
+          status: 'error', 
+          message: 'Bạn chỉ được xác nhận nhận đơn 1 lần duy nhất. Đơn này đã được xác nhận trước đó.',
+          data: subOrder
         });
       }
 
