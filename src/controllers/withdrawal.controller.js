@@ -10,15 +10,36 @@ const withdrawalController = {
 
       // Emit socket event for real-time update
       try {
-        if (global.chatGateway && typeof global.chatGateway.emitToUser === 'function') {
-          global.chatGateway.emitToUser(userId.toString(), {
-            type: 'withdrawal-requested',
-            withdrawal: {
-              _id: withdrawal._id,
-              amount: withdrawal.amount,
-              status: withdrawal.status
-            }
-          });
+        if (global.chatGateway) {
+          // Emit to user
+          if (typeof global.chatGateway.emitToUser === 'function') {
+            global.chatGateway.emitToUser(userId.toString(), {
+              type: 'withdrawal-requested',
+              withdrawal: {
+                _id: withdrawal._id,
+                amount: withdrawal.amount,
+                status: withdrawal.status
+              }
+            });
+          }
+
+          // Broadcast to all admins (for admin panel)
+          if (global.chatGateway.io) {
+            global.chatGateway.io.emit('withdrawal-requested', {
+              withdrawal: {
+                _id: withdrawal._id,
+                amount: withdrawal.amount,
+                status: withdrawal.status,
+                user: {
+                  _id: req.user._id,
+                  email: req.user.email,
+                  profile: req.user.profile
+                }
+              },
+              timestamp: new Date().toISOString()
+            });
+            console.log('📢 Broadcast withdrawal-requested to all admins');
+          }
         }
       } catch (socketError) {
         console.warn('Failed to emit socket event:', socketError.message);
@@ -144,9 +165,73 @@ const withdrawalController = {
               rejectionReason: withdrawal.rejectionReason
             }
           });
+
+          // Emit notification update - fetch and send the latest notification
+          if (typeof global.chatGateway.emitNotificationCount === 'function') {
+            const notificationService = require('../services/notification.service');
+            const Notification = require('../models/Notification');
+
+            // Get the latest notification for this withdrawal
+            const latestNotification = await Notification.findOne({
+              recipient: withdrawal.user._id,
+              relatedWithdrawal: withdrawal._id
+            }).sort({ createdAt: -1 });
+
+            // Emit the notification
+            if (latestNotification && typeof global.chatGateway.emitNotification === 'function') {
+              global.chatGateway.emitNotification(
+                withdrawal.user._id.toString(),
+                latestNotification
+              );
+            }
+
+            // Emit unread count
+            const unreadCount = await notificationService.getUnreadCount(withdrawal.user._id);
+            global.chatGateway.emitNotificationCount(withdrawal.user._id.toString(), unreadCount);
+
+            // Emit system wallet update for completed/rejected withdrawals
+            if (
+              ['completed', 'rejected'].includes(withdrawal.status) &&
+              typeof global.chatGateway.emitSystemWalletUpdate === 'function'
+            ) {
+              const SystemWallet = require('../models/SystemWallet');
+              const systemWallet = await SystemWallet.findOne({});
+              if (systemWallet) {
+                global.chatGateway.emitSystemWalletUpdate({
+                  available: systemWallet.balance.available,
+                  frozen: systemWallet.balance.frozen,
+                  pending: systemWallet.balance.pending,
+                  total:
+                    systemWallet.balance.available +
+                    systemWallet.balance.frozen +
+                    systemWallet.balance.pending
+                });
+              }
+            }
+          }
+
+          // Broadcast withdrawal update to all admins
+          if (global.chatGateway.io) {
+            global.chatGateway.io.emit('withdrawal-updated', {
+              withdrawal: {
+                _id: withdrawal._id,
+                status: withdrawal.status,
+                amount: withdrawal.amount,
+                processedAt: withdrawal.processedAt,
+                rejectionReason: withdrawal.rejectionReason,
+                adminNote: withdrawal.adminNote,
+                user: {
+                  _id: withdrawal.user._id,
+                  email: withdrawal.user.email
+                }
+              },
+              timestamp: new Date().toISOString()
+            });
+            console.log('📢 Broadcast withdrawal-updated to all admins');
+          }
         }
       } catch (socketError) {
-        console.warn('Failed to emit socket event:', socketError.message);
+        console.error('Failed to emit socket event:', socketError);
       }
 
       new SUCCESS({

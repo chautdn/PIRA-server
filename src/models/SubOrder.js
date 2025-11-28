@@ -358,19 +358,6 @@ const subOrderSchema = new mongoose.Schema(
       ref: 'Contract'
     },
 
-    // Trạng thái hợp đồng
-    contractStatus: {
-      status: {
-        type: String,
-        enum: ['NOT_REQUIRED', 'PENDING', 'OWNER_SIGNED', 'RENTER_SIGNED', 'COMPLETED'],
-        default: 'NOT_REQUIRED'
-      },
-      createdAt: Date,
-      ownerSignedAt: Date,
-      renterSignedAt: Date,
-      completedAt: Date
-    },
-
     // Ghi chú
     notes: String,
 
@@ -439,7 +426,6 @@ subOrderSchema.virtual('pendingAmount').get(function () {
     return total;
   }, 0);
 });
-
 // Indexes
 subOrderSchema.index({ masterOrder: 1, owner: 1 });
 subOrderSchema.index({ subOrderNumber: 1 });

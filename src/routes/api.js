@@ -43,6 +43,10 @@ require('./upload.routes.register');
 const withdrawalRoutes = require('./withdrawal.routes');
 router.use('/withdrawals', withdrawalRoutes);
 
+// Notification routes
+const notificationRoutes = require('./notification.routes');
+router.use('/notifications', notificationRoutes);
+
 // System Promotion routes
 const systemPromotionRoutes = require('./systemPromotion.routes');
 router.use('/system-promotions', systemPromotionRoutes);

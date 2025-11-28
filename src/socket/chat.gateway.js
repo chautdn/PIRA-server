@@ -405,6 +405,52 @@ class ChatGateway {
     }
   }
 
+  // NOTIFICATION REAL-TIME UPDATES - NEW METHODS
+
+  // Emit new notification to user
+  emitNotification(userId, notificationData) {
+    try {
+      console.log(`[ChatGateway] 🔔 Emitting notification to user ${userId}:`, notificationData);
+      this.io.to(`user:${userId}`).emit('notification:new', {
+        notification: notificationData,
+        timestamp: new Date().toISOString()
+      });
+      console.log(`[ChatGateway] ✅ Notification emitted successfully`);
+    } catch (error) {
+      console.error('[ChatGateway] ❌ Error emitting notification:', error);
+    }
+  }
+
+  // SYSTEM WALLET REAL-TIME UPDATES
+
+  // Emit system wallet balance update to all admins
+  emitSystemWalletUpdate(balanceData) {
+    try {
+      console.log(`[ChatGateway] 💰 Emitting system wallet update:`, balanceData);
+      this.io.emit('system:wallet:update', {
+        balance: balanceData,
+        timestamp: new Date().toISOString()
+      });
+      console.log(`[ChatGateway] ✅ System wallet update emitted successfully`);
+    } catch (error) {
+      console.error('[ChatGateway] ❌ Error emitting system wallet update:', error);
+    }
+  }
+
+  // Emit notification count update
+  emitNotificationCount(userId, count) {
+    try {
+      console.log(`[ChatGateway] 🔢 Emitting notification count ${count} to user ${userId}`);
+      this.io.to(`user:${userId}`).emit('notification:count', {
+        unreadCount: count,
+        timestamp: new Date().toISOString()
+      });
+      console.log(`[ChatGateway] ✅ Notification count emitted successfully`);
+    } catch (error) {
+      console.error('[ChatGateway] ❌ Error emitting notification count:', error);
+    }
+  }
+
   // Cleanup method
   cleanup() {
     this.userSockets.clear();
