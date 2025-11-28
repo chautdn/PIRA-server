@@ -1370,17 +1370,25 @@ class RentalOrderController {
       console.log(`   owner: ${savedSubOrder.owner}`);
       console.log(`   products count: ${savedSubOrder.products?.length}`);
       
-      // 💰 AUTO TRANSFER: Transfer rental fee to owner immediately
+      // 💰 AUTO TRANSFER: Transfer 80% rental fee to owner immediately (20% is platform fee)
       let rentalTransferResult = null;
       let transferError = null;
       try {
         const ownerId = savedSubOrder.owner;
-        const rentalAmount = savedSubOrder.pricing?.subtotalRental;
+        const totalRentalAmount = savedSubOrder.pricing?.subtotalRental;
         
-        console.log(`\n💳 Auto Transfer Rental Fee:`);
+        // Calculate owner share (80%) and platform fee (20%)
+        const platformFeePercentage = 0.20; // 20% fee
+        const ownerSharePercentage = 0.80;  // 80% to owner
+        const platformFeeAmount = Math.round(totalRentalAmount * platformFeePercentage);
+        const ownerShareAmount = Math.round(totalRentalAmount * ownerSharePercentage);
+        
+        console.log(`\n💳 Auto Transfer Rental Fee (80% to owner, 20% platform fee):`);
         console.log(`   ✅ Renter confirmed delivery - SubOrder status changed to DELIVERED`);
         console.log(`   Owner ID: ${ownerId} (type: ${typeof ownerId})`);
-        console.log(`   Rental amount: ${rentalAmount} VND (type: ${typeof rentalAmount})`);
+        console.log(`   Total rental amount: ${totalRentalAmount} VND`);
+        console.log(`   Platform fee (20%): ${platformFeeAmount} VND`);
+        console.log(`   Owner share (80%): ${ownerShareAmount} VND`);
 
         const adminId = process.env.SYSTEM_ADMIN_ID || 'SYSTEM_AUTO_TRANSFER';
         console.log(`   Admin ID: ${adminId}`);
@@ -1391,28 +1399,30 @@ class RentalOrderController {
         }
 
         // Validate rental amount
-        if (rentalAmount === undefined || rentalAmount === null) {
+        if (totalRentalAmount === undefined || totalRentalAmount === null) {
           throw new Error('Rental amount is undefined or null');
         }
 
-        if (rentalAmount <= 0) {
-          console.log(`   ⚠️ Rental amount is <= 0 (${rentalAmount}), skipping transfer`);
+        if (totalRentalAmount <= 0) {
+          console.log(`   ⚠️ Rental amount is <= 0 (${totalRentalAmount}), skipping transfer`);
         } else {
           try {
             console.log(`   🔄 Calling SystemWalletService.transferToUser...`);
-            console.log(`      From: ${adminId}, To: ${ownerId}, Amount: ${rentalAmount}`);
+            console.log(`      From: ${adminId}, To: ${ownerId}, Amount: ${ownerShareAmount} (80% of ${totalRentalAmount})`);
             
             rentalTransferResult = await SystemWalletService.transferToUser(
               adminId,
               ownerId,
-              rentalAmount,
-              `Rental fee for suborder ${savedSubOrder.subOrderNumber} - auto transfer when renter confirmed delivery`
+              ownerShareAmount,
+              `Rental fee (80%) for suborder ${savedSubOrder.subOrderNumber} - auto transfer when renter confirmed delivery`
             );
             
             console.log(`   ✅ Transfer successful!`);
             console.log(`   Result:`, {
               success: rentalTransferResult.success,
-              amount: rentalTransferResult.userWallet?.newBalance,
+              transferredAmount: ownerShareAmount,
+              platformFee: platformFeeAmount,
+              ownerNewBalance: rentalTransferResult.userWallet?.newBalance,
               timestamp: new Date().toISOString()
             });
           } catch (err) {
@@ -1463,7 +1473,7 @@ class RentalOrderController {
         status: 'success',
         message: transferError 
           ? `✅ Đơn hàng nhận thành công. ⚠️ Nhưng gặp lỗi chuyển tiền: ${transferError}`
-          : '✅ Đơn hàng nhận thành công. Tiền thuê đã được chuyển cho chủ cho thuê.',
+          : '✅ Đơn hàng nhận thành công. Tiền thuê (80%) đã được chuyển cho chủ cho thuê. Phí nền tảng (20%) được giữ lại.',
         data: freshSubOrder,
         masterOrder: freshMasterOrder,
         transfer: {
