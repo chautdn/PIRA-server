@@ -32,7 +32,8 @@ async function migrateShippingFees() {
       }
 
       const currentFee = shipment.fee || 0;
-      const shippingFee = shipment.subOrder.pricing?.shippingFee || 0;
+      // Use finalFee (after discount) if available, otherwise fall back to shippingFee
+      const shippingFee = shipment.subOrder.shipping?.fee?.finalFee || shipment.subOrder.pricing?.shippingFee || 0;
       
       // If fee is already set and matches, skip
       if (currentFee > 0 && currentFee === shippingFee) {

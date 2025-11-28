@@ -452,7 +452,7 @@ class ShipmentService {
                 phone: owner.phone || '',
                 notes: `Nhận hàng thuê từ ${product.name || 'sản phẩm'}`
               },
-              fee: subOrder.pricing?.shippingFee || 0,
+              fee: subOrder.shipping?.fee?.finalFee || subOrder.pricing?.shippingFee || 0,
               scheduledAt: subOrder.rentalPeriod?.startDate,
               status: 'PENDING'
             };
@@ -513,7 +513,7 @@ class ShipmentService {
                 phone: renter.phone || '',
                 notes: `Trả hàng thuê: ${product.name || 'sản phẩm'}`
               },
-              fee: subOrder.pricing?.shippingFee || 0,
+              fee: subOrder.shipping?.fee?.finalFee || subOrder.pricing?.shippingFee || 0,
               scheduledAt: subOrder.rentalPeriod?.endDate,
               status: 'PENDING'
             };
