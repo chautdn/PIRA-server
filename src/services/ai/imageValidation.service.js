@@ -68,6 +68,28 @@ class ImageValidationService {
         throw new Error('Category not found');
       }
 
+      // Special handling for "Khác" category - always validate as relevant
+      const categoryName = category.name.toLowerCase();
+      if (categoryName === 'khác' || categoryName === 'other' || categoryName.includes('khác') || categoryName.includes('other')) {
+        // For "Khác" category, always return as relevant with high confidence
+        // since it's meant for miscellaneous items that don't fit other categories
+        return {
+          isRelevant: true,
+          detectedObjects: ['miscellaneous', 'object', 'item'],
+          detectedLabels: ['miscellaneous', 'object', 'item'],
+          confidence: 'HIGH',
+          matchedKeywords: [{ keyword: 'miscellaneous', concept: 'object', confidence: 1.0 }],
+          matchScore: 5,
+          matchPercentage: 100,
+          matchBreakdown: {
+            exact: [{ keyword: 'miscellaneous', concept: 'object', confidence: 1.0 }],
+            semantic: [],
+            vietnamese: []
+          },
+          note: 'Lenient validation for "Khác" category'
+        };
+      }
+
       // Use existing analysis if available, otherwise analyze image
       let analysisResults = existingAnalysis;
       if (!analysisResults) {

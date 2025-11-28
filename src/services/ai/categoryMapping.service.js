@@ -99,6 +99,11 @@ class CategoryMappingService {
     let keywords = [];
     const lowerCategoryName = categoryName.toLowerCase();
 
+    // Special handling for "Khác" category - allow any object
+    if (lowerCategoryName.includes('khác') || lowerCategoryName.includes('other')) {
+      return ['object', 'item', 'thing', 'product', 'equipment', 'tool', 'device', 'material'];
+    }
+
     // 1. EXACT CATEGORY MATCH
     for (const [key, keywordList] of Object.entries(categoryKeywordMap)) {
       if (lowerCategoryName.includes(key)) {
