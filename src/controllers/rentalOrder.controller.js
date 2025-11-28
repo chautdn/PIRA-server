@@ -1310,7 +1310,7 @@ class RentalOrderController {
   /**
    * Renter confirms delivery after receiving the rented item
    * POST /api/rental-orders/suborders/:id/confirm-delivered
-   * ⚠️ Tiền sẽ KHÔNG được chuyển ngay - chỉ chuyển khi owner xác nhận nhận hàng trả
+   * ✅ Tiền thuê sẽ được chuyển ngay từ ví hệ thống sang ví chủ cho thuê
    */
   async renterConfirmDelivery(req, res) {
     try {
@@ -1321,7 +1321,10 @@ class RentalOrderController {
       console.log('👤 Renter ID:', userId);
       console.log('📦 SubOrder ID:', subOrderId);
 
-      const subOrder = await SubOrder.findById(subOrderId);
+      const subOrder = await SubOrder.findById(subOrderId).populate({
+        path: 'products.product',
+        select: 'name price deposit'
+      });
       if (!subOrder) {
         console.error('❌ SubOrder not found');
         return res.status(404).json({ status: 'error', message: 'SubOrder not found' });
@@ -1357,11 +1360,78 @@ class RentalOrderController {
       // Mark as DELIVERED - renter confirmed receipt of rented item
       console.log('🔄 Marking SubOrder as DELIVERED...');
       subOrder.status = 'DELIVERED';
-      await subOrder.save();  
+      const savedSubOrder = await subOrder.save();
+      console.log(`✅ SubOrder saved with status: ${savedSubOrder.status}`);
       
-      console.log(`\n💳 Payment Transfer Status:`);
-      console.log(`   ⏳ Waiting for owner confirmation...`);
-      console.log(`   Rental fee will be transferred to owner AFTER owner confirms return`);
+      console.log(`\n📊 SubOrder Pricing Info:`);
+      console.log(`   Full pricing object: ${JSON.stringify(savedSubOrder.pricing)}`);
+      console.log(`   subtotalRental: ${savedSubOrder.pricing?.subtotalRental}`);
+      console.log(`   subtotalDeposit: ${savedSubOrder.pricing?.subtotalDeposit}`);
+      console.log(`   owner: ${savedSubOrder.owner}`);
+      console.log(`   products count: ${savedSubOrder.products?.length}`);
+      
+      // 💰 AUTO TRANSFER: Transfer rental fee to owner immediately
+      let rentalTransferResult = null;
+      let transferError = null;
+      try {
+        const ownerId = savedSubOrder.owner;
+        const rentalAmount = savedSubOrder.pricing?.subtotalRental;
+        
+        console.log(`\n💳 Auto Transfer Rental Fee:`);
+        console.log(`   ✅ Renter confirmed delivery - SubOrder status changed to DELIVERED`);
+        console.log(`   Owner ID: ${ownerId} (type: ${typeof ownerId})`);
+        console.log(`   Rental amount: ${rentalAmount} VND (type: ${typeof rentalAmount})`);
+
+        const adminId = process.env.SYSTEM_ADMIN_ID || 'SYSTEM_AUTO_TRANSFER';
+        console.log(`   Admin ID: ${adminId}`);
+
+        // Validate owner ID
+        if (!ownerId) {
+          throw new Error('Owner ID is missing or invalid');
+        }
+
+        // Validate rental amount
+        if (rentalAmount === undefined || rentalAmount === null) {
+          throw new Error('Rental amount is undefined or null');
+        }
+
+        if (rentalAmount <= 0) {
+          console.log(`   ⚠️ Rental amount is <= 0 (${rentalAmount}), skipping transfer`);
+        } else {
+          try {
+            console.log(`   🔄 Calling SystemWalletService.transferToUser...`);
+            console.log(`      From: ${adminId}, To: ${ownerId}, Amount: ${rentalAmount}`);
+            
+            rentalTransferResult = await SystemWalletService.transferToUser(
+              adminId,
+              ownerId,
+              rentalAmount,
+              `Rental fee for suborder ${savedSubOrder.subOrderNumber} - auto transfer when renter confirmed delivery`
+            );
+            
+            console.log(`   ✅ Transfer successful!`);
+            console.log(`   Result:`, {
+              success: rentalTransferResult.success,
+              amount: rentalTransferResult.userWallet?.newBalance,
+              timestamp: new Date().toISOString()
+            });
+          } catch (err) {
+            const errMsg = err.message || String(err);
+            transferError = errMsg;
+            console.error(`   ❌ Transfer failed:`, {
+              message: errMsg,
+              error: err
+            });
+          }
+        }
+      } catch (err) {
+        const errMsg = err.message || String(err);
+        transferError = errMsg;
+        console.error(`   ❌ Transfer logic error:`, {
+          message: errMsg,
+          error: err
+        });
+      }
 
       // Update MasterOrder status to ACTIVE (rental period starts)
       console.log(`\n🔄 Updating MasterOrder status to ACTIVE...`);
@@ -1375,25 +1445,39 @@ class RentalOrderController {
         console.log(`   ℹ️  MasterOrder already ACTIVE`);
       }
 
-      console.log(`✅ Renter confirmed delivery for SubOrder ${subOrder.subOrderNumber}`);
-      console.log(`   SubOrder status after save: ${subOrder.status}`);
-      console.log(`   MasterOrder status after update: ${masterOrder.status}`);
+      console.log(`\n✅ Renter confirmed delivery complete for SubOrder ${savedSubOrder.subOrderNumber}`);
+      console.log(`   SubOrder status: ${savedSubOrder.status}`);
+      console.log(`   MasterOrder status: ${masterOrder.status}`);
+      console.log(`   Transfer status: ${transferError ? '❌ FAILED' : '✅ SUCCESS'}`);
       
       // Fetch fresh data to return
-      const freshSubOrder = await SubOrder.findById(subOrderId).populate('masterOrder');
+      const freshSubOrder = await SubOrder.findById(subOrderId).populate([
+        'masterOrder',
+        { path: 'products.product' }
+      ]);
       const freshMasterOrder = await MasterOrder.findById(subOrder.masterOrder).populate('subOrders');
       
-      console.log(`   Fresh MasterOrder status from DB: ${freshMasterOrder.status}`);
+      console.log(`   Fresh data fetched from DB\n`);
       
       return res.json({
         status: 'success',
-        message: 'Xác nhận nhận hàng thành công. Tiền sẽ được chuyển khi chủ xác nhận nhận hàng trả.',
+        message: transferError 
+          ? `✅ Đơn hàng nhận thành công. ⚠️ Nhưng gặp lỗi chuyển tiền: ${transferError}`
+          : '✅ Đơn hàng nhận thành công. Tiền thuê đã được chuyển cho chủ cho thuê.',
         data: freshSubOrder,
-        masterOrder: freshMasterOrder
+        masterOrder: freshMasterOrder,
+        transfer: {
+          rentalTransfer: rentalTransferResult,
+          error: transferError,
+          timestamp: new Date().toISOString()
+        }
       });
     } catch (error) {
-      console.error('❌ renterConfirmDelivery error:', error.message);
-      return res.status(400).json({ status: 'error', message: error.message });
+      console.error('❌ renterConfirmDelivery error:', error);
+      return res.status(400).json({ 
+        status: 'error', 
+        message: error.message || 'Có lỗi xảy ra' 
+      });
     }
   }
 
@@ -1452,45 +1536,22 @@ class RentalOrderController {
       subOrder.status = 'COMPLETED';
       await subOrder.save();
 
-      // Now transfer payments:
-      // 1. Rental fee from system admin wallet to owner
-      // 2. Deposit back to renter from system admin wallet
-      let rentalTransferResult = null;
+      // Now transfer deposit back to renter:
+      // ✅ Rental fee was ALREADY transferred when renter confirmed delivery
+      // ⬇️ Only transfer deposit refund now
       let depositTransferResult = null;
-      let transferErrors = [];
+      let transferError = null;
 
       try {
-        const ownerId = subOrder.owner;
         const renterId = masterOrder.renter;
-        const rentalAmount = subOrder.pricing?.subtotalRental || 0;
         const depositAmount = subOrder.pricing?.subtotalDeposit || 0;
         
         console.log(`\n💰 Payment Transfer breakdown when owner confirms:`);
-        console.log(`   ✅ Renter confirmed delivery (DELIVERED)`);
+        console.log(`   ✅ Renter confirmed delivery (DELIVERED) - Rental fee already transferred`);
         console.log(`   ✅ Owner confirmed return receipt (COMPLETED)`);
-        console.log(`   Rental fee (→ owner): ${rentalAmount} VND`);
         console.log(`   Deposit refund (→ renter): ${depositAmount} VND`);
 
         const adminId = process.env.SYSTEM_ADMIN_ID || 'SYSTEM_AUTO_TRANSFER';
-
-        // Transfer rental fee to owner
-        if (rentalAmount > 0) {
-          try {
-            rentalTransferResult = await SystemWalletService.transferToUser(
-              adminId,
-              ownerId,
-              rentalAmount,
-              `Rental fee for suborder ${subOrder.subOrderNumber}`
-            );
-            console.log(`   ✅ Rental fee transfer successful: ${rentalAmount} VND → owner ${ownerId}`);
-          } catch (err) {
-            const errMsg = err.message || String(err);
-            transferErrors.push(`Rental fee transfer failed: ${errMsg}`);
-            console.error(`   ❌ Failed to transfer rental fee: ${errMsg}`);
-          }
-        } else {
-          console.log('   ℹ️  Rental amount is 0, no transfer needed');
-        }
 
         // Transfer deposit back to renter
         if (depositAmount > 0) {
@@ -1499,12 +1560,12 @@ class RentalOrderController {
               adminId,
               renterId,
               depositAmount,
-              `Deposit refund for subOrder ${subOrder.subOrderNumber}`
+              `Deposit refund for subOrder ${subOrder.subOrderNumber} - hoàn tiền cọc khi chủ nhận lại hàng`
             );
             console.log(`   ✅ Deposit refund transfer successful: ${depositAmount} VND → renter ${renterId}`);
           } catch (err) {
             const errMsg = err.message || String(err);
-            transferErrors.push(`Deposit refund transfer failed: ${errMsg}`);
+            transferError = errMsg;
             console.error(`   ❌ Failed to refund deposit to renter: ${errMsg}`);
           }
         } else {
@@ -1513,7 +1574,7 @@ class RentalOrderController {
 
       } catch (err) {
         const errMsg = err.message || String(err);
-        transferErrors.push(errMsg);
+        transferError = errMsg;
         console.error(`   ❌ Payment transfer error: ${errMsg}`);
       }
 
@@ -1538,13 +1599,14 @@ class RentalOrderController {
 
       return res.json({
         status: 'success',
-        message: 'Xác nhận đã nhận hàng trả thành công. Tiền đã được chuyển cho chủ và hoàn tiền cọc cho khách thuê.',
+        message: transferError
+          ? `Xác nhận nhận hàng trả thành công nhưng hoàn tiền cọc thất bại: ${transferError}`
+          : 'Xác nhận nhận hàng trả thành công. Tiền cọc đã được hoàn lại cho khách thuê. (Tiền thuê đã được chuyển khi bạn nhận hàng)',
         data: freshSubOrder,
         masterOrder: freshMasterOrder,
         transfer: { 
-          rentalTransfer: rentalTransferResult,
           depositTransfer: depositTransferResult,
-          errors: transferErrors.length > 0 ? transferErrors : null
+          error: transferError
         }
       });
     } catch (error) {
