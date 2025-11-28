@@ -20,11 +20,23 @@ class ShipmentService {
     return Shipment.find({ shipper: shipperId })
       .populate({
         path: 'subOrder',
-        populate: {
-          path: 'masterOrder',
-          select: 'rentalPeriod'
-        }
-      });
+        select: 'rentalPeriod owner pricing products masterOrder',
+        populate: [
+          {
+            path: 'masterOrder',
+            select: 'rentalPeriod renter',
+            populate: {
+              path: 'renter',
+              select: 'profile email phone'
+            }
+          },
+          {
+            path: 'owner',
+            select: 'profile email phone'
+          }
+        ]
+      })
+      .sort({ createdAt: -1 });
   }
 
   /**
@@ -149,13 +161,14 @@ class ShipmentService {
       console.warn('Failed to update subOrder status:', err.message);
     }
 
-    // Transfer shipping fee to shipper when DELIVERED
+    // Transfer shipping fee to shipper when RETURN shipment is DELIVERED
+    // Only RETURN shipments pay the shipper, not DELIVERY shipments
     try {
-      if (shipment.shipper && shipment.fee > 0) {
+      if (shipment.type === 'RETURN' && shipment.shipper && shipment.fee > 0) {
         const SystemWalletService = require('./systemWallet.service');
         const adminId = process.env.SYSTEM_ADMIN_ID || 'SYSTEM_AUTO_TRANSFER';
         
-        console.log(`\n💰 Transferring shipping fee to shipper:`);
+        console.log(`\n💰 Transferring shipping fee to shipper (RETURN shipment):`);
         console.log(`   Shipper ID: ${shipment.shipper}`);
         console.log(`   Fee: ${shipment.fee} VND`);
         
@@ -163,10 +176,12 @@ class ShipmentService {
           adminId,
           shipment.shipper,
           shipment.fee,
-          `Shipping fee for shipment ${shipment.shipmentId}`
+          `Shipping fee for return shipment ${shipment.shipmentId}`
         );
         
         console.log(`   ✅ Transfer successful`);
+      } else if (shipment.type === 'DELIVERY') {
+        console.log(`\n⏭️  DELIVERY shipment - no shipper payment (shipper payment only for RETURN)`);
       }
     } catch (err) {
       console.error(`   ❌ Failed to transfer shipping fee: ${err.message}`);
@@ -341,7 +356,7 @@ class ShipmentService {
 
       // Get master order with renter populated
       const masterOrder = await MasterOrder.findById(masterOrderId)
-        .populate('renter');
+        .populate('renter', '_id profile email phone address');
 
       if (!masterOrder) {
         throw new Error(`Master order ${masterOrderId} not found`);
@@ -356,7 +371,7 @@ class ShipmentService {
 
       // Get subOrders separately with full population
       const subOrders = await SubOrder.find({ masterOrder: masterOrderId })
-        .populate('owner', '_id profile phone')
+        .populate('owner', '_id profile email phone address')
         .populate('products.product', '_id name');
 
       if (!subOrders || subOrders.length === 0) {
@@ -393,6 +408,7 @@ class ShipmentService {
         }
         
         console.log(`    ✅ Owner: ${owner._id}`);
+        console.log(`       Owner profile:`, JSON.stringify(owner.profile, null, 2));
 
         const renter = masterOrder.renter;
         if (!renter) {
@@ -401,6 +417,7 @@ class ShipmentService {
         }
         
         console.log(`    ✅ Renter: ${renter._id}`);
+        console.log(`       Renter profile:`, JSON.stringify(renter.profile, null, 2));
 
         // For each product in subOrder, create 2 shipments: DELIVERY and RETURN
         for (let productIndex = 0; productIndex < subOrder.products.length; productIndex++) {
@@ -416,12 +433,12 @@ class ShipmentService {
           
           console.log(`        _id: ${product._id}, name: ${product.name}`);
 
-          // Get owner and renter addresses
-          const ownerAddress = owner.profile?.address || {};
-          const renterAddress = renter.profile?.address || {};
+          // Get owner and renter addresses - từ top-level address field
+          const ownerAddress = owner.address || {};
+          const renterAddress = renter.address || {};
 
-          console.log(`        Owner address: ${ownerAddress.city}, ${ownerAddress.district}`);
-          console.log(`        Renter address: ${renterAddress.city}, ${renterAddress.district}`);
+          console.log(`        Owner address:`, JSON.stringify(ownerAddress));
+          console.log(`        Renter address:`, JSON.stringify(renterAddress));
 
           // OUTBOUND SHIPMENT (DELIVERY)
           try {
@@ -452,7 +469,13 @@ class ShipmentService {
                 phone: owner.phone || '',
                 notes: `Nhận hàng thuê từ ${product.name || 'sản phẩm'}`
               },
-              fee: subOrder.shipping?.fee?.finalFee || subOrder.pricing?.shippingFee || 0,
+              customerInfo: {
+                userId: renter._id,
+                name: renter.profile?.fullName || renter.profile?.firstName || 'Renter',
+                phone: renter.phone || '',
+                email: renter.email || ''
+              },
+              fee: subOrder.pricing?.shippingFee || 0,
               scheduledAt: subOrder.rentalPeriod?.startDate,
               status: 'PENDING'
             };
@@ -513,7 +536,13 @@ class ShipmentService {
                 phone: renter.phone || '',
                 notes: `Trả hàng thuê: ${product.name || 'sản phẩm'}`
               },
-              fee: subOrder.shipping?.fee?.finalFee || subOrder.pricing?.shippingFee || 0,
+              customerInfo: {
+                userId: renter._id,
+                name: renter.profile?.fullName || renter.profile?.firstName || 'Renter',
+                phone: renter.phone || '',
+                email: renter.email || ''
+              },
+              fee: subOrder.pricing?.shippingFee || 0,
               scheduledAt: subOrder.rentalPeriod?.endDate,
               status: 'PENDING'
             };

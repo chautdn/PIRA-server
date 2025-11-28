@@ -1252,6 +1252,16 @@ class RentalOrderService {
         userLat
       );
 
+      // ⚠️  FIX: Nếu fallback hoặc API lỗi, cập nhật distanceKm để tránh phí quá cao
+      // Nếu distance > 50km, có thể VietMap trả sai dữ liệu hoặc fallback từ thành phố khác
+      // Giới hạn về 25km (tương đương phí ~135k, hợp lý cho HCMC)
+      if ((distanceResult.fallback || !distanceResult.success) && distanceResult.distanceKm > 50) {
+        console.warn(
+          `⚠️  Distance seems too large (${distanceResult.distanceKm}km), likely fallback coordinates issue. Capping to 25km for fee calculation.`
+        );
+        distanceResult.distanceKm = 25; // Cap at 25km = (10k + 5k*25) = 135k max
+      }
+
       // Nếu VietMap API thất bại, sử dụng công thức haversine đơn giản
       if (!distanceResult.success && !distanceResult.fallback) {
         // Công thức Haversine đơn giản
@@ -1766,6 +1776,15 @@ class RentalOrderService {
 
       if (!distanceResult.success && !distanceResult.fallback) {
         throw new Error('Không thể tính khoảng cách giao hàng');
+      }
+
+      // ⚠️  FIX: Nếu fallback hoặc API lỗi, cập nhật distanceKm để tránh phí quá cao
+      // Giới hạn về 25km để tránh phí bất hợp lý
+      if ((distanceResult.fallback || !distanceResult.success) && distanceResult.distanceKm > 50) {
+        console.warn(
+          `⚠️  Distance seems too large (${distanceResult.distanceKm}km), likely fallback coordinates issue. Capping to 25km.`
+        );
+        distanceResult.distanceKm = 25;
       }
 
       const distanceKm = distanceResult.distanceKm;

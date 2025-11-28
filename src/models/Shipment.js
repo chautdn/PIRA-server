@@ -78,6 +78,17 @@ const shipmentSchema = new mongoose.Schema(
       notes: String
     },
 
+    // Customer Info (Renter or Owner - whoever receives/sends the shipment)
+    customerInfo: {
+      userId: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'User'
+      },
+      name: String,
+      phone: String,
+      email: String
+    },
+
     // Scheduling
     scheduledAt: Date,
     estimatedDuration: Number, // minutes
