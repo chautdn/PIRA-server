@@ -50,6 +50,15 @@ const withdrawalSchema = new mongoose.Schema(
       type: String,
       maxlength: 500
     },
+    // Processing lock (prevent concurrent processing)
+    processingLock: {
+      lockedBy: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'User'
+      },
+      lockedAt: Date,
+      lockExpiry: Date
+    },
     // Transaction reference
     transaction: {
       type: mongoose.Schema.Types.ObjectId,

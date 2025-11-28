@@ -144,9 +144,30 @@ const withdrawalController = {
               rejectionReason: withdrawal.rejectionReason
             }
           });
+
+          // Emit notification update - fetch and send the latest notification
+          if (typeof global.chatGateway.emitNotificationCount === 'function') {
+            const notificationService = require('../services/notification.service');
+            const Notification = require('../models/Notification');
+            
+            // Get the latest notification for this withdrawal
+            const latestNotification = await Notification.findOne({
+              recipient: withdrawal.user._id,
+              relatedWithdrawal: withdrawal._id
+            }).sort({ createdAt: -1 });
+
+            // Emit the notification
+            if (latestNotification && typeof global.chatGateway.emitNotification === 'function') {
+              global.chatGateway.emitNotification(withdrawal.user._id.toString(), latestNotification);
+            }
+
+            // Emit unread count
+            const unreadCount = await notificationService.getUnreadCount(withdrawal.user._id);
+            global.chatGateway.emitNotificationCount(withdrawal.user._id.toString(), unreadCount);
+          }
         }
       } catch (socketError) {
-        console.warn('Failed to emit socket event:', socketError.message);
+        console.error('Failed to emit socket event:', socketError);
       }
 
       new SUCCESS({

@@ -405,6 +405,36 @@ class ChatGateway {
     }
   }
 
+  // NOTIFICATION REAL-TIME UPDATES - NEW METHODS
+
+  // Emit new notification to user
+  emitNotification(userId, notificationData) {
+    try {
+      console.log(`[ChatGateway] 🔔 Emitting notification to user ${userId}:`, notificationData);
+      this.io.to(`user:${userId}`).emit('notification:new', {
+        notification: notificationData,
+        timestamp: new Date().toISOString()
+      });
+      console.log(`[ChatGateway] ✅ Notification emitted successfully`);
+    } catch (error) {
+      console.error('[ChatGateway] ❌ Error emitting notification:', error);
+    }
+  }
+
+  // Emit notification count update
+  emitNotificationCount(userId, count) {
+    try {
+      console.log(`[ChatGateway] 🔢 Emitting notification count ${count} to user ${userId}`);
+      this.io.to(`user:${userId}`).emit('notification:count', {
+        unreadCount: count,
+        timestamp: new Date().toISOString()
+      });
+      console.log(`[ChatGateway] ✅ Notification count emitted successfully`);
+    } catch (error) {
+      console.error('[ChatGateway] ❌ Error emitting notification count:', error);
+    }
+  }
+
   // Cleanup method
   cleanup() {
     this.userSockets.clear();

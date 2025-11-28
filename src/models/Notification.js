@@ -34,7 +34,8 @@ const notificationSchema = new mongoose.Schema(
         'DISPUTE',
         'PROMOTION',
         'SYSTEM',
-        'REMINDER'
+        'REMINDER',
+        'WITHDRAWAL'
       ],
       required: true
     },
@@ -60,6 +61,10 @@ const notificationSchema = new mongoose.Schema(
     relatedPromotion: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'Promotion'
+    },
+    relatedWithdrawal: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Withdrawal'
     },
 
     // Status

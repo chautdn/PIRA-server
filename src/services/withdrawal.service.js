@@ -3,6 +3,8 @@ const Withdrawal = require('../models/Withdrawal');
 const Wallet = require('../models/Wallet');
 const Transaction = require('../models/Transaction');
 const User = require('../models/User');
+const Notification = require('../models/Notification');
+const SystemWallet = require('../models/SystemWallet');
 const { BadRequest, NotFoundError } = require('../core/error');
 
 const WITHDRAWAL_LIMITS = {
@@ -243,16 +245,40 @@ const withdrawalService = {
 
   // ADMIN: Update withdrawal status
   updateWithdrawalStatus: async (withdrawalId, adminId, statusData) => {
+    const session = await mongoose.startSession();
+    session.startTransaction();
+
     try {
       const { status, adminNote, rejectionReason } = statusData;
 
-      const withdrawal = await Withdrawal.findById(withdrawalId);
+      // Lock the withdrawal for processing
+      const withdrawal = await Withdrawal.findById(withdrawalId).session(session);
 
       if (!withdrawal) {
         throw new NotFoundError('Withdrawal not found');
       }
 
-      const wallet = await Wallet.findById(withdrawal.wallet);
+      // Check if another admin is currently processing this
+      if (withdrawal.processingLock && withdrawal.processingLock.lockedBy) {
+        const lockExpiry = new Date(withdrawal.processingLock.lockExpiry);
+        const now = new Date();
+        
+        // If lock is still valid and locked by another admin
+        if (lockExpiry > now && withdrawal.processingLock.lockedBy.toString() !== adminId.toString()) {
+          throw new BadRequest('This withdrawal is currently being processed by another admin');
+        }
+      }
+
+      // Set processing lock
+      if (status === 'processing' && withdrawal.status === 'pending') {
+        withdrawal.processingLock = {
+          lockedBy: adminId,
+          lockedAt: new Date(),
+          lockExpiry: new Date(Date.now() + 10 * 60 * 1000) // 10 minutes lock
+        };
+      }
+
+      const wallet = await Wallet.findById(withdrawal.wallet).session(session);
 
       // Handle status transitions
       if (status === 'processing') {
@@ -269,19 +295,49 @@ const withdrawalService = {
           throw new BadRequest('Can only complete processing withdrawals');
         }
 
+        // Deduct from system wallet
+        const systemWallet = await SystemWallet.findOne().session(session);
+        if (!systemWallet) {
+          throw new NotFoundError('System wallet not found');
+        }
+
+        if (systemWallet.balance.available < withdrawal.amount) {
+          throw new BadRequest('Insufficient system wallet balance');
+        }
+
+        systemWallet.balance.available -= withdrawal.amount;
+        systemWallet.lastModifiedBy = adminId;
+        systemWallet.lastModifiedAt = new Date();
+        await systemWallet.save({ session });
+
         // Remove from frozen (money already left the system)
         wallet.balance.frozen -= withdrawal.amount;
-        await wallet.save();
+        await wallet.save({ session });
 
         withdrawal.status = 'completed';
         withdrawal.completedAt = new Date();
         withdrawal.adminNote = adminNote;
+        withdrawal.processingLock = undefined; // Clear lock
 
         // Update transaction
         await Transaction.findByIdAndUpdate(
           withdrawal.transaction,
-          { status: 'success', processedAt: new Date() }
+          { status: 'success', processedAt: new Date() },
+          { session }
         );
+
+        // Create notification for user
+        const notification = new Notification({
+          recipient: withdrawal.user,
+          title: 'Withdrawal Approved',
+          message: `Your withdrawal request of ${withdrawal.amount.toLocaleString('vi-VN')} VND has been approved and processed.`,
+          type: 'WITHDRAWAL',
+          category: 'SUCCESS',
+          relatedWithdrawal: withdrawal._id,
+          status: 'SENT'
+        });
+        await notification.save({ session });
+
       } else if (status === 'rejected') {
         if (!['pending', 'processing'].includes(withdrawal.status)) {
           throw new BadRequest('Can only reject pending/processing withdrawals');
@@ -290,28 +346,46 @@ const withdrawalService = {
         // Unfreeze and return to available
         wallet.balance.available += withdrawal.amount;
         wallet.balance.frozen -= withdrawal.amount;
-        await wallet.save();
+        await wallet.save({ session });
 
         withdrawal.status = 'rejected';
         withdrawal.processedBy = adminId;
         withdrawal.processedAt = new Date();
         withdrawal.rejectionReason = rejectionReason;
+        withdrawal.processingLock = undefined; // Clear lock
 
         // Update transaction
         await Transaction.findByIdAndUpdate(
           withdrawal.transaction,
-          { status: 'failed', processedAt: new Date() }
+          { status: 'failed', processedAt: new Date() },
+          { session }
         );
+
+        // Create notification for user
+        const notification = new Notification({
+          recipient: withdrawal.user,
+          title: 'Withdrawal Rejected',
+          message: `Your withdrawal request of ${withdrawal.amount.toLocaleString('vi-VN')} VND has been rejected. ${rejectionReason || 'Please contact support for more details.'}`,
+          type: 'WITHDRAWAL',
+          category: 'ERROR',
+          relatedWithdrawal: withdrawal._id,
+          status: 'SENT'
+        });
+        await notification.save({ session });
       }
 
-      await withdrawal.save();
+      await withdrawal.save({ session });
+      await session.commitTransaction();
 
       // Populate for response
       await withdrawal.populate('user', 'email profile.firstName profile.lastName');
 
       return withdrawal;
     } catch (error) {
+      await session.abortTransaction();
       throw error;
+    } finally {
+      session.endSession();
     }
   },
 
