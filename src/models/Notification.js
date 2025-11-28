@@ -33,6 +33,7 @@ const notificationSchema = new mongoose.Schema(
         'REVIEW',
         'DISPUTE',
         'PROMOTION',
+        'PROMOTION_PAYMENT',
         'SYSTEM',
         'REMINDER',
         'WITHDRAWAL'

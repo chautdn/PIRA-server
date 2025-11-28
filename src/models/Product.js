@@ -176,7 +176,6 @@ const productSchema = new mongoose.Schema(
     // SEO
     slug: {
       type: String,
-      unique: true,
       sparse: true
     },
 
@@ -207,6 +206,8 @@ productSchema.index({ owner: 1 });
 productSchema.index({ category: 1, subCategory: 1 });
 productSchema.index({ status: 1 });
 productSchema.index({ 'pricing.dailyRate': 1 });
+
+// Regular index for slug (uniqueness handled at application level)
 productSchema.index({ slug: 1 });
 
 // Product Promotion indexes (for visibility boost)

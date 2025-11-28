@@ -30,7 +30,6 @@ class ImageValidationService {
         aiAnalysis: analysisResults
       };
     } catch (error) {
-
       // If NSFW check fails, re-throw the error (don't upload)
       if (error.message.includes('inappropriate content') || error.message.includes('NSFW')) {
         throw error;
@@ -62,7 +61,6 @@ class ImageValidationService {
    */
   static async validateImageCategory(imageBuffer, categoryId, existingAnalysis = null) {
     try {
-
       const category = await Category.findById(categoryId);
       if (!category) {
         throw new Error('Category not found');
@@ -70,7 +68,12 @@ class ImageValidationService {
 
       // Special handling for "Khác" category - always validate as relevant
       const categoryName = category.name.toLowerCase();
-      if (categoryName === 'khác' || categoryName === 'other' || categoryName.includes('khác') || categoryName.includes('other')) {
+      if (
+        categoryName === 'khác' ||
+        categoryName === 'other' ||
+        categoryName.includes('khác') ||
+        categoryName.includes('other')
+      ) {
         // For "Khác" category, always return as relevant with high confidence
         // since it's meant for miscellaneous items that don't fit other categories
         return {
@@ -103,7 +106,6 @@ class ImageValidationService {
       try {
         categoryKeywords = CategoryMappingService.getCategoryKeywords(category.name.toLowerCase());
       } catch (keywordError) {
-      
         categoryKeywords = [];
       }
 
@@ -111,8 +113,6 @@ class ImageValidationService {
       if (!Array.isArray(categoryKeywords)) {
         categoryKeywords = [];
       }
-
- 
 
       // Perform strict matching
       const matchingResult = this.performStrictMatching(
@@ -148,8 +148,6 @@ class ImageValidationService {
         const fileName = file.originalname;
 
         try {
-         
-
           // Step 1: Check inappropriate content and upload if safe
           const uploadResult = await this.checkInappropriateContent(file.buffer);
 
@@ -162,14 +160,10 @@ class ImageValidationService {
 
           // If category validation fails, delete the uploaded image and add to errors
           if (!categoryValidation.isRelevant) {
-          
-
             // Delete from Cloudinary
             try {
               await CloudinaryService.deleteImage(uploadResult.public_id);
-            } catch (deleteError) {
-            
-            }
+            } catch (deleteError) {}
 
             validationErrors.push({
               imageIndex: i + 1,
@@ -196,10 +190,7 @@ class ImageValidationService {
             },
             categoryValidation: categoryValidation
           });
-
         } catch (error) {
-    
-
           // Determine error type
           let errorType = 'PROCESSING_ERROR';
           if (error.message.includes('inappropriate content') || error.message.includes('NSFW')) {
@@ -288,7 +279,6 @@ class ImageValidationService {
         throw error;
       }
 
-    
       return uploadResults;
     } catch (error) {
       console.error('Upload and validation error:', error);
@@ -312,7 +302,6 @@ class ImageValidationService {
     // Safe fallback for undefined or null values
     const safeCategoryKeywords = Array.isArray(categoryKeywords) ? categoryKeywords : [];
     const safeDetectedConcepts = Array.isArray(detectedConcepts) ? detectedConcepts : [];
-
 
     if (safeDetectedConcepts.length === 0 || safeCategoryKeywords.length === 0) {
       return this.createFailureResult(safeDetectedConcepts);
@@ -425,8 +414,6 @@ class ImageValidationService {
 
     const maxPossibleScore = safeCategoryKeywords.length * 5;
     const matchPercentage = (matchScore / Math.max(maxPossibleScore, 5)) * 100;
-
-  
 
     // STRICT DECISION LOGIC
     let isRelevant = false;

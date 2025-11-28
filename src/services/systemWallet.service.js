@@ -2,6 +2,7 @@ const SystemWallet = require('../models/SystemWallet');
 const Wallet = require('../models/Wallet');
 const Transaction = require('../models/Transaction');
 const mongoose = require('mongoose');
+const transactionMonitor = require('./transactionMonitor.service');
 
 /**
  * SystemWalletService - Admin operations for the platform wallet
@@ -278,6 +279,67 @@ class SystemWalletService {
   }
 
   /**
+   * Add funds to system wallet from promotion payments (system operation)
+   * Use case: Revenue from product promotions
+   */
+  async addPromotionRevenue(amount, description = 'Promotion payment revenue', userId = null, metadata = {}) {
+    if (amount <= 0) {
+      throw new Error('Amount must be positive');
+    }
+
+    const session = await mongoose.startSession();
+    session.startTransaction();
+
+    try {
+      const systemWallet = await SystemWallet.findOne({}).session(session);
+      if (!systemWallet) {
+        throw new Error('System wallet not found');
+      }
+
+      // Update balance
+      const previousBalance = systemWallet.balance.available;
+      systemWallet.balance.available += amount;
+      systemWallet.lastModifiedAt = new Date();
+      await systemWallet.save({ session });
+
+      // Record transaction with enhanced tracking
+      const transactionData = {
+        user: userId || new mongoose.Types.ObjectId('000000000000000000000000'),
+        type: 'PROMOTION_REVENUE',
+        amount: amount,
+        status: 'success',
+        paymentMethod: 'system_wallet',
+        description: description,
+        toSystemWallet: true,
+        systemWalletAction: 'revenue',
+        metadata: {
+          action: 'PROMOTION_REVENUE',
+          previousBalance: previousBalance,
+          newBalance: systemWallet.balance.available,
+          isSystemTransaction: true,
+          ...metadata
+        }
+      };
+
+      const transaction = await transactionMonitor.recordSystemWalletTransaction(transactionData);
+
+      await session.commitTransaction();
+
+      return {
+        success: true,
+        systemWallet: await this.getBalance(),
+        transaction: transaction,
+        message: `Added ${amount.toLocaleString()} VND from promotion to system wallet`
+      };
+    } catch (error) {
+      await session.abortTransaction();
+      throw error;
+    } finally {
+      session.endSession();
+    }
+  }
+
+  /**
    * Admin: Transfer from user wallet to system wallet
    * Use case: Collect fees, penalties, etc.
    */
@@ -386,48 +448,150 @@ class SystemWalletService {
 
   /**
    * Get system wallet transaction history
+   * Includes all transactions involving system wallet operations
    */
   async getTransactionHistory(limit = 50, page = 1) {
     const skip = (page - 1) * limit;
 
-    const transactions = await Transaction.find({
-      'metadata.action': {
-        $in: [
-          'ADD_FUNDS',
-          'DEDUCT_FUNDS',
-          'TRANSFER_TO_USER',
-          'TRANSFER_FROM_USER',
-          'RECEIVED_FROM_SYSTEM',
-          'TRANSFERRED_TO_SYSTEM'
-        ]
-      }
-    })
+    // Query for system wallet related transactions
+    const query = {
+      $or: [
+        // Direct system wallet operations (admin actions)
+        {
+          'metadata.action': {
+            $in: [
+              'ADD_FUNDS',
+              'DEDUCT_FUNDS',
+              'TRANSFER_TO_USER',
+              'TRANSFER_FROM_USER',
+              'RECEIVED_FROM_SYSTEM',
+              'TRANSFERRED_TO_SYSTEM'
+            ]
+          }
+        },
+        // System revenue transactions (promotions, fees, etc.)
+        {
+          'metadata.action': 'PROMOTION_REVENUE'
+        },
+        // System transactions by type
+        {
+          type: {
+            $in: ['PROMOTION_REVENUE', 'TRANSFER_IN', 'TRANSFER_OUT', 'DEPOSIT', 'WITHDRAWAL']
+          }
+        },
+        // System placeholder user transactions
+        {
+          user: new mongoose.Types.ObjectId('000000000000000000000000')
+        }
+      ]
+    };
+
+    const transactions = await Transaction.find(query)
       .sort({ createdAt: -1 })
       .limit(limit)
       .skip(skip)
-      .populate('metadata.adminId', 'email profile.firstName profile.lastName');
+      .populate('user', 'email profile.firstName profile.lastName')
+      .populate('wallet', 'balance.available')
+      .lean();
 
-    const total = await Transaction.countDocuments({
-      'metadata.action': {
-        $in: [
-          'ADD_FUNDS',
-          'DEDUCT_FUNDS',
-          'TRANSFER_TO_USER',
-          'TRANSFER_FROM_USER',
-          'RECEIVED_FROM_SYSTEM',
-          'TRANSFERRED_TO_SYSTEM'
-        ]
-      }
-    });
+    const total = await Transaction.countDocuments(query);
+
+    // Add transaction type labels for admin UI
+    const processedTransactions = transactions.map(transaction => ({
+      ...transaction,
+      typeLabel: this.getTransactionTypeLabel(transaction),
+      isSystemTransaction: transaction.metadata?.isSystemTransaction || 
+                          transaction.user?.toString() === '000000000000000000000000'
+    }));
 
     return {
-      transactions,
+      transactions: processedTransactions,
       pagination: {
         total,
         page,
         limit,
         totalPages: Math.ceil(total / limit)
       }
+    };
+  }
+
+  /**
+   * Get human-readable transaction type labels for admin interface
+   */
+  getTransactionTypeLabel(transaction) {
+    const { type, metadata } = transaction;
+    
+    switch (type) {
+      case 'PROMOTION_REVENUE':
+        return 'Revenue from Product Promotion';
+      case 'DEPOSIT':
+        return metadata?.action === 'ADD_FUNDS' ? 'Admin Fund Addition' : 'Deposit';
+      case 'WITHDRAWAL':
+        return metadata?.action === 'DEDUCT_FUNDS' ? 'Admin Fund Deduction' : 'Withdrawal';
+      case 'TRANSFER_IN':
+        return 'Transfer from User to System';
+      case 'TRANSFER_OUT':
+        return 'Transfer from System to User';
+      default:
+        return metadata?.action ? metadata.action.replace(/_/g, ' ').toLowerCase() : type;
+    }
+  }
+
+  /**
+   * Get system wallet transaction statistics
+   * Useful for admin dashboard analytics
+   */
+  async getTransactionStats(days = 30) {
+    const startDate = new Date();
+    startDate.setDate(startDate.getDate() - days);
+
+    const stats = await Transaction.aggregate([
+      {
+        $match: {
+          createdAt: { $gte: startDate },
+          $or: [
+            { 'metadata.action': 'PROMOTION_REVENUE' },
+            { 'metadata.isSystemTransaction': true },
+            { user: new mongoose.Types.ObjectId('000000000000000000000000') }
+          ]
+        }
+      },
+      {
+        $group: {
+          _id: '$type',
+          count: { $sum: 1 },
+          totalAmount: { $sum: '$amount' },
+          avgAmount: { $avg: '$amount' }
+        }
+      },
+      {
+        $sort: { totalAmount: -1 }
+      }
+    ]);
+
+    const totalRevenue = await Transaction.aggregate([
+      {
+        $match: {
+          createdAt: { $gte: startDate },
+          type: 'PROMOTION_REVENUE',
+          status: 'success'
+        }
+      },
+      {
+        $group: {
+          _id: null,
+          totalRevenue: { $sum: '$amount' },
+          transactionCount: { $sum: 1 }
+        }
+      }
+    ]);
+
+    return {
+      period: `Last ${days} days`,
+      summary: stats,
+      promotionRevenue: totalRevenue[0] || { totalRevenue: 0, transactionCount: 0 },
+      startDate,
+      endDate: new Date()
     };
   }
 
@@ -455,6 +619,93 @@ class SystemWalletService {
       systemWallet: await this.getBalance(),
       message: `System wallet status updated to ${newStatus}`
     };
+  }
+
+  // ========== COMPREHENSIVE TRANSACTION MONITORING ==========
+
+  /**
+   * Get ALL transactions involving system wallet (in/out)
+   */
+  async getAllSystemTransactions(filters = {}, limit = 50, page = 1) {
+    return await transactionMonitor.getAllSystemWalletTransactions(filters, limit, page);
+  }
+
+  /**
+   * Get transaction flow analytics for system wallet
+   */
+  async getTransactionFlowAnalytics(filters = {}) {
+    return await transactionMonitor.getTransactionFlowAnalytics(filters);
+  }
+
+  /**
+   * Get recent system wallet activity
+   */
+  async getRecentActivity(hours = 24) {
+    return await transactionMonitor.getRecentActivity(hours);
+  }
+
+  /**
+   * Record a manual transaction for system wallet
+   */
+  async recordManualTransaction(transactionData) {
+    return await transactionMonitor.recordSystemWalletTransaction({
+      ...transactionData,
+      systemWalletAction: transactionData.systemWalletAction || 'manual_adjustment'
+    });
+  }
+
+  /**
+   * Get system wallet dashboard data
+   */
+  async getDashboardData(period = '30d') {
+    try {
+      // Get basic balance info
+      const balance = await this.getBalance();
+      
+      // Get transaction flow analytics
+      const periodMap = { '7d': 7, '30d': 30, '90d': 90, '1y': 365 };
+      const days = periodMap[period] || 30;
+      const startDate = new Date();
+      startDate.setDate(startDate.getDate() - days);
+      
+      const flowAnalytics = await this.getTransactionFlowAnalytics({ startDate });
+      const recentActivity = await this.getRecentActivity(24);
+      
+      // Get transaction breakdown by type
+      const typeBreakdown = await Transaction.aggregate([
+        {
+          $match: {
+            $or: [
+              { fromSystemWallet: true },
+              { toSystemWallet: true }
+            ],
+            createdAt: { $gte: startDate }
+          }
+        },
+        {
+          $group: {
+            _id: '$type',
+            count: { $sum: 1 },
+            totalAmount: { $sum: '$amount' }
+          }
+        },
+        {
+          $sort: { totalAmount: -1 }
+        }
+      ]);
+
+      return {
+        period,
+        balance,
+        flowAnalytics,
+        recentActivity: recentActivity.summary,
+        typeBreakdown,
+        lastUpdated: new Date()
+      };
+    } catch (error) {
+      console.error('❌ Error getting dashboard data:', error);
+      throw error;
+    }
   }
 }
 

@@ -5,7 +5,6 @@ class CategoryMappingService {
    * @returns {Array} Array of keywords
    */
   static getCategoryKeywords(categoryName) {
-
     const categoryKeywordMap = {
       // CAMERA & PHOTOGRAPHY
       'máy ảnh': [
@@ -107,8 +106,8 @@ class CategoryMappingService {
     // 1. EXACT CATEGORY MATCH
     for (const [key, keywordList] of Object.entries(categoryKeywordMap)) {
       if (lowerCategoryName.includes(key)) {
-          keywords = [...keywords, ...keywordList];
-        }
+        keywords = [...keywords, ...keywordList];
+      }
     }
 
     // 2. FLEXIBLE MATCHING for compound categories
@@ -132,7 +131,6 @@ class CategoryMappingService {
         .split(/[\s&\-_]+/)
         .filter((word) => word.length > 2)
         .map((word) => word.toLowerCase());
-
     }
 
     // Remove duplicates
@@ -204,7 +202,7 @@ class CategoryMappingService {
       );
 
       if (isMatch) {
-         console.log(`✅ Semantic match: "${keyword}" <-> "${detection}"`);
+        console.log(`✅ Semantic match: "${keyword}" <-> "${detection}"`);
       }
 
       return isMatch;
@@ -282,7 +280,6 @@ class CategoryMappingService {
         );
 
         if (isMatch) {
-         
           return true;
         }
       }

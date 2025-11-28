@@ -15,7 +15,7 @@ const transactionSchema = new mongoose.Schema(
     },
     type: {
       type: String,
-      enum: ['deposit', 'withdrawal', 'payment', 'refund', 'penalty', 'order_payment'],
+      enum: ['deposit', 'withdrawal', 'payment', 'refund', 'penalty', 'order_payment', 'PROMOTION_REVENUE', 'TRANSFER_IN', 'TRANSFER_OUT', 'DEPOSIT', 'WITHDRAWAL'],
       required: true,
       index: true
     },
@@ -37,11 +37,36 @@ const transactionSchema = new mongoose.Schema(
     reference: String, // Internal reference
     paymentMethod: {
       type: String,
-      enum: ['wallet', 'payos', 'cod'],
+      enum: ['wallet', 'payos', 'cod', 'system_wallet'],
       default: 'payos'
     },
     orderCode: String, // For PayOS orders
     metadata: { type: mongoose.Schema.Types.Mixed, default: {} },
+
+    // System wallet interaction tracking
+    fromWallet: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Wallet',
+      required: false
+    },
+    toWallet: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Wallet', 
+      required: false
+    },
+    fromSystemWallet: {
+      type: Boolean,
+      default: false
+    },
+    toSystemWallet: {
+      type: Boolean,
+      default: false
+    },
+    systemWalletAction: {
+      type: String,
+      enum: ['revenue', 'refund', 'fee_collection', 'penalty', 'transfer_in', 'transfer_out', 'manual_adjustment'],
+      required: false
+    },
 
     // Retry and error handling
     retryCount: { type: Number, default: 0 },
@@ -65,5 +90,11 @@ const transactionSchema = new mongoose.Schema(
 transactionSchema.index({ user: 1, status: 1, createdAt: -1 });
 transactionSchema.index({ externalId: 1 }, { sparse: true });
 transactionSchema.index({ status: 1, expiredAt: 1 });
+
+// System wallet specific indexes
+transactionSchema.index({ fromSystemWallet: 1, createdAt: -1 });
+transactionSchema.index({ toSystemWallet: 1, createdAt: -1 });
+transactionSchema.index({ systemWalletAction: 1, createdAt: -1 });
+transactionSchema.index({ fromWallet: 1, toWallet: 1 });
 
 module.exports = mongoose.model('Transaction', transactionSchema);
