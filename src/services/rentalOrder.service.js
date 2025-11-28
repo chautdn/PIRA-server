@@ -137,9 +137,20 @@ class RentalOrderService {
         });
 
         // Tính phí shipping nếu cần giao hàng
-        if (deliveryMethod === 'DELIVERY' && owner.profile.address) {
+        if (deliveryMethod === 'DELIVERY') {
+          // Use owner's address if available, otherwise use fallback/default fee
+          let ownerAddr = owner.profile?.address || {
+            streetAddress: 'Owner Address Not Set',
+            city: 'Unknown',
+            district: 'Unknown',
+            ward: 'Unknown',
+            // Use default coordinates in HCM if not available
+            latitude: 10.7769,
+            longitude: 106.6965
+          };
+
           const shippingInfo = await this.calculateShippingFee(
-            owner.profile.address,
+            ownerAddr,
             deliveryAddress
           );
 
@@ -147,8 +158,15 @@ class RentalOrderService {
             ...subOrder.shipping,
             ...shippingInfo
           };
-          subOrder.pricing.shippingFee =
-            shippingInfo.fee.calculatedFee || shippingInfo.fee.breakdown?.total || 0;
+          
+          // ✅ Set totalFee from calculated fee
+          const calculatedFee = shippingInfo.fee.calculatedFee || shippingInfo.fee.breakdown?.total || 0;
+          subOrder.shipping.fee = {
+            ...subOrder.shipping.fee,
+            totalFee: calculatedFee
+          };
+          
+          subOrder.pricing.shippingFee = calculatedFee;
 
           // ✅ Apply system promotion discount to shipping fee
           const discountResult = await systemPromotionService.calculateShippingDiscount(subOrder);

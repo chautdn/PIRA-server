@@ -21,7 +21,8 @@ class ShipmentService {
       .populate({
         path: 'subOrder',
         populate: {
-          path: 'masterOrder'
+          path: 'masterOrder',
+          select: 'rentalPeriod'
         }
       });
   }
@@ -146,6 +147,29 @@ class ShipmentService {
       }
     } catch (err) {
       console.warn('Failed to update subOrder status:', err.message);
+    }
+
+    // Transfer shipping fee to shipper when DELIVERED
+    try {
+      if (shipment.shipper && shipment.fee > 0) {
+        const SystemWalletService = require('./systemWallet.service');
+        const adminId = process.env.SYSTEM_ADMIN_ID || 'SYSTEM_AUTO_TRANSFER';
+        
+        console.log(`\n💰 Transferring shipping fee to shipper:`);
+        console.log(`   Shipper ID: ${shipment.shipper}`);
+        console.log(`   Fee: ${shipment.fee} VND`);
+        
+        const transferResult = await SystemWalletService.transferToUser(
+          adminId,
+          shipment.shipper,
+          shipment.fee,
+          `Shipping fee for shipment ${shipment.shipmentId}`
+        );
+        
+        console.log(`   ✅ Transfer successful`);
+      }
+    } catch (err) {
+      console.error(`   ❌ Failed to transfer shipping fee: ${err.message}`);
     }
 
     return shipment;
@@ -428,6 +452,7 @@ class ShipmentService {
                 phone: owner.phone || '',
                 notes: `Nhận hàng thuê từ ${product.name || 'sản phẩm'}`
               },
+              fee: subOrder.pricing?.shippingFee || 0,
               scheduledAt: subOrder.rentalPeriod?.startDate,
               status: 'PENDING'
             };
@@ -488,6 +513,7 @@ class ShipmentService {
                 phone: renter.phone || '',
                 notes: `Trả hàng thuê: ${product.name || 'sản phẩm'}`
               },
+              fee: subOrder.pricing?.shippingFee || 0,
               scheduledAt: subOrder.rentalPeriod?.endDate,
               status: 'PENDING'
             };
