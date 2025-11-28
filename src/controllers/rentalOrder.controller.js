@@ -461,11 +461,11 @@ class RentalOrderController {
       const { masterOrderId } = req.params;
 
       const masterOrder = await MasterOrder.findById(masterOrderId).populate([
-        { path: 'renter', select: 'profile email' },
+        { path: 'renter', select: 'profile email phone' },
         {
           path: 'subOrders',
           populate: [
-            { path: 'owner', select: 'profile email' },
+            { path: 'owner', select: 'profile email phone' },
             { path: 'products.product' },
             { path: 'contract' }
           ]

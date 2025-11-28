@@ -29,6 +29,14 @@ const disputeSchema = new mongoose.Schema(
       type: mongoose.Schema.Types.ObjectId,
       ref: 'Shipment'
     },
+    
+    // Shipment type để phân biệt dispute lúc giao hàng hay trả hàng
+    shipmentType: {
+      type: String,
+      enum: ['DELIVERY', 'RETURN'],
+      required: true
+    },
+
     complainant: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'User',
@@ -39,7 +47,7 @@ const disputeSchema = new mongoose.Schema(
       ref: 'User',
       required: true
     },
-    assignedTo: {
+    assignedAdmin: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'User'
     },
@@ -48,13 +56,20 @@ const disputeSchema = new mongoose.Schema(
     type: {
       type: String,
       enum: [
-        'PRODUCT_DAMAGE', // Sản phẩm bị hỏng
-        'PRODUCT_NOT_AS_DESCRIBED', // Không đúng mô tả
-        'DELIVERY_ISSUE', // Vấn đề giao hàng
-        'MISSING_ITEMS', // Thiếu hàng
-        'RETURN_ISSUE', // Vấn đề trả hàng
+        // DELIVERY phase (renter mở)
+        'PRODUCT_NOT_AS_DESCRIBED', // Không đúng mô tả (vali móp, máy ảnh lỗi)
+        'MISSING_ITEMS', // Thiếu phụ kiện/số lượng
+        'DAMAGED_BY_SHIPPER', // Shipper làm hỏng hàng
+        'DELIVERY_FAILED_RENTER', // Renter boom hàng, không nghe máy
+        
+        // ACTIVE phase (renter mở)
+        'PRODUCT_DEFECT', // Sản phẩm lỗi khi đang sử dụng
+        
+        // RETURN phase (owner mở)
         'DAMAGED_ON_RETURN', // Hư hỏng khi trả
         'LATE_RETURN', // Trả hàng trễ
+        'RETURN_FAILED_OWNER', // Owner không nhận lại hàng
+        
         'OTHER'
       ],
       required: true
@@ -80,14 +95,22 @@ const disputeSchema = new mongoose.Schema(
       additionalInfo: String
     },
 
-    // Status
+    // Status - Flow chi tiết
     status: {
       type: String,
       enum: [
-        'OPEN', // Mới tạo
-        'IN_PROGRESS', // Đang xử lý
-        'PENDING_EVIDENCE', // Chờ bằng chứng bổ sung
-        'ESCALATED', // Đã chuyển lên cấp cao hơn
+        'OPEN', // Mới tạo, chờ respondent phản hồi
+        'RESPONDENT_ACCEPTED', // Respondent đồng ý -> Done
+        'RESPONDENT_REJECTED', // Respondent từ chối -> Chuyển admin
+        'ADMIN_REVIEWING', // Admin đang xem xét bằng chứng
+        'ADMIN_DECISION_MADE', // Admin đưa ra quyết định sơ bộ
+        'BOTH_ACCEPTED', // Cả 2 bên đồng ý quyết định admin -> Done
+        'NEGOTIATION_NEEDED', // 1 bên không đồng ý -> Mở negotiation room
+        'IN_NEGOTIATION', // Đang đàm phán (3 ngày)
+        'NEGOTIATION_AGREED', // 2 bên thỏa thuận xong -> Chờ admin chốt
+        'NEGOTIATION_FAILED', // Không thỏa thuận được sau 3 ngày
+        'THIRD_PARTY_ESCALATED', // Chuyển bên thứ 3 giải quyết
+        'THIRD_PARTY_EVIDENCE_UPLOADED', // Đã upload kết quả từ bên thứ 3
         'RESOLVED', // Đã giải quyết
         'CLOSED' // Đã đóng
       ],
@@ -99,24 +122,130 @@ const disputeSchema = new mongoose.Schema(
       enum: ['LOW', 'MEDIUM', 'HIGH', 'URGENT'],
       default: 'MEDIUM'
     },
+    
+    // Respondent response
+    respondentResponse: {
+      decision: {
+        type: String,
+        enum: ['ACCEPTED', 'REJECTED'],
+      },
+      reason: String,
+      respondedAt: Date,
+      evidence: {
+        photos: [String],
+        documents: [String],
+        notes: String
+      }
+    },
+    
+    // Admin decision
+    adminDecision: {
+      decision: String, // Quyết định của admin
+      reasoning: String, // Lý do
+      decidedAt: Date,
+      decidedBy: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'User'
+      },
+      // Evidence từ shipper
+      shipperEvidence: {
+        photos: [String], // Ảnh chụp khi giao/nhận hàng
+        videos: [String],
+        notes: String,
+        timestamp: Date
+      },
+      // Phản hồi từ 2 bên về quyết định admin
+      complainantAccepted: {
+        type: Boolean,
+        default: null
+      },
+      respondentAccepted: {
+        type: Boolean,
+        default: null
+      }
+    },
+    
+    // Negotiation Room
+    negotiationRoom: {
+      startedAt: Date,
+      deadline: Date, // 3 ngày từ lúc bắt đầu
+      chatRoomId: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'Chat'
+      },
+      // Thỏa thuận cuối cùng từ 2 bên
+      finalAgreement: {
+        proposedBy: {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: 'User'
+        },
+        proposalText: String,
+        proposalAmount: Number,
+        // Quyết định cuối cùng từ owner
+        ownerDecision: String,
+        decidedAt: Date,
+        complainantAccepted: {
+          type: Boolean,
+          default: false
+        },
+        respondentAccepted: {
+          type: Boolean,
+          default: false
+        },
+        acceptedAt: Date
+      }
+    },
+    
+    // Third Party Resolution
+    thirdPartyResolution: {
+      escalatedAt: Date,
+      escalatedBy: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'User'
+      },
+      evidenceDeadline: Date, // 7 ngày từ khi escalate
+      shipperInfoShared: {
+        sharedAt: Date,
+        sharedBy: {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: 'User'
+        }
+      },
+      thirdPartyInfo: {
+        name: String,
+        contactInfo: String,
+        caseNumber: String
+      },
+      // Bằng chứng kết quả từ bên thứ 3
+      evidence: {
+        documents: [String],
+        photos: [String],
+        officialDecision: String,
+        uploadedBy: {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: 'User'
+        },
+        uploadedAt: Date
+      }
+    },
 
-    // Resolution
+    // Final Resolution
     resolution: {
       resolvedBy: {
         type: mongoose.Schema.Types.ObjectId,
         ref: 'User'
       },
       resolvedAt: Date,
-      resolution: String,
-      compensationAmount: Number,
-      compensationTo: {
-        type: mongoose.Schema.Types.ObjectId,
-        ref: 'User'
+      resolutionText: String,
+      resolutionSource: {
+        type: String,
+        enum: ['RESPONDENT_ACCEPTED', 'ADMIN_DECISION', 'NEGOTIATION', 'THIRD_PARTY']
       },
-      // Refund hoặc penalty
+      // Financial Impact
       financialImpact: {
-        refundAmount: Number,
-        penaltyAmount: Number,
+        refundAmount: Number, // Tiền hoàn lại
+        penaltyAmount: Number, // Tiền phạt
+        compensationAmount: Number, // Tiền bồi thường
         paidBy: {
           type: mongoose.Schema.Types.ObjectId,
           ref: 'User'
@@ -124,23 +253,28 @@ const disputeSchema = new mongoose.Schema(
         paidTo: {
           type: mongoose.Schema.Types.ObjectId,
           ref: 'User'
+        },
+        status: {
+          type: String,
+          enum: ['PENDING', 'PROCESSED', 'COMPLETED'],
+          default: 'PENDING'
         }
       }
     },
 
-    // Communication
-    messages: [
+    // Timeline tracking
+    timeline: [
       {
-        sender: {
+        action: String,
+        performedBy: {
           type: mongoose.Schema.Types.ObjectId,
           ref: 'User'
         },
-        message: String,
         timestamp: {
           type: Date,
           default: Date.now
         },
-        attachments: [String]
+        details: String
       }
     ]
   },
@@ -150,9 +284,50 @@ const disputeSchema = new mongoose.Schema(
   }
 );
 
+// Methods
+disputeSchema.methods.addTimelineEvent = function(action, performedBy, details) {
+  this.timeline.push({
+    action,
+    performedBy,
+    details,
+    timestamp: new Date()
+  });
+  return this.save();
+};
+
+disputeSchema.methods.canOpenDispute = function(productStatus, shipmentType, userId, ownerId) {
+  // DELIVERY type - chỉ renter mới mở được
+  if (shipmentType === 'DELIVERY') {
+    if (userId.toString() === ownerId.toString()) {
+      return { allowed: false, reason: 'Owner không thể mở dispute trong giai đoạn giao hàng' };
+    }
+    // Chỉ cho phép khi DELIVERY_FAILED
+    if (productStatus !== 'DELIVERY_FAILED') {
+      return { allowed: false, reason: 'Chỉ có thể mở dispute khi trạng thái là DELIVERY_FAILED' };
+    }
+  }
+  
+  // RETURN type - chỉ owner mới mở được
+  if (shipmentType === 'RETURN') {
+    if (userId.toString() !== ownerId.toString()) {
+      return { allowed: false, reason: 'Chỉ owner mới có thể mở dispute trong giai đoạn trả hàng' };
+    }
+    // Cho phép khi RETURNED hoặc RETURN_FAILED
+    if (!['RETURNED', 'RETURN_FAILED'].includes(productStatus)) {
+      return { allowed: false, reason: 'Chỉ có thể mở dispute khi trạng thái là RETURNED hoặc RETURN_FAILED' };
+    }
+  }
+  
+  return { allowed: true };
+};
+
+// Indexes
 disputeSchema.index({ disputeId: 1 });
 disputeSchema.index({ subOrder: 1, productId: 1 });
 disputeSchema.index({ complainant: 1 });
+disputeSchema.index({ respondent: 1 });
 disputeSchema.index({ status: 1, priority: 1 });
+disputeSchema.index({ shipmentType: 1, status: 1 });
+disputeSchema.index({ 'negotiationRoom.deadline': 1 });
 
 module.exports = mongoose.model('Dispute', disputeSchema);
