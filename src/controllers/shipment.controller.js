@@ -237,6 +237,69 @@ class ShipmentController {
       });
     }
   }
+
+  // Get shipments for a master order
+  async getShipmentsByMasterOrder(req, res) {
+    try {
+      const { masterOrderId } = req.params;
+
+      if (!masterOrderId) {
+        return res.status(400).json({ 
+          status: 'error', 
+          message: 'masterOrderId is required' 
+        });
+      }
+
+      // Verify master order exists and user has access
+      const MasterOrder = require('../models/MasterOrder');
+      const Shipment = require('../models/Shipment');
+
+      const masterOrder = await MasterOrder.findById(masterOrderId);
+      if (!masterOrder) {
+        return res.status(404).json({ 
+          status: 'error', 
+          message: 'Master order not found' 
+        });
+      }
+
+      // Check if user is renter, owner of suborders, or admin
+      const isAdmin = req.user?.role === 'ADMIN';
+      const isRenter = String(masterOrder.renter) === String(req.user?._id);
+      
+      // Check if user is owner of the suborders
+      const SubOrder = require('../models/SubOrder');
+      const subOrders = await SubOrder.find({ masterOrder: masterOrderId }).select('_id owner');
+      
+      const isOwner = subOrders.some(so => String(so.owner) === String(req.user?._id));
+
+      if (!isAdmin && !isRenter && !isOwner) {
+        return res.status(403).json({ 
+          status: 'error', 
+          message: 'You do not have permission to view these shipments' 
+        });
+      }
+
+      // Get all shipments for this master order's suborders
+      const subOrderIds = subOrders.map(so => so._id);
+
+      const shipments = await Shipment.find({ 
+        subOrder: { $in: subOrderIds } 
+      })
+        .populate('shipper', '_id name email phone profile')
+        .sort({ createdAt: -1 });
+
+      return res.json({ 
+        status: 'success', 
+        data: shipments 
+      });
+    } catch (err) {
+      console.error('getShipmentsByMasterOrder error:', err.message);
+      return res.status(400).json({ 
+        status: 'error', 
+        message: err.message 
+      });
+    }
+  }
 }
 
 module.exports = new ShipmentController();

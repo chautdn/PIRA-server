@@ -197,6 +197,22 @@ class ShipmentService {
         await shipment.subOrder.save();
         console.log(`   ✅ SubOrder status: DELIVERED`);
 
+        // Also update MasterOrder status to ACTIVE (rental starts)
+        try {
+          const MasterOrder = require('../models/MasterOrder');
+          const masterOrderId = shipment.subOrder.masterOrder;
+          if (masterOrderId) {
+            const masterOrder = await MasterOrder.findById(masterOrderId);
+            if (masterOrder && masterOrder.status !== 'ACTIVE') {
+              masterOrder.status = 'ACTIVE';
+              await masterOrder.save();
+              console.log(`   ✅ MasterOrder ${masterOrderId} status set to ACTIVE`);
+            }
+          }
+        } catch (moErr) {
+          console.error('   ⚠️ Failed to update MasterOrder status:', moErr.message || moErr);
+        }
+
       } catch (err) {
         transferError = err.message || String(err);
         console.error(`   ❌ Payment error: ${transferError}`);
