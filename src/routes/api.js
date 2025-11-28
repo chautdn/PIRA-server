@@ -37,6 +37,10 @@ require('./systemWallet.routes');
 require('./earlyReturn.routes.register');
 require('./systemPromotion.routes');
 
+// Owner Statistics routes
+const ownerStatisticsRoutes = require('./ownerStatistics.routes');
+router.use('/owner/statistics', ownerStatisticsRoutes);
+
 // Withdrawal routes
 const withdrawalRoutes = require('./withdrawal.routes');
 router.use('/withdrawals', withdrawalRoutes);
