@@ -55,6 +55,10 @@ router.use('/system-promotions', systemPromotionRoutes);
 const voucherRoutes = require('./voucher.routes');
 router.use('/vouchers', voucherRoutes);
 
+// User Wallet routes
+const userWalletRoutes = require('./userWallet.routes');
+router.use('/wallets', userWalletRoutes);
+
 // Register all routes from the registry FIRST
 getRoutes()?.forEach(({ path, router: moduleRouter }) => {
   if (!path || typeof path !== 'string') {

@@ -1543,7 +1543,7 @@ class RentalOrderController {
 
       // Now transfer deposit back to renter:
       // ✅ Rental fee was ALREADY transferred when renter confirmed delivery
-      // ⬇️ Only transfer deposit refund now
+      // ⬇️ Only transfer deposit refund now (as FROZEN, will unlock after 24h)
       let depositTransferResult = null;
       let transferError = null;
 
@@ -1552,22 +1552,27 @@ class RentalOrderController {
         const depositAmount = subOrder.pricing?.subtotalDeposit || 0;
         
         console.log(`\n💰 Payment Transfer breakdown when owner confirms:`);
-        console.log(`   ✅ Renter confirmed delivery (DELIVERED) - Rental fee already transferred`);
+        console.log(`   ✅ Renter confirmed delivery (DELIVERED) - Rental fee already transferred (80% to owner, 20% platform fee)`);
         console.log(`   ✅ Owner confirmed return receipt (COMPLETED)`);
-        console.log(`   Deposit refund (→ renter): ${depositAmount} VND`);
+        console.log(`   Deposit refund (→ renter as FROZEN): ${depositAmount} VND (will unlock after 24h)`);
 
         const adminId = process.env.SYSTEM_ADMIN_ID || 'SYSTEM_AUTO_TRANSFER';
 
-        // Transfer deposit back to renter
+        // Transfer deposit back to renter (as FROZEN)
         if (depositAmount > 0) {
           try {
-            depositTransferResult = await SystemWalletService.transferToUser(
+            depositTransferResult = await SystemWalletService.transferDepositRefundWithFrozen(
               adminId,
               renterId,
               depositAmount,
-              `Deposit refund for subOrder ${subOrder.subOrderNumber} - hoàn tiền cọc khi chủ nhận lại hàng`
+              subOrder.subOrderNumber
             );
-            console.log(`   ✅ Deposit refund transfer successful: ${depositAmount} VND → renter ${renterId}`);
+            console.log(`   ✅ Deposit refund transfer successful (FROZEN):`);
+            console.log(`      Amount: ${depositAmount} VND → renter ${renterId}`);
+            console.log(`      Status: FROZEN`);
+            console.log(`      Unlocks at: ${new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString()}`);
+            console.log(`      System transaction: ${depositTransferResult.transactions.system._id}`);
+            console.log(`      Renter transaction: ${depositTransferResult.transactions.renter._id}`);
           } catch (err) {
             const errMsg = err.message || String(err);
             transferError = errMsg;

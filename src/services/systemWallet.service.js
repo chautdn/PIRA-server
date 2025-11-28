@@ -827,9 +827,22 @@ class SystemWalletService {
       }
       await systemWallet.save({ session });
 
-      // Add owner share to owner wallet
-      ownerWallet.balance.available += ownerShareAmount;
+      // Add owner share to owner wallet as FROZEN (will be unfrozen after 24h)
+      ownerWallet.balance.frozen += ownerShareAmount;
       await ownerWallet.save({ session });
+      
+      // Create frozen record for automatic unlock in 24h
+      const FrozenBalance = require('../models/FrozenBalance');
+      const frozenRecord = new FrozenBalance({
+        wallet: ownerWallet._id,
+        user: ownerId,
+        amount: ownerShareAmount,
+        reason: 'RENTAL_FEE_TRANSFER',
+        subOrderNumber: subOrderNumber,
+        unlocksAt: new Date(Date.now() + 24 * 60 * 60 * 1000), // 24 hours from now
+        status: 'FROZEN'
+      });
+      await frozenRecord.save({ session });
 
       // Create transaction records with platform fee tracking
       
@@ -920,21 +933,25 @@ class SystemWalletService {
         ownerWallet: {
           walletId: ownerWallet._id,
           userId: ownerId,
-          newBalance: ownerWallet.balance.available
+          availableBalance: ownerWallet.balance.available,
+          frozenBalance: ownerWallet.balance.frozen,
+          unlocksAt: new Date(Date.now() + 24 * 60 * 60 * 1000)
         },
         transfer: {
           totalRentalAmount: totalRentalAmount,
           ownerShareAmount: ownerShareAmount,
           platformFeeAmount: platformFeeAmount,
           platformFeePercentage: 20,
-          ownerSharePercentage: 80
+          ownerSharePercentage: 80,
+          status: 'FROZEN',
+          unlocksAfter: '24 hours'
         },
         transactions: {
           system: systemTransaction,
           owner: ownerTransaction,
           platformFee: platformFeeTransaction
         },
-        message: `Transferred ${ownerShareAmount.toLocaleString()} VND (80%) to owner. Platform fee ${platformFeeAmount.toLocaleString()} VND (20%) retained.`
+        message: `Transferred ${ownerShareAmount.toLocaleString()} VND (80%) to owner (FROZEN for 24h). Platform fee ${platformFeeAmount.toLocaleString()} VND (20%) retained.`
       };
     } catch (error) {
       await session.abortTransaction();
@@ -943,7 +960,163 @@ class SystemWalletService {
       session.endSession();
     }
   }
-}
 
-module.exports = new SystemWalletService();
+  /**
+   * Transfer deposit refund with frozen status
+   * Deposit is added as FROZEN and will unlock after 24 hours
+   */
+  async transferDepositRefundWithFrozen(adminId, renterId, depositAmount, subOrderNumber) {
+    if (depositAmount <= 0) {
+      throw new Error('Deposit amount must be positive');
+    }
 
+    const session = await mongoose.startSession();
+    session.startTransaction();
+
+    try {
+      // Get or create system wallet
+      let systemWallet = await SystemWallet.findOne({}).session(session);
+      if (!systemWallet) {
+        systemWallet = new SystemWallet({
+          name: 'PIRA Platform Wallet',
+          balance: { available: 0, frozen: 0, pending: 0 },
+          currency: 'VND',
+          status: 'ACTIVE'
+        });
+        await systemWallet.save({ session });
+      }
+
+      // Check sufficient balance
+      if (systemWallet.balance.available < depositAmount) {
+        throw new Error(
+          `Insufficient system wallet balance for deposit refund. Available: ${systemWallet.balance.available.toLocaleString()} VND, Required: ${depositAmount.toLocaleString()} VND`
+        );
+      }
+
+      // Get or create renter wallet
+      let renterWallet = await Wallet.findOne({ user: renterId }).session(session);
+      if (!renterWallet) {
+        renterWallet = new Wallet({
+          user: renterId,
+          balance: { available: 0, frozen: 0, pending: 0 },
+          currency: 'VND',
+          status: 'ACTIVE'
+        });
+        await renterWallet.save({ session });
+      }
+
+      // Deduct from system wallet
+      systemWallet.balance.available -= depositAmount;
+      systemWallet.lastModifiedAt = new Date();
+      if (adminId && adminId !== 'SYSTEM_AUTO_TRANSFER') {
+        systemWallet.lastModifiedBy = adminId;
+      }
+      await systemWallet.save({ session });
+
+      // Add to renter wallet as FROZEN (will be unfrozen after 24h)
+      renterWallet.balance.frozen += depositAmount;
+      await renterWallet.save({ session });
+
+      // Create frozen record for automatic unlock in 24h
+      const FrozenBalance = require('../models/FrozenBalance');
+      const frozenRecord = new FrozenBalance({
+        wallet: renterWallet._id,
+        user: renterId,
+        amount: depositAmount,
+        reason: 'DEPOSIT_REFUND',
+        subOrderNumber: subOrderNumber,
+        unlocksAt: new Date(Date.now() + 24 * 60 * 60 * 1000), // 24 hours from now
+        status: 'FROZEN',
+        metadata: {
+          adminId: adminId,
+          action: 'DEPOSIT_REFUND'
+        }
+      });
+      await frozenRecord.save({ session });
+
+      // Create transaction records
+
+      // System transaction: Amount transferred out
+      const systemTransaction = new Transaction({
+        user: adminId && adminId !== 'SYSTEM_AUTO_TRANSFER' ? adminId : renterId,
+        wallet: systemWallet._id,
+        type: 'TRANSFER_OUT',
+        amount: depositAmount,
+        status: 'success',
+        paymentMethod: 'system_wallet',
+        description: `Deposit refund for suborder ${subOrderNumber}`,
+        fromSystemWallet: true,
+        toWallet: renterWallet._id,
+        systemWalletAction: 'refund',
+        metadata: {
+          subOrderNumber: subOrderNumber,
+          depositAmount: depositAmount,
+          recipientUserId: renterId,
+          action: 'DEPOSIT_REFUND_TRANSFER_OUT'
+        }
+      });
+
+      // Renter transaction: Amount received (FROZEN)
+      const renterTransaction = new Transaction({
+        user: renterId,
+        wallet: renterWallet._id,
+        type: 'TRANSFER_IN',
+        amount: depositAmount,
+        status: 'success',
+        paymentMethod: 'system_wallet',
+        description: `Deposit refund for suborder ${subOrderNumber} (FROZEN for 24h)`,
+        fromSystemWallet: true,
+        toWallet: renterWallet._id,
+        metadata: {
+          subOrderNumber: subOrderNumber,
+          depositAmount: depositAmount,
+          status: 'FROZEN',
+          unlocksAfter: '24 hours',
+          action: 'DEPOSIT_REFUND_RECEIVED'
+        }
+      });
+
+      await systemTransaction.save({ session });
+      await renterTransaction.save({ session });
+
+      await session.commitTransaction();
+
+      // Emit socket update for renter wallet
+      if (global.chatGateway) {
+        global.chatGateway.emitWalletUpdate(renterId.toString(), {
+          type: 'DEPOSIT_REFUND',
+          amount: depositAmount,
+          status: 'FROZEN',
+          frozenBalance: renterWallet.balance.frozen,
+          unlocksAt: new Date(Date.now() + 24 * 60 * 60 * 1000)
+        });
+      }
+
+      return {
+        success: true,
+        systemWallet: await this.getBalance(),
+        renterWallet: {
+          walletId: renterWallet._id,
+          userId: renterId,
+          availableBalance: renterWallet.balance.available,
+          frozenBalance: renterWallet.balance.frozen,
+          unlocksAt: new Date(Date.now() + 24 * 60 * 60 * 1000)
+        },
+        transfer: {
+          depositAmount: depositAmount,
+          status: 'FROZEN',
+          unlocksAfter: '24 hours'
+        },
+        transactions: {
+          system: systemTransaction,
+          renter: renterTransaction
+        },
+        message: `Deposit refund ${depositAmount.toLocaleString()} VND returned to renter (FROZEN for 24h).`
+      };
+    } catch (error) {
+      await session.abortTransaction();
+      throw error;
+    } finally {
+      session.endSession();
+    }
+  }
