@@ -306,6 +306,13 @@ router.post(
   RentalOrderController.renterConfirmDelivery
 );
 
+// POST /api/rental-orders/suborders/:id/owner-confirm-delivered - Owner xác nhận đã nhận hàng trả
+router.post(
+  '/suborders/:id/owner-confirm-delivered',
+  [param('id').isMongoId().withMessage('ID SubOrder không hợp lệ'), validateRequest],
+  RentalOrderController.ownerConfirmDelivery
+);
+
 // POST /api/rental-orders/suborders/:id/reject - Từ chối SubOrder
 router.post(
   '/suborders/:id/reject',

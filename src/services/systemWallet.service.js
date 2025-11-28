@@ -231,10 +231,18 @@ class SystemWalletService {
         );
       }
 
-      // Get user wallet
-      const userWallet = await Wallet.findOne({ user: userId }).session(session);
+      // Get user wallet, or create if not exists
+      let userWallet = await Wallet.findOne({ user: userId }).session(session);
       if (!userWallet) {
-        throw new Error('User wallet not found');
+        console.log(`📝 User wallet not found for ${userId}, creating new wallet...`);
+        userWallet = new Wallet({
+          user: userId,
+          balance: { available: 0, frozen: 0, pending: 0 },
+          currency: 'VND',
+          status: 'ACTIVE'
+        });
+        await userWallet.save({ session });
+        console.log(`✅ Created user wallet for ${userId}`);
       }
 
       // Deduct from system wallet

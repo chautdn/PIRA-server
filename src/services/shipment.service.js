@@ -17,7 +17,13 @@ class ShipmentService {
   }
 
   async listByShipper(shipperId) {
-    return Shipment.find({ shipper: shipperId }).populate('subOrder');
+    return Shipment.find({ shipper: shipperId })
+      .populate({
+        path: 'subOrder',
+        populate: {
+          path: 'masterOrder'
+        }
+      });
   }
 
   /**
@@ -160,6 +166,23 @@ class ShipmentService {
     }
 
     console.log(`\n📦 Renter ${renterId} confirming: ${shipment.shipmentId} (${shipment.type})`);
+    console.log(`   Shipment details:`, {
+      shipmentId: shipment._id,
+      type: shipment.type,
+      status: shipment.status,
+      subOrderId: shipment.subOrder?._id
+    });
+
+    if (shipment.subOrder) {
+      console.log('   SubOrder loaded:');
+      console.log('     - products count:', shipment.subOrder.products?.length || 0);
+      if (shipment.subOrder.products && shipment.subOrder.products.length > 0) {
+        console.log('     - product[0] keys:', Object.keys(shipment.subOrder.products[0]));
+        console.log('     - product[0].totalRental:', shipment.subOrder.products[0].totalRental);
+        console.log('     - product[0].totalDeposit:', shipment.subOrder.products[0].totalDeposit);
+      }
+      console.log('     - pricing:', JSON.stringify(shipment.subOrder.pricing, null, 2));
+    }
 
     shipment.status = 'DELIVERED';
     
@@ -174,22 +197,27 @@ class ShipmentService {
         const depositAmount = shipment.subOrder.pricing?.subtotalDeposit || 0;
         
         console.log(`   Shipment type: DELIVERY (Giao hàng)`);
+        console.log(`   SubOrder ID: ${shipment.subOrder._id}`);
+        console.log(`   Owner ID: ${ownerId}`);
+        console.log(`   SubOrder pricing:`, shipment.subOrder.pricing);
         console.log(`   💰 Payment breakdown:`);
         console.log(`      - Rental fee (→ owner): ${rentalAmount} VND`);
         console.log(`      - Deposit (→ admin holds): ${depositAmount} VND`);
         
         if (rentalAmount > 0) {
           const adminId = process.env.SYSTEM_ADMIN_ID || 'SYSTEM_AUTO_TRANSFER';
+          console.log(`   Admin ID for transfer: ${adminId}`);
           transferResult = await SystemWalletService.transferToUser(
             adminId,
             ownerId,
             rentalAmount,
             `Rental fee for shipment ${shipment.shipmentId}`
           );
-          console.log(`   ✅ Transfer successful: ${rentalAmount} VND → owner ${ownerId}`);
+          console.log(`   ✅ Transfer successful:`, transferResult);
           console.log(`   ℹ️  Deposit ${depositAmount} VND held in admin wallet for renter refund`);
         } else {
-          console.log(`   ℹ️  No rental fee to transfer (amount = 0)`);
+          console.log(`   ⚠️  No rental fee to transfer (amount = 0)`);
+          console.log(`   Possible reasons: subtotalRental is missing or 0 in pricing`);
         }
 
         // Update subOrder status to DELIVERED
@@ -215,7 +243,7 @@ class ShipmentService {
 
       } catch (err) {
         transferError = err.message || String(err);
-        console.error(`   ❌ Payment error: ${transferError}`);
+        console.error(`   ❌ Payment error:`, err);
       }
     } else if (shipment.type === 'RETURN') {
       // RETURN shipment - no payment needed, just confirm receipt
@@ -250,34 +278,12 @@ class ShipmentService {
             continue;
           }
 
-          // Auto-confirm as DELIVERED (renter confirmation auto after threshold)
-          console.log(`🔄 Shipment ${s.shipmentId}: Auto-confirming SubOrder as DELIVERED`);
-          s.subOrder.status = 'DELIVERED';
-          await s.subOrder.save();
-
-          // Transfer ONLY rental fee to owner (NOT deposit)
-          const ownerId = s.subOrder.owner;
-          const rentalAmount = s.subOrder.pricing?.subtotalRental || 0;
-          const depositAmount = s.subOrder.pricing?.subtotalDeposit || 0;
-          
-          try {
-            if (rentalAmount > 0) {
-              const adminId = process.env.SYSTEM_ADMIN_ID || 'SYSTEM_AUTO_TRANSFER';
-              console.log(`💰 autoConfirmDelivered: Transferring rental fee ${rentalAmount} VND to owner ${ownerId}`);
-              console.log(`   Deposit ${depositAmount} VND remains in admin wallet`);
-              await SystemWalletService.transferToUser(
-                adminId,
-                ownerId,
-                rentalAmount,
-                `Rental fee for shipment ${s.shipmentId}`
-              );
-              console.log(`✅ Transfer successful for shipment ${s.shipmentId}`);
-            } else {
-              console.log(`⚠️ Shipment ${s.shipmentId}: Rental amount is 0, skipping transfer`);
-            }
-          } catch (err) {
-            console.error(`❌ Auto transfer failed for shipment ${s.shipmentId}, owner ${ownerId}:`, err.message || String(err));
-          }
+          // NOTE: Renter MUST manually confirm delivery by clicking button
+          // Do NOT auto-confirm here - renter needs explicit action
+          console.log(`ℹ️ Shipment ${s.shipmentId}: Waiting for renter to manually confirm delivery`);
+          // Disabled auto-confirm logic - renter must click button
+          // s.subOrder.status = 'DELIVERED';
+          // await s.subOrder.save();
         }
         // mark shipment as final
         s.status = 'DELIVERED';
@@ -287,7 +293,7 @@ class ShipmentService {
       }
     }
 
-    console.log(`✅ autoConfirmDelivered: Processed ${shipments.length} shipments`);
+    console.log(`✅ autoConfirmDelivered: Processed ${shipments.length} shipments (awaiting renter confirmation)`);
     return { processed: shipments.length };
   }
 
