@@ -264,11 +264,14 @@ class SystemWalletService {
       const systemTransaction = new Transaction({
         user: adminId && adminId !== 'SYSTEM_AUTO_TRANSFER' ? adminId : userId, // audit: admin if available, else fallback to recipient
         wallet: systemWallet._id,
-        type: 'order_payment',
+        type: 'TRANSFER_OUT',
         amount: amount,
         status: 'success',
-        paymentMethod: 'wallet',
+        paymentMethod: 'system_wallet',
         description: `Transfer to user ${userId}: ${description}`,
+        fromSystemWallet: true,
+        toWallet: userWallet._id,
+        systemWalletAction: 'transfer_out',
         metadata: {
           adminId: adminId,
           action: 'TRANSFER_TO_USER',
@@ -280,11 +283,13 @@ class SystemWalletService {
       const userTransaction = new Transaction({
         user: userId,
         wallet: userWallet._id,
-        type: 'order_payment',
+        type: 'TRANSFER_IN',
         amount: amount,
         status: 'success',
-        paymentMethod: 'wallet',
+        paymentMethod: 'system_wallet',
         description: `Received from system: ${description}`,
+        fromSystemWallet: true,
+        toWallet: userWallet._id,
         metadata: {
           adminId: adminId,
           action: 'RECEIVED_FROM_SYSTEM',
@@ -763,6 +768,182 @@ class SystemWalletService {
       throw error;
     }
   }
+
+  /**
+   * Transfer rental fee with platform fee tracking
+   * Splits the amount: ownerShare (80%) to owner, platformFee (20%) stays in system
+   * Creates separate transaction records for audit trail
+   */
+  async transferRentalFeeWithPlatformFee(adminId, ownerId, totalRentalAmount, subOrderNumber) {
+    if (totalRentalAmount <= 0) {
+      throw new Error('Rental amount must be positive');
+    }
+
+    const platformFeePercentage = 0.20; // 20% fee
+    const ownerSharePercentage = 0.80;  // 80% to owner
+    const platformFeeAmount = Math.round(totalRentalAmount * platformFeePercentage);
+    const ownerShareAmount = Math.round(totalRentalAmount * ownerSharePercentage);
+
+    const session = await mongoose.startSession();
+    session.startTransaction();
+
+    try {
+      // Get or create system wallet
+      let systemWallet = await SystemWallet.findOne({}).session(session);
+      if (!systemWallet) {
+        systemWallet = new SystemWallet({
+          name: 'PIRA Platform Wallet',
+          balance: { available: 0, frozen: 0, pending: 0 },
+          currency: 'VND',
+          status: 'ACTIVE'
+        });
+        await systemWallet.save({ session });
+      }
+
+      // Check sufficient balance
+      if (systemWallet.balance.available < totalRentalAmount) {
+        throw new Error(
+          `Insufficient system wallet balance for rental fee transfer. Available: ${systemWallet.balance.available.toLocaleString()} VND, Required: ${totalRentalAmount.toLocaleString()} VND`
+        );
+      }
+
+      // Get or create owner wallet
+      let ownerWallet = await Wallet.findOne({ user: ownerId }).session(session);
+      if (!ownerWallet) {
+        ownerWallet = new Wallet({
+          user: ownerId,
+          balance: { available: 0, frozen: 0, pending: 0 },
+          currency: 'VND',
+          status: 'ACTIVE'
+        });
+        await ownerWallet.save({ session });
+      }
+
+      // Deduct total from system wallet
+      systemWallet.balance.available -= totalRentalAmount;
+      systemWallet.lastModifiedAt = new Date();
+      if (adminId && adminId !== 'SYSTEM_AUTO_TRANSFER') {
+        systemWallet.lastModifiedBy = adminId;
+      }
+      await systemWallet.save({ session });
+
+      // Add owner share to owner wallet
+      ownerWallet.balance.available += ownerShareAmount;
+      await ownerWallet.save({ session });
+
+      // Create transaction records with platform fee tracking
+      
+      // System transaction: Total amount transferred out (80% to owner + 20% platform fee retained)
+      const systemTransaction = new Transaction({
+        user: adminId && adminId !== 'SYSTEM_AUTO_TRANSFER' ? adminId : ownerId,
+        wallet: systemWallet._id,
+        type: 'TRANSFER_OUT',
+        amount: totalRentalAmount,
+        status: 'success',
+        paymentMethod: 'system_wallet',
+        description: `Rental fee transfer for suborder ${subOrderNumber}`,
+        fromSystemWallet: true,
+        toWallet: ownerWallet._id,
+        systemWalletAction: 'transfer_out',
+        metadata: {
+          subOrderNumber: subOrderNumber,
+          totalRentalAmount: totalRentalAmount,
+          ownerShare: ownerShareAmount,
+          platformFee: platformFeeAmount,
+          platformFeePercentage: 20,
+          ownerSharePercentage: 80,
+          recipientUserId: ownerId,
+          action: 'RENTAL_FEE_WITH_PLATFORM_FEE'
+        }
+      });
+
+      // Owner transaction: Amount received (80% only)
+      const ownerTransaction = new Transaction({
+        user: ownerId,
+        wallet: ownerWallet._id,
+        type: 'TRANSFER_IN',
+        amount: ownerShareAmount,
+        status: 'success',
+        paymentMethod: 'system_wallet',
+        description: `Received rental fee (80%) for suborder ${subOrderNumber}`,
+        fromSystemWallet: true,
+        toWallet: ownerWallet._id,
+        metadata: {
+          subOrderNumber: subOrderNumber,
+          totalRentalAmount: totalRentalAmount,
+          receivedAmount: ownerShareAmount,
+          platformFeeDeducted: platformFeeAmount,
+          platformFeePercentage: 20,
+          action: 'RENTAL_FEE_RECEIVED'
+        }
+      });
+
+      // Platform fee transaction: Platform retains 20%
+      const platformFeeTransaction = new Transaction({
+        user: adminId && adminId !== 'SYSTEM_AUTO_TRANSFER' ? adminId : null,
+        wallet: systemWallet._id,
+        type: 'PROMOTION_REVENUE',
+        amount: platformFeeAmount,
+        status: 'success',
+        paymentMethod: 'system_wallet',
+        description: `Platform fee (20%) from suborder ${subOrderNumber}`,
+        toSystemWallet: true,
+        systemWalletAction: 'fee_collection',
+        metadata: {
+          subOrderNumber: subOrderNumber,
+          totalRentalAmount: totalRentalAmount,
+          platformFeePercentage: 20,
+          ownerSharePercentage: 80,
+          ownerUserId: ownerId,
+          action: 'PLATFORM_FEE_COLLECTION'
+        }
+      });
+
+      await systemTransaction.save({ session });
+      await ownerTransaction.save({ session });
+      await platformFeeTransaction.save({ session });
+
+      await session.commitTransaction();
+
+      // Emit socket update for owner wallet
+      if (global.chatGateway) {
+        global.chatGateway.emitWalletUpdate(ownerId.toString(), {
+          type: 'RENTAL_FEE_TRANSFER',
+          amount: ownerShareAmount,
+          newBalance: ownerWallet.balance.available
+        });
+      }
+
+      return {
+        success: true,
+        systemWallet: await this.getBalance(),
+        ownerWallet: {
+          walletId: ownerWallet._id,
+          userId: ownerId,
+          newBalance: ownerWallet.balance.available
+        },
+        transfer: {
+          totalRentalAmount: totalRentalAmount,
+          ownerShareAmount: ownerShareAmount,
+          platformFeeAmount: platformFeeAmount,
+          platformFeePercentage: 20,
+          ownerSharePercentage: 80
+        },
+        transactions: {
+          system: systemTransaction,
+          owner: ownerTransaction,
+          platformFee: platformFeeTransaction
+        },
+        message: `Transferred ${ownerShareAmount.toLocaleString()} VND (80%) to owner. Platform fee ${platformFeeAmount.toLocaleString()} VND (20%) retained.`
+      };
+    } catch (error) {
+      await session.abortTransaction();
+      throw error;
+    } finally {
+      session.endSession();
+    }
+  }
 }
 
 module.exports = new SystemWalletService();
+

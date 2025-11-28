@@ -1377,18 +1377,10 @@ class RentalOrderController {
         const ownerId = savedSubOrder.owner;
         const totalRentalAmount = savedSubOrder.pricing?.subtotalRental;
         
-        // Calculate owner share (80%) and platform fee (20%)
-        const platformFeePercentage = 0.20; // 20% fee
-        const ownerSharePercentage = 0.80;  // 80% to owner
-        const platformFeeAmount = Math.round(totalRentalAmount * platformFeePercentage);
-        const ownerShareAmount = Math.round(totalRentalAmount * ownerSharePercentage);
-        
         console.log(`\n💳 Auto Transfer Rental Fee (80% to owner, 20% platform fee):`);
         console.log(`   ✅ Renter confirmed delivery - SubOrder status changed to DELIVERED`);
         console.log(`   Owner ID: ${ownerId} (type: ${typeof ownerId})`);
         console.log(`   Total rental amount: ${totalRentalAmount} VND`);
-        console.log(`   Platform fee (20%): ${platformFeeAmount} VND`);
-        console.log(`   Owner share (80%): ${ownerShareAmount} VND`);
 
         const adminId = process.env.SYSTEM_ADMIN_ID || 'SYSTEM_AUTO_TRANSFER';
         console.log(`   Admin ID: ${adminId}`);
@@ -1407,22 +1399,25 @@ class RentalOrderController {
           console.log(`   ⚠️ Rental amount is <= 0 (${totalRentalAmount}), skipping transfer`);
         } else {
           try {
-            console.log(`   🔄 Calling SystemWalletService.transferToUser...`);
-            console.log(`      From: ${adminId}, To: ${ownerId}, Amount: ${ownerShareAmount} (80% of ${totalRentalAmount})`);
+            console.log(`   🔄 Calling SystemWalletService.transferRentalFeeWithPlatformFee...`);
+            console.log(`      Total amount: ${totalRentalAmount} VND (80% to owner, 20% platform fee)`);
             
-            rentalTransferResult = await SystemWalletService.transferToUser(
+            rentalTransferResult = await SystemWalletService.transferRentalFeeWithPlatformFee(
               adminId,
               ownerId,
-              ownerShareAmount,
-              `Rental fee (80%) for suborder ${savedSubOrder.subOrderNumber} - auto transfer when renter confirmed delivery`
+              totalRentalAmount,
+              savedSubOrder.subOrderNumber
             );
             
             console.log(`   ✅ Transfer successful!`);
+            console.log(`   📊 Transaction Records Created:`);
+            console.log(`      - System transaction: ${rentalTransferResult.transactions.system._id}`);
+            console.log(`      - Owner transaction: ${rentalTransferResult.transactions.owner._id}`);
+            console.log(`      - Platform fee transaction: ${rentalTransferResult.transactions.platformFee._id}`);
             console.log(`   Result:`, {
-              success: rentalTransferResult.success,
-              transferredAmount: ownerShareAmount,
-              platformFee: platformFeeAmount,
-              ownerNewBalance: rentalTransferResult.userWallet?.newBalance,
+              ownerShare: rentalTransferResult.transfer.ownerShareAmount,
+              platformFee: rentalTransferResult.transfer.platformFeeAmount,
+              ownerNewBalance: rentalTransferResult.ownerWallet?.newBalance,
               timestamp: new Date().toISOString()
             });
           } catch (err) {
