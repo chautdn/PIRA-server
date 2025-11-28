@@ -7,6 +7,7 @@ const {
   getProfile,
   updateProfile,
   updateProfileByKyc,
+  changePassword,
   createReport,
   getUserReports,
   getReportById,
@@ -50,6 +51,26 @@ exports.updateProfileByKyc = async (req, res) => {
     return responseUtils.error(res, error.message, 400);
   }
 };
+
+exports.changePassword = async (req, res) => {
+  try {
+    const { currentPassword, newPassword } = req.body;
+    
+    if (!currentPassword || !newPassword) {
+      return responseUtils.error(res, 'Mật khẩu hiện tại và mật khẩu mới là bắt buộc', 400);
+    }
+    
+    if (newPassword.length < 6) {
+      return responseUtils.error(res, 'Mật khẩu mới phải có ít nhất 6 ký tự', 400);
+    }
+    
+    const result = await changePassword(req.user.id, currentPassword, newPassword);
+    return SuccessResponse.ok(res, null, 'Đổi mật khẩu thành công');
+  } catch (error) {
+    console.error('Change password error:', error);
+    return responseUtils.error(res, error.message, 400);
+  }
+};
 // ========== REPORT MANAGEMENT ==========
 exports.createReport = async (req, res) => {
   try {
@@ -59,7 +80,7 @@ exports.createReport = async (req, res) => {
 
     const report = await createReport(req.body, req.user.id);
     return responseUtils.success(res, report, 'Gửi báo cáo thành công');
-  } catch (error) {
+  } catch (error) {   
     console.error('Create report error:', error);
     
     if (error.name === 'ValidationError' || error.message.includes('bắt buộc') || error.message.includes('không hợp lệ')) {

@@ -116,7 +116,7 @@ const userSchema = new mongoose.Schema(
       type: Number,
       default: 100,
       min: 0,
-      max: 1000
+      max: 100
     },
 
     // Loyalty Points System
