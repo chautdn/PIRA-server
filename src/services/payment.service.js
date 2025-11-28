@@ -431,8 +431,52 @@ const getTransactionHistory = async (userId, options = {}) => {
       Transaction.countDocuments(query)
     ]);
 
+    // Add display amount with correct sign based on transaction type
+    const enhancedTransactions = transactions.map(transaction => {
+      // Define transaction types that should show as negative (money going out)
+      const outgoingTypes = ['payment', 'withdrawal', 'penalty'];
+      // Define transaction types that should show as positive (money coming in)
+      const incomingTypes = ['deposit', 'refund', 'order_payment'];
+      
+      let displayAmount = transaction.amount;
+      
+      // For outgoing transactions, show negative amount
+      if (outgoingTypes.includes(transaction.type)) {
+        displayAmount = -Math.abs(transaction.amount);
+      }
+      // For incoming transactions, show positive amount
+      else if (incomingTypes.includes(transaction.type)) {
+        displayAmount = Math.abs(transaction.amount);
+      }
+      // For unknown/system types, check description and metadata for context
+      else {
+        // Check if it's a promotion payment by description
+        if (transaction.description && (
+          transaction.description.includes('Promotion') || 
+          transaction.description.includes('Product Promotion')
+        )) {
+          displayAmount = -Math.abs(transaction.amount);
+        }
+        // Check metadata for promotion type
+        else if (transaction.metadata && transaction.metadata.type === 'product_promotion') {
+          displayAmount = -Math.abs(transaction.amount);
+        }
+        // PROMOTION_REVENUE is system wallet transaction, should not appear in user wallet
+        else if (transaction.type === 'PROMOTION_REVENUE') {
+          // This shouldn't appear in user transactions, but if it does, treat as incoming
+          displayAmount = Math.abs(transaction.amount);
+        }
+      }
+
+      return {
+        ...transaction,
+        displayAmount,
+        isOutgoing: displayAmount < 0
+      };
+    });
+
     return {
-      transactions,
+      transactions: enhancedTransactions,
       pagination: {
         currentPage: page,
         totalPages: Math.ceil(total / limit),
