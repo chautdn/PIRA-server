@@ -114,7 +114,9 @@ const withdrawalService = {
 
       // 6. Check available balance
       if (wallet.balance.available < amount) {
-        throw new BadRequest(`Insufficient balance. Available: ${wallet.balance.available}, Requested: ${amount}`);
+        throw new BadRequest(
+          `Insufficient balance. Available: ${wallet.balance.available}, Requested: ${amount}`
+        );
       }
 
       // 7. Freeze amount in wallet (move from available to frozen)
@@ -208,10 +210,7 @@ const withdrawalService = {
       await withdrawal.save();
 
       // Update transaction
-      await Transaction.findByIdAndUpdate(
-        withdrawal.transaction,
-        { status: 'cancelled' }
-      );
+      await Transaction.findByIdAndUpdate(withdrawal.transaction, { status: 'cancelled' });
 
       return withdrawal;
     } catch (error) {
@@ -262,9 +261,12 @@ const withdrawalService = {
       if (withdrawal.processingLock && withdrawal.processingLock.lockedBy) {
         const lockExpiry = new Date(withdrawal.processingLock.lockExpiry);
         const now = new Date();
-        
+
         // If lock is still valid and locked by another admin
-        if (lockExpiry > now && withdrawal.processingLock.lockedBy.toString() !== adminId.toString()) {
+        if (
+          lockExpiry > now &&
+          withdrawal.processingLock.lockedBy.toString() !== adminId.toString()
+        ) {
           throw new BadRequest('This withdrawal is currently being processed by another admin');
         }
       }
@@ -337,7 +339,6 @@ const withdrawalService = {
           status: 'SENT'
         });
         await notification.save({ session });
-
       } else if (status === 'rejected') {
         if (!['pending', 'processing'].includes(withdrawal.status)) {
           throw new BadRequest('Can only reject pending/processing withdrawals');

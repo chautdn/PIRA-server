@@ -10,13 +10,13 @@ const initializeSystemWallet = async () => {
     if (!mongoUri) {
       throw new Error('DATABASE_URL or MONGODB_URI is not defined in .env file');
     }
-    
+
     await mongoose.connect(mongoUri);
     console.log('✅ Connected to MongoDB');
 
     // Check if system wallet exists
     const existingWallet = await SystemWallet.findOne();
-    
+
     if (existingWallet) {
       console.log('ℹ️  System wallet already exists:');
       console.log({
@@ -54,7 +54,6 @@ const initializeSystemWallet = async () => {
       total: systemWallet.totalBalance,
       status: systemWallet.status
     });
-
   } catch (error) {
     console.error('❌ Error initializing system wallet:', error);
     throw error;
