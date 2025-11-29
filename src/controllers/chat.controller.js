@@ -183,14 +183,36 @@ const chatController = {
       const { messageId } = req.params;
       const userId = req.user._id;
 
+      // Get the message before deleting to get the conversationId
+      const Message = require('../models/Message');
+      const messageToDelete = await Message.findById(messageId);
+      
+      if (!messageToDelete) {
+        return responseUtils.error(res, 'Message not found', 404);
+      }
+
       const result = await chatService.deleteMessage(messageId, userId);
 
       // Emit real-time event if socket gateway is available
       if (global.chatGateway) {
-        global.chatGateway.emitMessageDeleted(messageId, userId);
+        global.chatGateway.emitMessageDeleted(messageId, userId, messageToDelete.conversationId);
       }
 
       responseUtils.success(res, result, 'Message deleted successfully');
+    } catch (error) {
+      responseUtils.error(res, error.message, error.message.includes('Access denied') ? 403 : 400);
+    }
+  },
+
+  // Delete conversation for current user
+  deleteConversation: async (req, res) => {
+    try {
+      const { conversationId } = req.params;
+      const userId = req.user._id;
+
+      const result = await chatService.deleteConversation(conversationId, userId);
+
+      responseUtils.success(res, result, 'Conversation deleted successfully');
     } catch (error) {
       responseUtils.error(res, error.message, error.message.includes('Access denied') ? 403 : 400);
     }
