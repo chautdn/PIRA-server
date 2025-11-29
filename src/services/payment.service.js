@@ -432,14 +432,14 @@ const getTransactionHistory = async (userId, options = {}) => {
     ]);
 
     // Add display amount with correct sign based on transaction type
-    const enhancedTransactions = transactions.map(transaction => {
+    const enhancedTransactions = transactions.map((transaction) => {
       // Define transaction types that should show as negative (money going out)
       const outgoingTypes = ['payment', 'withdrawal', 'penalty'];
       // Define transaction types that should show as positive (money coming in)
       const incomingTypes = ['deposit', 'refund', 'order_payment'];
-      
+
       let displayAmount = transaction.amount;
-      
+
       // For outgoing transactions, show negative amount
       if (outgoingTypes.includes(transaction.type)) {
         displayAmount = -Math.abs(transaction.amount);
@@ -451,10 +451,11 @@ const getTransactionHistory = async (userId, options = {}) => {
       // For unknown/system types, check description and metadata for context
       else {
         // Check if it's a promotion payment by description
-        if (transaction.description && (
-          transaction.description.includes('Promotion') || 
-          transaction.description.includes('Product Promotion')
-        )) {
+        if (
+          transaction.description &&
+          (transaction.description.includes('Promotion') ||
+            transaction.description.includes('Product Promotion'))
+        ) {
           displayAmount = -Math.abs(transaction.amount);
         }
         // Check metadata for promotion type
