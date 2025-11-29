@@ -307,7 +307,7 @@ class AdminDisputeController {
   }
 
   /**
-   * Admin chia sẻ thông tin shipper với cả hai bên
+   * Admin chia sẻ thông tin shipper và thông tin cá nhân với cả hai bên
    * POST /api/admin/disputes/:disputeId/share-shipper-info
    */
   async shareShipperInfo(req, res) {
@@ -315,11 +315,11 @@ class AdminDisputeController {
       const { disputeId } = req.params;
       const adminId = req.user._id;
 
-      const dispute = await negotiationService.shareShipperInfo(disputeId, adminId);
+      const dispute = await thirdPartyService.shareShipperInfo(disputeId, adminId);
 
       return responseUtils.success(res, { 
         dispute, 
-        message: 'Đã chia sẻ thông tin shipper cho cả hai bên' 
+        message: 'Đã chia sẻ thông tin shipper và thông tin cá nhân cho cả hai bên' 
       });
     } catch (error) {
       console.error('Share shipper info error:', error);

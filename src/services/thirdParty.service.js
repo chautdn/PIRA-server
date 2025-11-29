@@ -36,9 +36,15 @@ class ThirdPartyService {
 
     // Cập nhật status
     dispute.status = 'THIRD_PARTY_ESCALATED';
+    
+    // Tính deadline (7 ngày)
+    const evidenceDeadline = new Date();
+    evidenceDeadline.setDate(evidenceDeadline.getDate() + 7);
+    
     dispute.thirdPartyResolution = {
       escalatedAt: new Date(),
       escalatedBy: adminId,
+      evidenceDeadline,
       thirdPartyInfo: {
         name: thirdPartyInfo.name || '',
         contactInfo: thirdPartyInfo.contactInfo || '',
@@ -62,6 +68,79 @@ class ThirdPartyService {
 
     await dispute.save();
     return dispute.populate(['complainant', 'respondent', 'assignedAdmin']);
+  }
+
+  /**
+   * Admin chia sẻ thông tin shipper và thông tin cá nhân 2 bên
+   * @param {String} disputeId - ID của dispute
+   * @param {String} adminId - ID của admin
+   * @returns {Promise<Dispute>}
+   */
+  async shareShipperInfo(disputeId, adminId) {
+    const dispute = await Dispute.findOne(this._buildDisputeQuery(disputeId))
+      .populate('shipment complainant respondent assignedAdmin subOrder');
+
+    if (!dispute) {
+      throw new Error('Dispute không tồn tại');
+    }
+
+    if (dispute.status !== 'THIRD_PARTY_ESCALATED') {
+      throw new Error('Dispute không ở trạng thái chuyển bên thứ 3');
+    }
+
+    // Kiểm tra admin role
+    const admin = await User.findById(adminId);
+    if (!admin || admin.role !== 'ADMIN') {
+      throw new Error('Chỉ admin mới có quyền chia sẻ thông tin');
+    }
+
+    if (!dispute.shipment) {
+      throw new Error('Không tìm thấy thông tin shipment');
+    }
+
+    // Lấy ảnh shipper từ adminDecision
+    const shipperEvidence = dispute.adminDecision?.shipperEvidence || {};
+
+    // Lấy thông tin cá nhân 2 bên
+    const complainantInfo = {
+      name: dispute.complainant.profile?.fullName || 'N/A',
+      phone: dispute.complainant.phone || 'N/A',
+      email: dispute.complainant.email || 'N/A',
+      address: dispute.complainant.profile?.address || 'N/A'
+    };
+
+    const respondentInfo = {
+      name: dispute.respondent.profile?.fullName || 'N/A',
+      phone: dispute.respondent.phone || 'N/A',
+      email: dispute.respondent.email || 'N/A',
+      address: dispute.respondent.profile?.address || 'N/A'
+    };
+
+    // Cập nhật thông tin chia sẻ
+    dispute.thirdPartyResolution.sharedData = {
+      sharedAt: new Date(),
+      sharedBy: adminId,
+      shipperEvidence: {
+        photos: shipperEvidence.photos || [],
+        videos: shipperEvidence.videos || [],
+        notes: shipperEvidence.notes || '',
+        timestamp: shipperEvidence.timestamp || dispute.createdAt
+      },
+      partyInfo: {
+        complainant: complainantInfo,
+        respondent: respondentInfo
+      }
+    };
+
+    dispute.timeline.push({
+      action: 'ADMIN_SHARED_SHIPPER_INFO',
+      performedBy: adminId,
+      details: 'Admin đã chia sẻ thông tin shipper và thông tin cá nhân 2 bên để chuẩn bị cho bên thứ 3',
+      timestamp: new Date()
+    });
+
+    await dispute.save();
+    return dispute;
   }
 
   /**
@@ -109,7 +188,12 @@ class ThirdPartyService {
     });
 
     await dispute.save();
-    return dispute.populate(['complainant', 'respondent', 'thirdPartyResolution.evidence.uploadedBy']);
+    await dispute.populate([
+      { path: 'complainant', select: 'profile email' },
+      { path: 'respondent', select: 'profile email' },
+      { path: 'thirdPartyResolution.evidence.uploadedBy', select: 'profile email' }
+    ]);
+    return dispute;
   }
 
   /**
@@ -168,15 +252,17 @@ class ThirdPartyService {
   /**
    * Lấy thông tin third party resolution
    * @param {String} disputeId - ID của dispute
+   * @param {String} userId - ID của user (để check quyền)
    * @returns {Promise<Object>}
    */
-  async getThirdPartyInfo(disputeId) {
+  async getThirdPartyInfo(disputeId, userId) {
     const dispute = await Dispute.findOne(this._buildDisputeQuery(disputeId))
       .populate('complainant', 'profile email phone')
       .populate('respondent', 'profile email phone')
       .populate('assignedAdmin', 'profile email')
       .populate('thirdPartyResolution.escalatedBy', 'profile email')
       .populate('thirdPartyResolution.evidence.uploadedBy', 'profile email')
+      .populate('thirdPartyResolution.sharedData.sharedBy', 'profile email')
       .populate({
         path: 'subOrder',
         populate: [
@@ -194,11 +280,24 @@ class ThirdPartyService {
       throw new Error('Dispute chưa được chuyển sang bên thứ 3');
     }
 
+    // Kiểm tra quyền: chỉ complainant, respondent hoặc admin mới xem được
+    const user = await User.findById(userId);
+    const isComplainant = dispute.complainant._id.toString() === userId.toString();
+    const isRespondent = dispute.respondent._id.toString() === userId.toString();
+    const isAdmin = user && user.role === 'ADMIN';
+
+    if (!isComplainant && !isRespondent && !isAdmin) {
+      throw new Error('Không có quyền xem thông tin này');
+    }
+
     return {
       dispute,
       thirdPartyInfo: dispute.thirdPartyResolution.thirdPartyInfo,
       evidence: dispute.thirdPartyResolution.evidence,
       escalatedAt: dispute.thirdPartyResolution.escalatedAt,
+      evidenceDeadline: dispute.thirdPartyResolution.evidenceDeadline,
+      // Thông tin đã chia sẻ (chỉ hiển thị khi admin đã share)
+      sharedData: dispute.thirdPartyResolution.sharedData || null,
       // Thông tin cần thiết để bên thứ 3 xem xét
       caseInfo: {
         product: dispute.subOrder.products[dispute.productIndex],

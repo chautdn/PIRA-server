@@ -271,6 +271,12 @@ class DisputeController {
         officialDecision
       });
 
+      // Populate additional fields for full response
+      await dispute.populate([
+        { path: 'subOrder', select: 'products' },
+        { path: 'thirdPartyResolution.escalatedBy', select: 'profile email' }
+      ]);
+
       return responseUtils.success(res, {
         dispute,
         message: 'Upload bằng chứng thành công'
@@ -282,14 +288,15 @@ class DisputeController {
   }
 
   /**
-   * Lấy thông tin third party
+   * Lấy thông tin third party (bao gồm shared data)
    * GET /api/disputes/:disputeId/third-party
    */
   async getThirdPartyInfo(req, res) {
     try {
       const { disputeId } = req.params;
+      const userId = req.user._id;
 
-      const thirdPartyInfo = await thirdPartyService.getThirdPartyInfo(disputeId);
+      const thirdPartyInfo = await thirdPartyService.getThirdPartyInfo(disputeId, userId);
 
       return responseUtils.success(res, thirdPartyInfo);
     } catch (error) {
@@ -335,6 +342,12 @@ class DisputeController {
         photos,
         officialDecision
       });
+
+      // Populate additional fields for full response
+      await dispute.populate([
+        { path: 'subOrder', select: 'products' },
+        { path: 'thirdPartyResolution.escalatedBy', select: 'profile email' }
+      ]);
 
       return responseUtils.success(res, {
         dispute,

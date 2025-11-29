@@ -490,45 +490,6 @@ class NegotiationService {
   }
 
   /**
-   * Admin chia sẻ thông tin shipper với cả hai bên khi chuyển third party
-   * @param {String} disputeId - ID của dispute
-   * @param {String} adminId - ID của admin
-   * @returns {Promise<Dispute>}
-   */
-  async shareShipperInfo(disputeId, adminId) {
-    const dispute = await Dispute.findOne(this._buildDisputeQuery(disputeId))
-      .populate('shipment complainant respondent assignedAdmin');
-
-    if (!dispute) {
-      throw new Error('Dispute không tồn tại');
-    }
-
-    if (dispute.status !== 'THIRD_PARTY_ESCALATED') {
-      throw new Error('Dispute không ở trạng thái chuyển bên thứ 3');
-    }
-
-    if (!dispute.shipment) {
-      throw new Error('Không tìm thấy thông tin shipment');
-    }
-
-    // Cập nhật thông tin chia sẻ
-    dispute.thirdPartyResolution.shipperInfoShared = {
-      sharedAt: new Date(),
-      sharedBy: adminId
-    };
-
-    dispute.timeline.push({
-      action: 'ADMIN_SHARED_SHIPPER_INFO',
-      performedBy: adminId,
-      details: 'Admin đã chia sẻ thông tin shipper và bằng chứng cho cả hai bên',
-      timestamp: new Date()
-    });
-
-    await dispute.save();
-    return dispute;
-  }
-
-  /**
    * Upload bằng chứng từ bên thứ 3
    * @param {String} disputeId - ID của dispute
    * @param {String} userId - ID của user upload
@@ -580,6 +541,11 @@ class NegotiationService {
     });
 
     await dispute.save();
+    await dispute.populate([
+      { path: 'complainant', select: 'profile email' },
+      { path: 'respondent', select: 'profile email' },
+      { path: 'thirdPartyResolution.evidence.uploadedBy', select: 'profile email' }
+    ]);
     return dispute;
   }
 
