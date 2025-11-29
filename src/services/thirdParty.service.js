@@ -78,7 +78,7 @@ class ThirdPartyService {
    */
   async shareShipperInfo(disputeId, adminId) {
     const dispute = await Dispute.findOne(this._buildDisputeQuery(disputeId))
-      .populate('shipment complainant respondent assignedAdmin subOrder');
+      .populate('complainant respondent assignedAdmin subOrder');
 
     if (!dispute) {
       throw new Error('Dispute không tồn tại');
@@ -93,13 +93,6 @@ class ThirdPartyService {
     if (!admin || admin.role !== 'ADMIN') {
       throw new Error('Chỉ admin mới có quyền chia sẻ thông tin');
     }
-
-    if (!dispute.shipment) {
-      throw new Error('Không tìm thấy thông tin shipment');
-    }
-
-    // Lấy ảnh shipper từ adminDecision
-    const shipperEvidence = dispute.adminDecision?.shipperEvidence || {};
 
     // Lấy thông tin cá nhân 2 bên
     const complainantInfo = {
@@ -116,16 +109,10 @@ class ThirdPartyService {
       address: dispute.respondent.profile?.address || 'N/A'
     };
 
-    // Cập nhật thông tin chia sẻ
+    // Cập nhật thông tin chia sẻ (bỏ shipperEvidence vì chưa có phần shipper)
     dispute.thirdPartyResolution.sharedData = {
       sharedAt: new Date(),
       sharedBy: adminId,
-      shipperEvidence: {
-        photos: shipperEvidence.photos || [],
-        videos: shipperEvidence.videos || [],
-        notes: shipperEvidence.notes || '',
-        timestamp: shipperEvidence.timestamp || dispute.createdAt
-      },
       partyInfo: {
         complainant: complainantInfo,
         respondent: respondentInfo
@@ -133,9 +120,9 @@ class ThirdPartyService {
     };
 
     dispute.timeline.push({
-      action: 'ADMIN_SHARED_SHIPPER_INFO',
+      action: 'ADMIN_SHARED_PARTY_INFO',
       performedBy: adminId,
-      details: 'Admin đã chia sẻ thông tin shipper và thông tin cá nhân 2 bên để chuẩn bị cho bên thứ 3',
+      details: 'Admin đã chia sẻ thông tin cá nhân 2 bên để chuẩn bị cho bên thứ 3',
       timestamp: new Date()
     });
 
