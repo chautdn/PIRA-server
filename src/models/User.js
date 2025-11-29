@@ -181,7 +181,9 @@ const userSchema = new mongoose.Schema(
   },
   {
     timestamps: true,
-    collection: 'users'
+    collection: 'users',
+    toJSON: { virtuals: true },
+    toObject: { virtuals: true }
   }
 );
 
@@ -228,6 +230,19 @@ userSchema.pre(['findOneAndUpdate', 'updateOne', 'updateMany'], function (next) 
   next();
 });
 
+// Virtual field for full name
+userSchema.virtual('profile.fullName').get(function() {
+  if (this.profile.firstName && this.profile.lastName) {
+    return `${this.profile.firstName} ${this.profile.lastName}`;
+  }
+  return this.profile.firstName || this.profile.lastName || 'Không rõ';
+});
+
+// Virtual field for phone number in profile (for backward compatibility)
+userSchema.virtual('profile.phoneNumber').get(function() {
+  return this.phone;
+});
+
 // Hash password before saving
 userSchema.pre('save', async function (next) {
   if (!this.isModified('password')) return next();
@@ -241,9 +256,9 @@ userSchema.pre('save', async function (next) {
   }
 });
 
-// Remove password from JSON output
+// Remove password from JSON output (override to include virtuals)
 userSchema.methods.toJSON = function () {
-  const userObject = this.toObject();
+  const userObject = this.toObject({ virtuals: true });
   delete userObject.password;
   return userObject;
 };
