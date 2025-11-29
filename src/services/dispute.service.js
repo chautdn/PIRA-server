@@ -68,6 +68,14 @@ class DisputeService {
       }
     }
 
+    // Log để debug
+    console.log('🔍 Checking canOpenDispute:', {
+      productStatus: product.productStatus,
+      shipmentType,
+      complainantId: complainantId.toString(),
+      ownerId: subOrder.owner._id.toString()
+    });
+
     // Kiểm tra xem có thể mở dispute không
     const canOpen = Dispute.schema.methods.canOpenDispute.call(
       {},
@@ -76,6 +84,8 @@ class DisputeService {
       complainantId,
       subOrder.owner._id
     );
+
+    console.log('🔍 canOpenDispute result:', canOpen);
 
     if (!canOpen.allowed) {
       throw new Error(canOpen.reason);
@@ -109,6 +119,13 @@ class DisputeService {
 
     // Cập nhật product status sang DISPUTED
     product.productStatus = 'DISPUTED';
+    
+    // Thêm dispute vào product.disputes array
+    if (!product.disputes) {
+      product.disputes = [];
+    }
+    product.disputes.push(dispute._id);
+    
     await subOrder.save();
 
     return dispute.populate(['complainant', 'respondent', 'subOrder']);
@@ -385,7 +402,9 @@ class DisputeService {
           { path: 'products.product' }
         ]
       })
-      .populate('negotiationRoom.chatRoomId');
+      .populate('negotiationRoom.chatRoomId')
+      .populate('thirdPartyResolution.evidence.uploadedBy', 'profile email')
+      .populate('thirdPartyResolution.escalatedBy', 'profile email');
 
     if (!dispute) {
       throw new Error('Dispute không tồn tại');

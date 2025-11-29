@@ -204,11 +204,34 @@ const disputeSchema = new mongoose.Schema(
         ref: 'User'
       },
       evidenceDeadline: Date, // 7 ngày từ khi escalate
-      shipperInfoShared: {
+      // Thông tin chia sẻ cho 2 bên để đi qua bên thứ 3
+      sharedData: {
         sharedAt: Date,
         sharedBy: {
           type: mongoose.Schema.Types.ObjectId,
           ref: 'User'
+        },
+        // Thông tin shipper (ảnh chụp khi giao/nhận hàng)
+        shipperEvidence: {
+          photos: [String],
+          videos: [String],
+          notes: String,
+          timestamp: Date
+        },
+        // Thông tin cá nhân 2 bên
+        partyInfo: {
+          complainant: {
+            name: String,
+            phone: String,
+            email: String,
+            address: String
+          },
+          respondent: {
+            name: String,
+            phone: String,
+            email: String,
+            address: String
+          }
         }
       },
       thirdPartyInfo: {
