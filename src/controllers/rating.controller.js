@@ -47,10 +47,16 @@ exports.createReview = async (req, res) => {
 		console.log('🔍 [DEBUG] Normalized type:', normalizedType);
 
 		// Basic required checks (order/product/reviewee optional for testing)
-		if (!normalizedType || !rating || !comment) {
-			console.log('❌ Missing required fields:', { normalizedType, rating, comment });
-			return res.status(400).json({ message: 'Thiếu dữ liệu bắt buộc (type, rating, comment)' });
+		if (!normalizedType || !rating) {
+			console.log('❌ Missing required fields:', { normalizedType, rating });
+			return res.status(400).json({ message: 'Thiếu dữ liệu bắt buộc (type, rating)' });
 		}
+
+		// Only set ObjectId fields if they are valid ObjectId strings (define early for use in validation)
+		const safeOrder = order && mongoose.Types.ObjectId.isValid(order) ? order : undefined;
+		const safeProduct = product && mongoose.Types.ObjectId.isValid(product) ? product : undefined;
+		const safeReviewee = reviewee && mongoose.Types.ObjectId.isValid(reviewee) ? reviewee : undefined;
+		const safeSubOrder = subOrder && mongoose.Types.ObjectId.isValid(subOrder) ? subOrder : undefined;
 
 		// PRODUCT RATING RESTRICTIONS
 		if (normalizedType === 'PRODUCT_REVIEW' && product && mongoose.Types.ObjectId.isValid(product)) {
@@ -104,10 +110,12 @@ exports.createReview = async (req, res) => {
 			// 3. Check for existing review from same reviewer for same product
 			const existingReview = await Review.findOne({ 
 				product: product,
-				reviewer: userId
+				reviewer: userId,
+				type: 'PRODUCT_REVIEW',
+				status: { $ne: 'REJECTED' }  // Don't block if previous review was rejected
 			});
 			
-			console.log('🔍 Checking existing review:', { product, userId, found: !!existingReview });
+			console.log('🔍 Checking existing review:', { product, userId, type: 'PRODUCT_REVIEW', found: !!existingReview });
 			
 			if (existingReview) {
 				console.log('❌ User already reviewed this product');
@@ -148,11 +156,53 @@ exports.createReview = async (req, res) => {
 				return res.status(401).json({ message: 'Bạn phải đăng nhập để đánh giá' });
 			}
 			
+			// Verify user has a completed order with this owner/shipper
+			const MasterOrder = require('../models/MasterOrder');
+			const SubOrder = require('../models/SubOrder');
+			
+			// Find a completed MasterOrder for this renter
+			const completedMasterOrders = await MasterOrder.find({
+				renter: userId,
+				status: 'COMPLETED'
+			}).populate('subOrders');
+			
+			console.log('🔍 Found completed orders for renter:', completedMasterOrders.length);
+			
+			// Check if any SubOrder in these MasterOrders has a product owned by the reviewee
+			let hasOrderWithReviewee = false;
+			for (const masterOrder of completedMasterOrders) {
+				for (const subOrderRef of masterOrder.subOrders || []) {
+					const subOrderId = typeof subOrderRef === 'object' ? subOrderRef._id : subOrderRef;
+					const subOrder = await SubOrder.findById(subOrderId).populate('products.product');
+					
+					// Check if any product in this SubOrder is owned by the reviewee
+					if (subOrder && subOrder.products) {
+						for (const productItem of subOrder.products) {
+							const product = productItem.product;
+							if (product && product.owner && product.owner.toString() === safeReviewee.toString()) {
+								hasOrderWithReviewee = true;
+								console.log('✅ Found product owned by reviewee in completed order');
+								break;
+							}
+						}
+					}
+					if (hasOrderWithReviewee) break;
+				}
+				if (hasOrderWithReviewee) break;
+			}
+			
+			if (!hasOrderWithReviewee) {
+				console.log('❌ User has no completed order with this reviewee');
+				return res.status(400).json({ message: 'Bạn phải hoàn thành một đơn hàng với người này để đánh giá' });
+			}
+			console.log('✅ User has completed order with this person');
+			
 			// Check for existing review from same reviewer for same reviewee
 			const existingUserReview = await Review.findOne({ 
 				type: 'USER_REVIEW',
 				reviewee: safeReviewee,
-				reviewer: userId
+				reviewer: userId,
+				status: { $ne: 'REJECTED' }  // Don't block if previous review was rejected
 			});
 			
 			console.log('🔍 Checking existing user review:', { reviewee: safeReviewee, reviewer: userId, found: !!existingUserReview });
@@ -172,12 +222,6 @@ exports.createReview = async (req, res) => {
 			console.error('Cloudinary upload error', err);
 			return res.status(500).json({ message: 'Lỗi upload ảnh' });
 		}
-
-		// Only set ObjectId fields if they are valid ObjectId strings
-		const safeOrder = order && mongoose.Types.ObjectId.isValid(order) ? order : undefined;
-		const safeProduct = product && mongoose.Types.ObjectId.isValid(product) ? product : undefined;
-		const safeReviewee = reviewee && mongoose.Types.ObjectId.isValid(reviewee) ? reviewee : undefined;
-		const safeSubOrder = subOrder && mongoose.Types.ObjectId.isValid(subOrder) ? subOrder : undefined;
 
 		const reviewData = {
 			reviewer: req.user?._id || req.body.reviewer,
@@ -592,10 +636,18 @@ exports.getReviewsByProduct = async (req, res) => {
 		// support optional filtering by target (PRODUCT | OWNER | SHIPPER) and reviewee id
 		const target = req.query.target; // expected values: 'PRODUCT','OWNER','SHIPPER'
 		const reviewee = req.query.reviewee; // optional user id to filter user reviews
+		const rating = req.query.rating ? Number(req.query.rating) : null; // optional rating filter
 
-		console.log('🔍 [getReviewsByProduct] Query params:', { productId, target, page, limit });
+		console.log('🔍 [getReviewsByProduct] Query params:', { productId, target, page, limit, rating });
 
 		const query = { product: productId, status: 'APPROVED' };
+		
+		// Add rating filter if provided
+		if (rating && rating >= 1 && rating <= 5) {
+			query.rating = rating;
+			console.log('🔍 Filtering by rating:', rating);
+		}
+		
 		console.log('🔍 Initial query:', query);
 
 		if (target) {

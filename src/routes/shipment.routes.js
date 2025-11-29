@@ -4,6 +4,7 @@ const ShipmentController = require('../controllers/shipment.controller');
 const { authMiddleware } = require('../middleware/auth');
 const { param } = require('express-validator');
 const { validateRequest } = require('../middleware/validation');
+const upload = require('../middleware/upload');
 
 // All routes require auth
 router.use(authMiddleware.verifyToken);
@@ -32,6 +33,12 @@ router.post('/:id/deliver', [param('id').isMongoId().withMessage('Invalid ID'), 
 
 // Renter confirm delivery
 router.post('/:id/confirm', [param('id').isMongoId().withMessage('Invalid ID'), validateRequest], ShipmentController.renterConfirm);
+
+// Upload delivery proof (pickup & delivered images)
+router.post('/:shipmentId/proof', [param('shipmentId').isMongoId().withMessage('Invalid Shipment ID'), validateRequest], upload.array('images', 2), ShipmentController.uploadProof);
+
+// Get delivery proof
+router.get('/:shipmentId/proof', [param('shipmentId').isMongoId().withMessage('Invalid Shipment ID'), validateRequest], ShipmentController.getProof);
 
 // Get shipments for a master order
 router.get('/order/:masterOrderId', [param('masterOrderId').isMongoId().withMessage('Invalid Order ID'), validateRequest], ShipmentController.getShipmentsByMasterOrder);

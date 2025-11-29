@@ -300,6 +300,104 @@ class ShipmentController {
       });
     }
   }
+
+  async uploadProof(req, res) {
+    try {
+      const ShipmentProof = require('../models/Shipment_Proof');
+      const Shipment = require('../models/Shipment');
+      const CloudinaryService = require('../services/cloudinary/cloudinary.service');
+      
+      const { shipmentId } = req.params;
+      const { notes } = req.body;
+      const files = req.files || [];
+
+      // Verify shipment exists and belongs to shipper
+      const shipment = await Shipment.findById(shipmentId);
+      if (!shipment) return res.status(404).json({ status: 'error', message: 'Shipment not found' });
+      
+      if (String(shipment.shipper) !== String(req.user._id)) {
+        return res.status(403).json({ status: 'error', message: 'Only assigned shipper can upload proof' });
+      }
+
+      if (files.length === 0) {
+        return res.status(400).json({ status: 'error', message: 'At least one image is required' });
+      }
+
+      // Upload all files to Cloudinary
+      const imageUrls = [];
+      try {
+        console.log(`📤 Uploading ${files.length} image(s) to Cloudinary for shipment ${shipmentId}...`);
+        for (const file of files) {
+          const uploadResult = await CloudinaryService.uploadImage(file.buffer);
+          imageUrls.push(uploadResult.secure_url);
+          console.log(`✅ Image uploaded: ${uploadResult.secure_url}`);
+        }
+      } catch (uploadErr) {
+        console.error(`❌ Cloudinary upload failed:`, uploadErr.message);
+        return res.status(400).json({ status: 'error', message: 'Image upload to Cloudinary failed: ' + uploadErr.message });
+      }
+
+      // Find or create ShipmentProof
+      let proof = await ShipmentProof.findOne({ shipment: shipmentId });
+      
+      if (!proof) {
+        // Create new proof
+        proof = new ShipmentProof({
+          shipment: shipmentId,
+          notes: notes || ''
+        });
+      }
+
+      // Update based on shipment status
+      if (shipment.status === 'SHIPPER_CONFIRMED') {
+        // Pickup phase - save as before delivery images
+        proof.imagesBeforeDelivery = imageUrls;
+        // Also keep first image in imageBeforeDelivery for backward compatibility
+        proof.imageBeforeDelivery = imageUrls[0];
+        console.log(`✅ Updated imagesBeforeDelivery with ${imageUrls.length} image(s)`);
+      } else if (shipment.status === 'IN_TRANSIT') {
+        // Deliver phase - save as after delivery images
+        proof.imagesAfterDelivery = imageUrls;
+        // Also keep first image in imageAfterDelivery for backward compatibility
+        proof.imageAfterDelivery = imageUrls[0];
+        console.log(`✅ Updated imagesAfterDelivery with ${imageUrls.length} image(s)`);
+      } else {
+        return res.status(400).json({ status: 'error', message: 'Shipment must be in SHIPPER_CONFIRMED or IN_TRANSIT status' });
+      }
+
+      // Add geolocation if provided
+      if (req.body.geolocation) {
+        try {
+          proof.geolocation = JSON.parse(req.body.geolocation);
+        } catch (e) {
+          console.log('Invalid geolocation format');
+        }
+      }
+
+      await proof.save();
+      console.log(`✅ ShipmentProof saved: ${proof._id}`);
+
+      return res.json({ status: 'success', message: 'Proof uploaded successfully', data: proof });
+    } catch (err) {
+      console.error('uploadProof error', err.message);
+      return res.status(400).json({ status: 'error', message: err.message });
+    }
+  }
+
+  async getProof(req, res) {
+    try {
+      const ShipmentProof = require('../models/Shipment_Proof');
+      const { shipmentId } = req.params;
+
+      const proof = await ShipmentProof.findOne({ shipment: shipmentId }).populate('shipment');
+      if (!proof) return res.status(404).json({ status: 'error', message: 'Proof not found' });
+
+      return res.json({ status: 'success', data: proof });
+    } catch (err) {
+      console.error('getProof error', err.message);
+      return res.status(400).json({ status: 'error', message: err.message });
+    }
+  }
 }
 
 module.exports = new ShipmentController();

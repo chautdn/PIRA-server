@@ -1,6 +1,7 @@
 const Shipment = require('../models/Shipment');
 const SubOrder = require('../models/SubOrder');
 const User = require('../models/User');
+const ShipmentProof = require('../models/Shipment_Proof');
 const SystemWalletService = require('./systemWallet.service');
 const RentalOrderService = require('./rentalOrder.service');
 
@@ -491,6 +492,16 @@ class ShipmentService {
 
             console.log(`        ✅ DELIVERY: ${outboundShipment.shipmentId}`);
             
+            // Create ShipmentProof document for this shipment
+            const deliveryProof = new ShipmentProof({
+              shipment: outboundShipment._id,
+              imageBeforeDelivery: '',
+              imageAfterDelivery: '',
+              notes: `Delivery proof placeholder for shipment ${outboundShipment.shipmentId}`
+            });
+            await deliveryProof.save();
+            console.log(`        ✅ Created ShipmentProof for DELIVERY: ${deliveryProof._id}`);
+            
             // Assign shipper if provided
             if (shipperId) {
               outboundShipment.shipper = shipperId;
@@ -561,6 +572,16 @@ class ShipmentService {
             console.log(`        ✅ RETURN shipment created successfully!`);
             console.log(`        RETURN ID: ${returnShipment._id}`);
             console.log(`        RETURN shipmentId: ${returnShipment.shipmentId}`);
+            
+            // Create ShipmentProof document for this shipment
+            const returnProof = new ShipmentProof({
+              shipment: returnShipment._id,
+              imageBeforeDelivery: '',
+              imageAfterDelivery: '',
+              notes: `Return proof placeholder for shipment ${returnShipment.shipmentId}`
+            });
+            await returnProof.save();
+            console.log(`        ✅ Created ShipmentProof for RETURN: ${returnProof._id}`);
             
             // Assign shipper if provided
             if (shipperId) {
