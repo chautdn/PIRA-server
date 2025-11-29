@@ -60,6 +60,11 @@ const { startFrozenBalanceUnlockCron } = require('./scripts/frozenBalanceUnlockC
 startFrozenBalanceUnlockCron();
 console.log('✅ Frozen balance unlock cron job initialized');
 
+// Initialize auto-confirm delivery cron job (every hour)
+const { startAutoConfirmDeliveryCron } = require('./scripts/autoConfirmDeliveryCron');
+startAutoConfirmDeliveryCron();
+console.log('✅ Auto-confirm delivery cron job initialized');
+
 // Log Socket.IO events for monitoring
 io.engine.on('connection_error', (err) => {
   console.error('Socket.IO connection error:', err);

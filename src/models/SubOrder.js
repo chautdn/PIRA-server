@@ -378,6 +378,21 @@ const subOrderSchema = new mongoose.Schema(
     review: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'Review'
+    },
+
+    // Auto-confirmation tracking (tự động xác nhận sau 24h nếu renter không confirm)
+    autoConfirmation: {
+      enabled: {
+        type: Boolean,
+        default: true // Enabled by default
+      },
+      readyAt: Date, // Khi hàng sẵn sàng để nhận (start of 24h period)
+      autoConfirmedAt: Date, // Thời gian tự động xác nhận
+      status: {
+        type: String,
+        enum: ['PENDING', 'CONFIRMED', 'SKIPPED'],
+        default: 'PENDING'
+      }
     }
   },
   {
@@ -461,4 +476,15 @@ subOrderSchema.pre('save', function (next) {
   next();
 });
 
+// Virtual field: canConfirmDelivery - renter can only confirm delivery once
+subOrderSchema.virtual('canConfirmDelivery').get(function() {
+  // Renter can confirm delivery only if status is not DELIVERED yet
+  return this.status !== 'DELIVERED';
+});
+
+// Ensure virtuals are included when converting to JSON or Object
+subOrderSchema.set('toJSON', { virtuals: true });
+subOrderSchema.set('toObject', { virtuals: true });
+
 module.exports = mongoose.model('SubOrder', subOrderSchema);
+

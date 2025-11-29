@@ -149,6 +149,11 @@ class ShipmentService {
         if (shipment.type === 'DELIVERY') {
           // After DELIVERY completed, subOrder is DELIVERED
           shipment.subOrder.status = 'DELIVERED';
+          // Set readyAt for auto-confirmation (24h auto-confirm if renter doesn't manually confirm)
+          if (!shipment.subOrder.autoConfirmation.readyAt) {
+            shipment.subOrder.autoConfirmation.readyAt = new Date();
+            console.log(`   → Auto-confirmation readyAt set (24h countdown started)`);
+          }
           console.log(`   → SubOrder status updated to DELIVERED`);
         } else if (shipment.type === 'RETURN') {
           // After RETURN completed, subOrder is RETURNED

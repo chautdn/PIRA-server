@@ -25,23 +25,144 @@ async function uploadFilesToCloudinary(files = []) {
 // Create review
 exports.createReview = async (req, res) => {
 	try {
-		const { order, product, reviewee, type, rating, title, comment, detailedRating } = req.body;
+		const { order, subOrder, product, reviewee, type, rating, title, comment, detailedRating } = req.body;
 		const files = req.files || [];
-		// Basic required checks (order optional for testing)
-			// type normalization: accept 'product'|'user' or enum values
-			const typeMap = {
-				product: 'PRODUCT_REVIEW',
-				user: 'USER_REVIEW',
-				PRODUCT_REVIEW: 'PRODUCT_REVIEW',
-				USER_REVIEW: 'USER_REVIEW'
-			};
+		const userId = req.user?._id;
+		
+		console.log('🔍 [DEBUG createReview] Request body:', {
+			type, product, rating, comment, userId,
+			subOrder, reviewee, title
+		});
+		console.log('🔍 [DEBUG] Files:', files.length, 'file(s)');
+		
+		// Type normalization: accept 'product'|'user' or enum values
+		const typeMap = {
+			product: 'PRODUCT_REVIEW',
+			user: 'USER_REVIEW',
+			PRODUCT_REVIEW: 'PRODUCT_REVIEW',
+			USER_REVIEW: 'USER_REVIEW'
+		};
 
-			const normalizedType = typeMap[type] || null;
+		const normalizedType = typeMap[type] || null;
+		console.log('🔍 [DEBUG] Normalized type:', normalizedType);
 
-			// Basic required checks (order/product/reviewee optional for testing)
-			if (!normalizedType || !rating || !comment) {
-				return res.status(400).json({ message: 'Thiếu dữ liệu bắt buộc (type, rating, comment)' });
+		// Basic required checks (order/product/reviewee optional for testing)
+		if (!normalizedType || !rating || !comment) {
+			console.log('❌ Missing required fields:', { normalizedType, rating, comment });
+			return res.status(400).json({ message: 'Thiếu dữ liệu bắt buộc (type, rating, comment)' });
+		}
+
+		// PRODUCT RATING RESTRICTIONS
+		if (normalizedType === 'PRODUCT_REVIEW' && product && mongoose.Types.ObjectId.isValid(product)) {
+			console.log('✅ Validating PRODUCT_REVIEW for product:', product);
+			const SubOrder = require('../models/SubOrder');
+			const MasterOrder = require('../models/MasterOrder');
+			
+			if (!userId) {
+				console.log('❌ No userId found');
+				return res.status(401).json({ message: 'Bạn phải đăng nhập để đánh giá sản phẩm' });
 			}
+			
+			// 1. Find a SubOrder that contains this product and belongs to current user
+			const subOrderWithProduct = await SubOrder.findOne({
+				'products.product': product
+			}).populate('masterOrder');
+			
+			console.log('🔍 SubOrder with product:', subOrderWithProduct ? 'Found' : 'Not found');
+			
+			if (!subOrderWithProduct) {
+				console.log('❌ User has not rented this product');
+				return res.status(400).json({ message: 'Bạn chưa thuê sản phẩm này' });
+			}
+			
+			// 2. Verify the MasterOrder belongs to current user and is COMPLETED
+			const masterOrder = subOrderWithProduct.masterOrder;
+			if (!masterOrder) {
+				console.log('❌ MasterOrder not found');
+				return res.status(404).json({ message: 'Không tìm thấy đơn hàng' });
+			}
+			
+			console.log('🔍 MasterOrder status:', masterOrder.status, 'Renter:', masterOrder.renter, 'UserId:', userId);
+			console.log('🔍 Renter toString:', masterOrder.renter?.toString());
+			console.log('🔍 UserId toString:', userId?.toString());
+			console.log('🔍 Are they equal?', masterOrder.renter?.toString() === userId?.toString());
+			
+			if (masterOrder.renter.toString() !== userId.toString()) {
+				console.log('❌ User not the renter of this order');
+				return res.status(403).json({ message: 'Bạn không có quyền đánh giá sản phẩm này' });
+			}
+			
+			console.log('✅ User is the renter, checking status...');
+			console.log('   Order status:', masterOrder.status, 'Type:', typeof masterOrder.status);
+			
+			if (masterOrder.status !== 'COMPLETED') {
+				console.log('❌ Order not COMPLETED:', masterOrder.status);
+				return res.status(400).json({ message: 'Chỉ được rating khi đơn hoàn thành' });
+			}
+			console.log('✅ Order is COMPLETED');
+			
+			// 3. Check for existing review from same reviewer for same product
+			const existingReview = await Review.findOne({ 
+				product: product,
+				reviewer: userId
+			});
+			
+			console.log('🔍 Checking existing review:', { product, userId, found: !!existingReview });
+			
+			if (existingReview) {
+				console.log('❌ User already reviewed this product');
+				return res.status(400).json({ message: 'Bạn chỉ được bình luận 1 lần cho sản phẩm này' });
+			}
+			console.log('✅ No existing review found');
+		}
+		
+		// For SubOrder references in body
+		if (subOrder && mongoose.Types.ObjectId.isValid(subOrder)) {
+			const SubOrder = require('../models/SubOrder');
+			const subOrderDoc = await SubOrder.findById(subOrder).populate('masterOrder');
+			
+			if (!subOrderDoc) {
+				return res.status(404).json({ message: 'Không tìm thấy đơn hàng con' });
+			}
+			
+			if (!userId) {
+				return res.status(401).json({ message: 'Bạn phải đăng nhập để đánh giá đơn hàng' });
+			}
+			
+			// Verify user owns this subOrder via masterOrder
+			if (subOrderDoc.masterOrder.renter.toString() !== userId.toString()) {
+				return res.status(403).json({ message: 'Bạn không có quyền đánh giá đơn hàng này' });
+			}
+			
+			// Only allow rating when MasterOrder status is COMPLETED
+			if (subOrderDoc.masterOrder.status !== 'COMPLETED') {
+				return res.status(400).json({ message: 'Chỉ được rating khi đơn hoàn thành' });
+			}
+		}
+
+		// USER_REVIEW RESTRICTIONS (review owner/shipper)
+		if (normalizedType === 'USER_REVIEW' && safeReviewee) {
+			console.log('✅ Validating USER_REVIEW for reviewee:', safeReviewee);
+			
+			if (!userId) {
+				return res.status(401).json({ message: 'Bạn phải đăng nhập để đánh giá' });
+			}
+			
+			// Check for existing review from same reviewer for same reviewee
+			const existingUserReview = await Review.findOne({ 
+				type: 'USER_REVIEW',
+				reviewee: safeReviewee,
+				reviewer: userId
+			});
+			
+			console.log('🔍 Checking existing user review:', { reviewee: safeReviewee, reviewer: userId, found: !!existingUserReview });
+			
+			if (existingUserReview) {
+				console.log('❌ User already reviewed this person');
+				return res.status(400).json({ message: 'Bạn chỉ được bình luận 1 lần cho người này' });
+			}
+			console.log('✅ No existing user review found');
+		}
 
 		// Upload images
 		let photos = [];
@@ -56,6 +177,7 @@ exports.createReview = async (req, res) => {
 		const safeOrder = order && mongoose.Types.ObjectId.isValid(order) ? order : undefined;
 		const safeProduct = product && mongoose.Types.ObjectId.isValid(product) ? product : undefined;
 		const safeReviewee = reviewee && mongoose.Types.ObjectId.isValid(reviewee) ? reviewee : undefined;
+		const safeSubOrder = subOrder && mongoose.Types.ObjectId.isValid(subOrder) ? subOrder : undefined;
 
 		const reviewData = {
 			reviewer: req.user?._id || req.body.reviewer,
@@ -78,6 +200,7 @@ exports.createReview = async (req, res) => {
 		if (safeOrder) reviewData.order = safeOrder;
 		if (safeProduct) reviewData.product = safeProduct;
 		if (safeReviewee) reviewData.reviewee = safeReviewee;
+		if (safeSubOrder) reviewData.subOrder = safeSubOrder;
 
 		const review = new Review(reviewData);
 		await review.save();
@@ -174,9 +297,24 @@ exports.replyToReview = async (req, res) => {
 		const review = await Review.findById(id);
 		if (!review) return res.status(404).json({ message: 'Không tìm thấy đánh giá' });
 
-		// Only reviewee (owner/shipper being reviewed) can reply when authenticated; otherwise allow for testing
+		// Permission check: Allow if:
+		// 1. No authenticated user (testing mode)
+		// 2. User is the reviewee (for user reviews)
+		// 3. User is the product owner (for product reviews)
 		if (req.user) {
-			if (!review.reviewee || review.reviewee.toString() !== req.user._id.toString()) {
+			const isReviewee = review.reviewee && review.reviewee.toString() === req.user._id.toString();
+			
+			// For product reviews, check if user is the owner
+			let isProductOwner = false;
+			if (review.type === 'PRODUCT_REVIEW' && review.product) {
+				const Product = require('../models/Product');
+				const product = await Product.findById(review.product).lean();
+				if (product && product.owner && product.owner.toString() === req.user._id.toString()) {
+					isProductOwner = true;
+				}
+			}
+			
+			if (!isReviewee && !isProductOwner) {
 				return res.status(403).json({ message: 'Không có quyền trả lời' });
 			}
 		}
@@ -455,7 +593,10 @@ exports.getReviewsByProduct = async (req, res) => {
 		const target = req.query.target; // expected values: 'PRODUCT','OWNER','SHIPPER'
 		const reviewee = req.query.reviewee; // optional user id to filter user reviews
 
+		console.log('🔍 [getReviewsByProduct] Query params:', { productId, target, page, limit });
+
 		const query = { product: productId, status: 'APPROVED' };
+		console.log('🔍 Initial query:', query);
 
 		if (target) {
 			if (target === 'PRODUCT') {
@@ -500,6 +641,8 @@ exports.getReviewsByProduct = async (req, res) => {
 			.sort({ createdAt: -1 })
 			.skip(skip)
 			.limit(limit);
+
+		console.log('✅ Found items:', items.length, 'Total:', total);
 
 		res.json({ data: items, pagination: { page, limit, total } });
 	} catch (err) {

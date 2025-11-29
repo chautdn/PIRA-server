@@ -370,10 +370,32 @@ class RentalOrderController {
    */
   async getMyOrders(req, res) {
     try {
-      const userId = req.user.id;
+      const userId = req.user._id || req.user.id;
       const { status, page = 1, limit = 10 } = req.query;
 
+      console.log('🔍 getMyOrders called');
+      console.log('   User object:', req.user);
+      console.log('   userId:', userId);
+      console.log('   userId type:', typeof userId);
+      console.log('   status filter:', status);
+
+      // Check ALL MasterOrders in database
+      const allOrdersCount = await MasterOrder.countDocuments({});
+      console.log('📊 Total MasterOrders in DB:', allOrdersCount);
+
+      // Check orders with this renter
       const filter = { renter: userId };
+      const allOrdersForRenter = await MasterOrder.find({ renter: userId });
+      console.log('📋 Filter:', JSON.stringify(filter));
+      console.log('✅ Orders found with renter filter:', allOrdersForRenter.length);
+      
+      if (allOrdersForRenter.length > 0) {
+        console.log('📌 Sample order renter ID:', allOrdersForRenter[0].renter);
+        console.log('📌 Sample order status:', allOrdersForRenter[0].status);
+        console.log('📌 All statuses:', allOrdersForRenter.map(o => o.status));
+      }
+
+      // Now apply status filter if provided
       if (status) {
         filter.status = status;
       }
@@ -392,6 +414,9 @@ class RentalOrderController {
 
       const total = await MasterOrder.countDocuments(filter);
 
+      console.log('✅ Final result - Found orders:', orders.length, 'Total matching:', total);
+      console.log('📤 Sending response with metadata:', JSON.stringify({ orders: orders.length, total }));
+
       return new SuccessResponse({
         message: 'Lấy danh sách đơn hàng thành công',
         metadata: {
@@ -405,6 +430,7 @@ class RentalOrderController {
         }
       }).send(res);
     } catch (error) {
+      console.error('❌ getMyOrders error:', error);
       throw new BadRequest(error.message);
     }
   }
