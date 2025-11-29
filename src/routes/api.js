@@ -53,6 +53,10 @@ router.use('/vouchers', voucherRoutes);
 const disputeRoutes = require('./dispute.routes');
 router.use('/disputes', disputeRoutes);
 
+// Upload routes
+const uploadRoutes = require('./upload.routes');
+router.use('/upload', uploadRoutes);
+
 // Register all routes from the registry FIRST
 getRoutes()?.forEach(({ path, router: moduleRouter }) => {
   if (!path || typeof path !== 'string') {
