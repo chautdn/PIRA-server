@@ -316,12 +316,33 @@ const withdrawalService = {
         wallet.balance.frozen -= withdrawal.amount;
         await wallet.save({ session });
 
+        // Create transaction record showing user received money from system wallet
+        // (even though it goes to their bank account, this tracks the system wallet interaction)
+        const systemWalletTransaction = new Transaction({
+          user: withdrawal.user,
+          wallet: withdrawal.wallet,
+          type: 'withdrawal',
+          amount: withdrawal.amount,
+          status: 'success',
+          fromSystemWallet: true, // This shows user received money FROM system wallet
+          description: `Withdrawal completed - Money transferred from system wallet to bank account ${withdrawal.bankDetails.bankName} ${withdrawal.bankDetails.accountNumber}`,
+          metadata: {
+            withdrawalId: withdrawal._id,
+            adminProcessedBy: adminId,
+            bankDetails: withdrawal.bankDetails,
+            systemWalletAction: 'withdrawal_payout',
+            previousSystemBalance: systemWallet.balance.available + withdrawal.amount,
+            newSystemBalance: systemWallet.balance.available
+          }
+        });
+        await systemWalletTransaction.save({ session });
+
         withdrawal.status = 'completed';
         withdrawal.completedAt = new Date();
         withdrawal.adminNote = adminNote;
         withdrawal.processingLock = undefined; // Clear lock
 
-        // Update transaction
+        // Update original transaction
         await Transaction.findByIdAndUpdate(
           withdrawal.transaction,
           { status: 'success', processedAt: new Date() },

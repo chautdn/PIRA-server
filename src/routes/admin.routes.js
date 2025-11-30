@@ -58,6 +58,11 @@ router.patch('/bank-accounts/:userId/verify', adminController.verifyBankAccount)
 router.patch('/bank-accounts/:userId/reject', adminController.rejectBankAccount);
 router.patch('/bank-accounts/:userId/status', adminController.updateBankAccountStatus);
 
+// ========== WITHDRAWAL FINANCIAL ANALYSIS ==========
+router.get('/withdrawals/enhanced', adminController.getEnhancedWithdrawalRequests);
+router.get('/withdrawals/:withdrawalId/financial-analysis', adminController.getWithdrawalFinancialAnalysis);
+router.get('/users/:userId/financial-profile', adminController.getUserFinancialProfile);
+
 // ========== SYSTEM SETTINGS ==========
 router.get('/settings', adminController.getSystemSettings);
 router.put('/settings', adminController.updateSystemSettings);
