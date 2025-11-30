@@ -137,10 +137,7 @@ class RentalOrderService {
 
         // Tính phí shipping nếu cần giao hàng
         if (deliveryMethod === 'DELIVERY' && owner.address) {
-          const shippingInfo = await this.calculateShippingFee(
-            owner.address,
-            deliveryAddress
-          );
+          const shippingInfo = await this.calculateShippingFee(owner.address, deliveryAddress);
 
           subOrder.shipping = {
             ...subOrder.shipping,
@@ -319,7 +316,7 @@ class RentalOrderService {
         .populate({
           path: 'subOrders',
           populate: [
-            { path: 'owner', select: 'profile.firstName profile.lastName phone profile address' },
+            { path: 'owner', select: 'profile.firstName profile.lastName profile.address phone' },
             { path: 'products.product', select: 'name images price deposit category' }
           ]
         })
@@ -2435,7 +2432,7 @@ class RentalOrderService {
           .populate({
             path: 'subOrders',
             populate: [
-              { path: 'owner', select: 'profile.firstName profile.lastName phone profile address' },
+              { path: 'owner', select: 'profile.firstName profile.lastName profile.address phone' },
               { path: 'products.product', select: 'name images price deposit' }
             ]
           })
@@ -2969,7 +2966,6 @@ class RentalOrderService {
 
       // Cập nhật SubOrder với contract ID
       subOrder.contract = contract._id;
-
 
       if (session) {
         await subOrder.save({ session });
