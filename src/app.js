@@ -50,6 +50,21 @@ const { startPartialConfirmationCron } = require('./scripts/partialConfirmationC
 startPartialConfirmationCron();
 console.log('✅ Partial confirmation cron job initialized');
 
+// Initialize shipment cron job
+const { startShipmentCronJob } = require('./scripts/shipmentCron');
+startShipmentCronJob();
+console.log('✅ Shipment cron job initialized');
+
+// Initialize frozen balance unlock cron job (every minute)
+const { startFrozenBalanceUnlockCron } = require('./scripts/frozenBalanceUnlockCron');
+startFrozenBalanceUnlockCron();
+console.log('✅ Frozen balance unlock cron job initialized');
+
+// Initialize auto-confirm delivery cron job (every hour)
+const { startAutoConfirmDeliveryCron } = require('./scripts/autoConfirmDeliveryCron');
+startAutoConfirmDeliveryCron();
+console.log('✅ Auto-confirm delivery cron job initialized');
+
 // Log Socket.IO events for monitoring
 io.engine.on('connection_error', (err) => {
   console.error('Socket.IO connection error:', err);

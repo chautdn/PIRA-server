@@ -3,28 +3,30 @@ const router = express.Router();
 const { registerRoute } = require('./register.routes');
 const ratingController = require('../controllers/rating.controller');
 const upload = require('../middleware/upload');
+const { authMiddleware } = require('../middleware/auth');
+
 // Create review (multipart/form-data)
-router.post('/', upload.array('photos', 6), ratingController.createReview);
+router.post('/', authMiddleware.verifyToken, upload.array('photos', 6), ratingController.createReview);
 
 // Update review - uploader (may include new photos)
-router.put('/:id', upload.array('photos', 6), ratingController.updateReview);
+router.put('/:id', authMiddleware.verifyToken, upload.array('photos', 6), ratingController.updateReview);
 
 // Delete review
-router.delete('/:id', ratingController.deleteReview);
+router.delete('/:id', authMiddleware.verifyToken, ratingController.deleteReview);
 
 // Reply to review
 // Reply to review (allow photos)
-router.post('/:id/reply', upload.array('photos', 6), ratingController.replyToReview);
+router.post('/:id/reply', authMiddleware.verifyToken, upload.array('photos', 6), ratingController.replyToReview);
 
 // Reply to a specific response (nested reply)
-router.post('/:id/responses/:responseId/reply', upload.array('photos', 6), ratingController.replyToResponse);
+router.post('/:id/responses/:responseId/reply', authMiddleware.verifyToken, upload.array('photos', 6), ratingController.replyToResponse);
 
 // Update a nested response
 // Allow adding photos when updating a response
-router.put('/:id/responses/:responseId', upload.array('photos', 6), ratingController.updateResponse);
+router.put('/:id/responses/:responseId', authMiddleware.verifyToken, upload.array('photos', 6), ratingController.updateResponse);
 
 // Delete a nested response
-router.delete('/:id/responses/:responseId', ratingController.deleteResponse);
+router.delete('/:id/responses/:responseId', authMiddleware.verifyToken, ratingController.deleteResponse);
 
 // Mark helpful / like
 router.post('/:id/helpful', ratingController.incrementHelpfulness);
@@ -33,7 +35,7 @@ router.post('/:id/helpful', ratingController.incrementHelpfulness);
 router.get('/product/:productId', ratingController.getReviewsByProduct);
 
 // Admin helper to fix shipper reviewees for a product
-router.post('/product/:productId/fix-shipper-reviews', ratingController.fixShipperReviews);
+router.post('/product/:productId/fix-shipper-reviews', authMiddleware.verifyToken, ratingController.fixShipperReviews);
 
 registerRoute('/ratings', router);
 

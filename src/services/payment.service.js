@@ -387,7 +387,10 @@ const getWalletBalance = async (userId) => {
     }
 
     return {
-      balance: user.wallet.balance.available,
+      balance: user.wallet.balance.display || user.wallet.balance.available,
+      available: user.wallet.balance.available,
+      frozen: user.wallet.balance.frozen,
+      pending: user.wallet.balance.pending,
       currency: user.wallet.currency,
       status: user.wallet.status
     };

@@ -8,6 +8,11 @@ const reviewSchema = new mongoose.Schema(
       ref: 'Order',
       required: false
     },
+    subOrder: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'SubOrder',
+      required: false
+    },
     product: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'Product',
@@ -70,7 +75,7 @@ const reviewSchema = new mongoose.Schema(
     },
     comment: {
       type: String,
-      required: true,
+      required: false,
       trim: true,
       maxlength: 1000
     },
@@ -180,5 +185,7 @@ reviewSchema.index({ product: 1, status: 1 });
 reviewSchema.index({ reviewer: 1 });
 reviewSchema.index({ reviewee: 1 });
 reviewSchema.index({ order: 1 });
+reviewSchema.index({ subOrder: 1 });
 
 module.exports = mongoose.model('Review', reviewSchema);
+
