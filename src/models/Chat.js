@@ -46,6 +46,13 @@ const chatSchema = new mongoose.Schema(
         type: mongoose.Schema.Types.ObjectId,
         ref: 'User'
       }
+    ],
+    // Soft delete for individual users - array of user IDs who deleted this conversation
+    deletedFor: [
+      {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'User'
+      }
     ]
   },
   { timestamps: true }

@@ -338,7 +338,7 @@ class RentalOrderService {
         .populate({
           path: 'subOrders',
           populate: [
-            { path: 'owner', select: 'profile.fullName profile.phone profile.address' },
+            { path: 'owner', select: 'profile.firstName profile.lastName phone profile address' },
             { path: 'products.product', select: 'name images price deposit category' }
           ]
         })
@@ -2557,7 +2557,7 @@ class RentalOrderService {
           .populate({
             path: 'subOrders',
             populate: [
-              { path: 'owner', select: 'profile.fullName profile.phone' },
+              { path: 'owner', select: 'profile.firstName profile.lastName phone profile address' },
               { path: 'products.product', select: 'name images price deposit' }
             ]
           })

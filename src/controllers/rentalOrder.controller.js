@@ -490,11 +490,11 @@ class RentalOrderController {
       const { masterOrderId } = req.params;
 
       const masterOrder = await MasterOrder.findById(masterOrderId).populate([
-        { path: 'renter', select: 'profile email' },
+        { path: 'renter', select: 'profile email phone' },
         {
           path: 'subOrders',
           populate: [
-            { path: 'owner', select: 'profile email' },
+            { path: 'owner', select: 'profile email phone' },
             { path: 'products.product' },
             { path: 'contract' }
           ]
@@ -1395,8 +1395,18 @@ class RentalOrderController {
       // Mark as DELIVERED - renter confirmed receipt of rented item
       console.log('🔄 Marking SubOrder as DELIVERED...');
       subOrder.status = 'DELIVERED';
+      
+      // Update productStatus to ACTIVE for all products when renter confirms delivery
+      console.log('📦 Updating product statuses to ACTIVE...');
+      subOrder.products.forEach((product, idx) => {
+        const oldStatus = product.productStatus;
+        product.productStatus = 'ACTIVE';
+        console.log(`   Product ${idx + 1}: ${oldStatus} → ACTIVE`);
+      });
+      
       const savedSubOrder = await subOrder.save();
       console.log(`✅ SubOrder saved with status: ${savedSubOrder.status}`);
+      console.log(`✅ All products updated to ACTIVE status`);
       
       console.log(`\n📊 SubOrder Pricing Info:`);
       console.log(`   Full pricing object: ${JSON.stringify(savedSubOrder.pricing)}`);

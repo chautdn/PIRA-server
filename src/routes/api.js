@@ -55,6 +55,14 @@ router.use('/system-promotions', systemPromotionRoutes);
 const voucherRoutes = require('./voucher.routes');
 router.use('/vouchers', voucherRoutes);
 
+// Dispute routes
+const disputeRoutes = require('./dispute.routes');
+router.use('/disputes', disputeRoutes);
+
+// Upload routes
+const uploadRoutes = require('./upload.routes');
+router.use('/upload', uploadRoutes);
+
 // Extension routes
 const extensionRoutes = require('./extension.routes');
 router.use('/extensions', extensionRoutes);

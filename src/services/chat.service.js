@@ -13,7 +13,9 @@ const chatService = {
       }
 
       const query = {
-        participants: userId
+        participants: userId,
+        // Filter out conversations deleted by this user
+        deletedFor: { $ne: userId }
         // REMOVED: lastMessageAt filter - show ALL conversations including empty ones
       };
 
@@ -433,6 +435,38 @@ const chatService = {
       return { success: true };
     } catch (error) {
       throw new Error(`Failed to delete message: ${error.message}`);
+    }
+  },
+
+  // Delete conversation for the current user (hide it from their view)
+  deleteConversation: async (conversationId, userId) => {
+    try {
+      if (!conversationId || !userId) {
+        throw new Error('Conversation ID and User ID are required');
+      }
+
+      const conversation = await Chat.findById(conversationId);
+      if (!conversation) {
+        throw new Error('Conversation not found');
+      }
+
+      if (!conversation.participants.includes(userId)) {
+        throw new Error('Access denied - you are not a participant in this conversation');
+      }
+
+      // Add user to deletedFor array (soft delete for this user only)
+      if (!conversation.deletedFor) {
+        conversation.deletedFor = [];
+      }
+
+      if (!conversation.deletedFor.includes(userId)) {
+        conversation.deletedFor.push(userId);
+        await conversation.save();
+      }
+
+      return { success: true };
+    } catch (error) {
+      throw new Error(`Failed to delete conversation: ${error.message}`);
     }
   }
 };

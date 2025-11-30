@@ -48,9 +48,9 @@ class ExtensionController {
       }
 
       // Check if order has products with valid rental periods
-      // Accept ACTIVE, DELIVERED, or COMPLETED status as they can be extended
+      // Accept CONFIRMED, ACTIVE, DELIVERED, or COMPLETED status as they can be extended
       const validProducts = subOrder.products.filter(p => 
-        (p.productStatus === 'ACTIVE' || p.productStatus === 'DELIVERED' || p.productStatus === 'COMPLETED') &&
+        (p.productStatus === 'CONFIRMED' || p.productStatus === 'ACTIVE' || p.productStatus === 'DELIVERED' || p.productStatus === 'COMPLETED') &&
         p.rentalPeriod?.endDate
       );
 

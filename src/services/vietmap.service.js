@@ -7,283 +7,137 @@ class VietMapService {
   }
 
   /**
-   * Tính khoảng cách và thời gian từ điểm A đến điểm B
-   * @param {number} lonOwner - Kinh độ của chủ cho thuê
-   * @param {number} latOwner - Vĩ độ của chủ cho thuê
-   * @param {number} lonUser - Kinh độ của người thuê
-   * @param {number} latUser - Vĩ độ của người thuê
-   * @returns {Promise<Object>} - Kết quả từ VietMap API
+   * Tính khoảng cách thực tế bằng xe máy từ chủ → người thuê
+   * Chỉ trả về kết quả từ VietMap (không fallback nếu bạn không muốn)
    */
   async calculateDistance(lonOwner, latOwner, lonUser, latUser) {
+    if (!this.apiKey) {
+      throw new Error('VietMap API key is not configured');
+    }
+
+    const url = `${this.baseUrl}/route`;
+
+    const params = new URLSearchParams();
+    params.append('api-version', '1.1');
+    params.append('apikey', this.apiKey);
+    params.append('point', `${latOwner},${lonOwner}`);     // LAT,LON
+    params.append('point', `${latUser},${lonUser}`);       // LAT,LON
+    params.append('points_encoded', 'true');
+    params.append('vehicle', 'bike');        // hoặc 'motorcycle' nếu muốn chính xác hơn
+    params.append('optimize', 'true');
+
     try {
-      if (!this.apiKey) {
-        throw new Error('VietMap API key is not configured');
-      }
+      const response = await axios.get(url, { params, timeout: 10000 });
 
-      if (!lonOwner || !latOwner || !lonUser || !latUser) {
-        throw new Error('Missing coordinates parameters');
-      }
+      if (response.data?.code === 'OK' || response.data?.code === 'Ok') {
+        if (response.data.paths?.length > 0) {
+          const route = response.data.paths[0];
 
-      const url = `${this.baseUrl}/route`;
-      const params = {
-        'api-version': '1.1',
-        apikey: this.apiKey,
-        point: [`${lonOwner},${latOwner}`, `${lonUser},${latUser}`],
-        vehicle: 'motorcycle', // Mặc định dùng xe máy
-        optimize: 'true'
-      };
-
-      console.log('VietMap API Request:', { url, params });
-
-      const response = await axios.get(url, {
-        params: {
-          'api-version': '1.1',
-          apikey: this.apiKey,
-          point: [`${lonOwner},${latOwner}`, `${lonUser},${latUser}`],
-          vehicle: 'motorcycle',
-          optimize: 'true'
+          return {
+            success: true,
+            distanceMeters: Math.round(route.distance),
+            distanceKm: parseFloat((route.distance / 1000).toFixed(2)),
+            durationMinutes: Math.round(route.time / 60000),
+            durationSeconds: Math.round(route.time / 1000),
+            routeFound: true,
+            rawResponse: response.data
+          };
         }
-      });
-
-      if (response.data && response.data.paths && response.data.paths.length > 0) {
-        const route = response.data.paths[0];
-
-        return {
-          success: true,
-          distance: Math.round(route.distance), // mét
-          distanceKm: parseFloat((route.distance / 1000).toFixed(2)), // km
-          duration: Math.round(route.time / 1000 / 60), // phút
-          durationSeconds: Math.round(route.time / 1000), // giây
-          rawResponse: response.data
-        };
-      } else {
-        throw new Error('Invalid response from VietMap API');
       }
+
+      // Nếu VietMap trả lỗi hoặc không tìm được đường
+      throw new Error(response.data?.messages || 'No route found');
+
     } catch (error) {
-      console.error('VietMap API Error:', error.message);
-
-      // Fallback: Tính khoảng cách theo đường chim bay nếu API lỗi
-      const fallbackDistance = this.calculateHaversineDistance(
-        latOwner,
-        lonOwner,
-        latUser,
-        lonUser
-      );
-
-      return {
-        success: false,
-        error: error.message,
-        fallback: true,
-        distance: Math.round(fallbackDistance * 1000), // mét
-        distanceKm: parseFloat(fallbackDistance.toFixed(2)), // km
-        duration: Math.round(fallbackDistance * 3), // Ước lượng 3 phút/km
-        durationSeconds: Math.round(fallbackDistance * 3 * 60)
-      };
+      // BỎ FALLBACK HAVERSINE HOÀN TOÀN (nếu bạn muốn tính phí chính xác)
+      // Chỉ log lỗi, trả về thất bại rõ ràng
+      console.error('VietMap Route failed:', error.message);
+      throw new Error(`Không thể tính khoảng cách thực tế: ${error.message}`);
     }
   }
 
   /**
-   * Tính khoảng cách theo công thức Haversine (đường chim bay)
-   * @param {number} lat1 - Vĩ độ điểm 1
-   * @param {number} lon1 - Kinh độ điểm 1
-   * @param {number} lat2 - Vĩ độ điểm 2
-   * @param {number} lon2 - Kinh độ điểm 2
-   * @returns {number} - Khoảng cách tính bằng km
-   */
-  calculateHaversineDistance(lat1, lon1, lat2, lon2) {
-    const R = 6371; // Bán kính Trái Đất tính bằng km
-    const dLat = this.deg2rad(lat2 - lat1);
-    const dLon = this.deg2rad(lon2 - lon1);
-    const a =
-      Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-      Math.cos(this.deg2rad(lat1)) *
-        Math.cos(this.deg2rad(lat2)) *
-        Math.sin(dLon / 2) *
-        Math.sin(dLon / 2);
-    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-    const distance = R * c;
-    return distance;
-  }
-
-  /**
-   * Chuyển đổi độ sang radian
-   * @param {number} deg - Góc tính bằng độ
-   * @returns {number} - Góc tính bằng radian
-   */
-  deg2rad(deg) {
-    return deg * (Math.PI / 180);
-  }
-
-  /**
-   * Tính phí vận chuyển dựa trên khoảng cách
-   * @param {number} distanceKm - Khoảng cách tính bằng km
-   * @param {Object} options - Tùy chọn tính phí
-   * @returns {Object} - Thông tin phí vận chuyển
+   * Tính phí ship theo khoảng cách thực tế (dùng trong controller)
    */
   calculateShippingFee(distanceKm, options = {}) {
-    const baseFee = options.baseFee || 10000; // 10,000 VND cố định
-    const pricePerKm = options.pricePerKm || 5000; // 5,000 VND/km
-    const minFee = options.minFee || 15000; // Phí tối thiểu 15,000 VND
-    const maxFee = options.maxFee || 200000; // Phí tối đa 200,000 VND
+    const baseFee = options.baseFee || 15000;           // 15k cố định
+    const pricePerKm = options.pricePerKm || 5000;      // 5k/km
+    const minFee = options.minFee || 20000;             // tối thiểu 20k
+    const maxFee = options.maxFee || 150000;            // tối đa 150k
 
-    let shippingFee = baseFee + distanceKm * pricePerKm;
+    let fee = baseFee + Math.round(distanceKm) * pricePerKm;
 
-    // Áp dụng phí tối thiểu và tối đa
-    if (shippingFee < minFee) {
-      shippingFee = minFee;
-    }
-    if (shippingFee > maxFee) {
-      shippingFee = maxFee;
-    }
+    if (fee < minFee) fee = minFee;
+    if (fee > maxFee) fee = maxFee;
+
+    // Làm tròn đẹp lên 1.000 gần nhất (tùy chọn, rất chuyên nghiệp)
+    fee = Math.ceil(fee / 1000) * 1000;
 
     return {
+      distanceKm: parseFloat(distanceKm.toFixed(2)),
       baseFee,
-      pricePerKm,
-      distance: distanceKm,
-      calculatedFee: Math.round(shippingFee),
-      breakdown: {
-        base: baseFee,
-        distance: Math.round(distanceKm * pricePerKm),
-        total: Math.round(shippingFee)
-      }
+      distanceFee: Math.round(distanceKm) * pricePerKm,
+      finalFee: fee,
+      note: `Phí ship = ${baseFee.toLocaleString()} + ${Math.round(distanceKm)}km × ${pricePerKm.toLocaleString()} = ${fee.toLocaleString()}đ`
     };
   }
 
   /**
-   * Tính phí ship cho SubOrder theo số lần giao hàng (delivery batches)
-   * Các sản phẩm cùng ngày bắt đầu thuê = 1 lần giao = 1 phí ship
-   * @param {Array} products - Danh sách products với quantity và rentalPeriod
-   * @param {number} distanceKm - Khoảng cách từ owner đến user
-   * @param {Object} options - Tùy chọn tính phí
-   * @returns {Object} - Chi tiết phí ship theo từng batch giao hàng
+   * Tính phí ship cho toàn bộ SubOrder (giữ nguyên logic gom ngày)
    */
   calculateProductShippingFees(products, distanceKm, options = {}) {
-    const baseFeePerDelivery = options.baseFeePerDelivery || 15000; // 15k per delivery trip
-    const pricePerKm = options.pricePerKm || 5000; // 5k per km
-    const minFeePerDelivery = options.minFeePerDelivery || 20000; // Min 20k per delivery
-    const maxFeePerDelivery = options.maxFeePerDelivery || 100000; // Max 100k per delivery
+    const config = {
+      baseFeePerDelivery: 15000,
+      pricePerKm: 5000,
+      minFeePerDelivery: 25000,
+      maxFeePerDelivery: 120000,
+      ...options
+    };
 
-    // Group products by delivery date (startDate)
     const deliveryBatches = {};
+    products.forEach((item, idx) => {
+      const date = item.rentalPeriod?.startDate
+        ? new Date(item.rentalPeriod.startDate).toISOString().split('T')[0]
+        : 'unknown';
 
-    products.forEach((productItem, index) => {
-      const startDate = productItem.rentalPeriod?.startDate;
-      let deliveryDate;
-
-      if (startDate) {
-        // Convert to date string for grouping (YYYY-MM-DD)
-        deliveryDate = new Date(startDate).toISOString().split('T')[0];
-      } else {
-        // If no startDate, use 'unknown' group
-        deliveryDate = 'unknown';
-      }
-
-      if (!deliveryBatches[deliveryDate]) {
-        deliveryBatches[deliveryDate] = [];
-      }
-
-      deliveryBatches[deliveryDate].push({
-        ...productItem,
-        originalIndex: index
-      });
+      if (!deliveryBatches[date]) deliveryBatches[date] = [];
+      deliveryBatches[date].push({ ...item, idx });
     });
 
-    const deliveryFees = [];
     let totalShippingFee = 0;
-    let deliveryCount = 0;
+    const batches = [];
 
-    // Calculate fee for each delivery batch
-    Object.entries(deliveryBatches).forEach(([deliveryDate, batchProducts]) => {
-      deliveryCount++;
+    Object.entries(deliveryBatches).forEach(([date, items], batchIndex) => {
+      const rawFee = config.baseFeePerDelivery + distanceKm * config.pricePerKm;
+      let fee = Math.max(config.minFeePerDelivery, Math.min(config.maxFeePerDelivery, rawFee));
+      fee = Math.ceil(fee / 1000) * 1000; // làm tròn đẹp
 
-      // Calculate total quantity for this delivery batch
-      const batchQuantity = batchProducts.reduce((sum, p) => sum + (p.quantity || 1), 0);
+      totalShippingFee += fee;
 
-      // Calculate fee for this delivery (one trip regardless of quantity)
-      let deliveryFee = baseFeePerDelivery + distanceKm * pricePerKm;
-
-      // Apply min/max limits per delivery
-      if (deliveryFee < minFeePerDelivery) deliveryFee = minFeePerDelivery;
-      if (deliveryFee > maxFeePerDelivery) deliveryFee = maxFeePerDelivery;
-
-      deliveryFee = Math.round(deliveryFee);
-      totalShippingFee += deliveryFee;
-
-      // Distribute delivery fee among products in this batch
-      const feePerProduct = Math.round(deliveryFee / batchProducts.length);
-      const productFees = [];
-
-      batchProducts.forEach((productItem, batchIndex) => {
-        const productFee = {
-          productIndex: productItem.originalIndex,
-          productId: productItem.product?._id || productItem.product,
-          quantity: productItem.quantity || 1,
-          deliveryDate: deliveryDate,
-          deliveryBatch: deliveryCount,
-          distance: distanceKm,
-          // Each product gets an equal share of the delivery fee
-          allocatedFee:
-            batchIndex === batchProducts.length - 1
-              ? deliveryFee - feePerProduct * batchIndex // Last product gets remainder
-              : feePerProduct,
-          breakdown: {
-            deliveryFee: deliveryFee,
-            productShare: feePerProduct,
-            batchSize: batchProducts.length,
-            batchQuantity: batchQuantity
-          }
-        };
-
-        productFees.push(productFee);
-      });
-
-      deliveryFees.push({
-        deliveryDate: deliveryDate,
-        deliveryBatch: deliveryCount,
-        products: productFees,
-        batchQuantity: batchQuantity,
-        batchSize: batchProducts.length,
-        deliveryFee: deliveryFee,
-        distance: distanceKm,
-        breakdown: {
-          baseFee: baseFeePerDelivery,
-          distanceFee: Math.round(distanceKm * pricePerKm),
-          total: deliveryFee
-        }
+      batches.push({
+        deliveryDate: date === 'unknown' ? null : date,
+        batchIndex: batchIndex + 1,
+        productCount: items.length,
+        distanceKm,
+        deliveryFee: fee
       });
     });
-
-    // Flatten product fees for backward compatibility
-    const allProductFees = deliveryFees.flatMap((batch) => batch.products);
 
     return {
       success: true,
-      totalShippingFee: totalShippingFee,
-      deliveryCount: deliveryCount,
-      deliveryBatches: deliveryFees,
-      productFees: allProductFees, // For backward compatibility
-      summary: {
-        totalProducts: products.length,
-        totalQuantity: products.reduce((sum, p) => sum + (p.quantity || 1), 0),
-        totalDeliveries: deliveryCount,
-        averageFeePerDelivery: Math.round(totalShippingFee / deliveryCount),
-        averageFeePerProduct: Math.round(totalShippingFee / products.length),
-        distance: distanceKm,
-        deliveryDates: Object.keys(deliveryBatches)
-      }
+      totalShippingFee,
+      deliveryCount: batches.length,
+      distanceKm,
+      batches,
+      summary: `Tổng phí ship: ${totalShippingFee.toLocaleString()}đ cho ${batches.length} lần giao (khoảng cách ${distanceKm.toFixed(1)}km)`
     };
   }
 
   /**
-   * Tính toán chi tiết shipping cho một SubOrder hoàn chỉnh
-   * @param {Object} subOrder - SubOrder object
-   * @param {Object} ownerLocation - Tọa độ owner {latitude, longitude}
-   * @param {Object} userLocation - Tọa độ user {latitude, longitude}
-   * @returns {Promise<Object>} - Chi tiết shipping calculation
+   * Hàm chính: Tính shipping cho 1 SubOrder (gọi từ controller)
    */
   async calculateSubOrderShipping(subOrder, ownerLocation, userLocation) {
     try {
-      // Tính khoảng cách từ owner đến user
       const distanceResult = await this.calculateDistance(
         ownerLocation.longitude,
         ownerLocation.latitude,
@@ -291,33 +145,29 @@ class VietMapService {
         userLocation.latitude
       );
 
-      if (!distanceResult.success && !distanceResult.fallback) {
-        throw new Error('Unable to calculate distance');
-      }
-
+      // Bây giờ distanceResult luôn là thật 100%, không fallback
       const distanceKm = distanceResult.distanceKm;
 
-      // Tính phí ship cho từng product
-      const shippingCalculation = this.calculateProductShippingFees(subOrder.products, distanceKm);
+      const shipping = this.calculateProductShippingFees(subOrder.products, distanceKm);
 
       return {
         success: true,
         subOrderId: subOrder._id,
-        distance: {
+        realDistance: {
           km: distanceKm,
-          meters: distanceResult.distance,
-          duration: distanceResult.duration,
-          fallback: distanceResult.fallback || false
+          meters: distanceResult.distanceMeters,
+          durationMinutes: distanceResult.durationMinutes
         },
-        shipping: shippingCalculation,
-        vietmapResponse: distanceResult.rawResponse
+        shippingFee: shipping.totalShippingFee,
+        shippingDetails: shipping,
+        message: "Tính phí ship theo khoảng cách thực tế bằng VietMap"
       };
+
     } catch (error) {
-      console.error('SubOrder shipping calculation error:', error);
       return {
         success: false,
-        error: error.message,
-        subOrderId: subOrder._id
+        subOrderId: subOrder._id || 'unknown',
+        error: error.message || 'Không thể tính khoảng cách'
       };
     }
   }
