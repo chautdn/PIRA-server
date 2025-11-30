@@ -10,6 +10,7 @@ const mongoose = require('mongoose');
 const { PayOS } = require('@payos/node');
 const Wallet = require('../models/Wallet');
 const Transaction = require('../models/Transaction');
+const SystemWalletService = require('./systemWallet.service');
 
 // Initialize PayOS
 const payos = new PayOS({
@@ -143,8 +144,15 @@ class RentalOrderService {
             ...subOrder.shipping,
             ...shippingInfo
           };
-          subOrder.pricing.shippingFee =
-            shippingInfo.fee.calculatedFee || shippingInfo.fee.breakdown?.total || 0;
+          
+          // ✅ Set totalFee from calculated fee
+          const calculatedFee = shippingInfo.fee.calculatedFee || shippingInfo.fee.breakdown?.total || 0;
+          subOrder.shipping.fee = {
+            ...subOrder.shipping.fee,
+            totalFee: calculatedFee
+          };
+          
+          subOrder.pricing.shippingFee = calculatedFee;
 
           // ✅ Apply system promotion discount to shipping fee
           const discountResult = await systemPromotionService.calculateShippingDiscount(subOrder);
@@ -386,38 +394,28 @@ class RentalOrderService {
 
       const userId = masterOrder.renter._id;
 
-      // Get user's wallet
-      const user = await User.findById(userId).populate('wallet');
-      if (!user || !user.wallet) {
-        throw new Error('Không tìm thấy ví của người dùng');
-      }
+      // Use SystemWalletService.transferFromUser to atomically move funds
+      // from renter's wallet into the system wallet so later disbursement can occur.
+      const transfer = await SystemWalletService.transferFromUser(
+        process.env.SYSTEM_ADMIN_ID || null,
+        userId,
+        amount,
+        `Payment for order ${masterOrder.masterOrderNumber}`
+      );
 
-      const wallet = user.wallet;
-
-      // Check if wallet has sufficient balance
-      if (wallet.balance.available < amount) {
-        throw new Error(
-          `Ví không đủ số dư. Số dư hiện tại: ${wallet.balance.available.toLocaleString('vi-VN')}đ, cần: ${amount.toLocaleString('vi-VN')}đ`
-        );
-      }
-
-      // Deduct amount from wallet
-      const previousBalance = wallet.balance.available;
-      wallet.balance.available -= amount;
-      await wallet.save();
+      // transfer.transactions.user and transfer.userWallet are available
+      const userTx = transfer?.transactions?.user || null;
 
       return {
-        transactionId: transactionId,
+        transactionId: userTx?._id || transactionId,
         method: 'WALLET',
         amount: amount,
         status: 'SUCCESS',
         processedAt: new Date(),
         paymentDetails: {
-          previousBalance: wallet.balance.available + amount,
-          newBalance: wallet.balance.available,
-          deductedAmount: amount,
-          walletId: wallet._id,
-          message: 'Thanh toán từ ví thành công'
+          newBalance: transfer?.userWallet?.newBalance || null,
+          walletId: transfer?.userWallet?.walletId || null,
+          transfer
         }
       };
     } catch (error) {
@@ -1240,6 +1238,16 @@ class RentalOrderService {
         userLat
       );
 
+      // ⚠️  FIX: Nếu fallback hoặc API lỗi, cập nhật distanceKm để tránh phí quá cao
+      // Nếu distance > 50km, có thể VietMap trả sai dữ liệu hoặc fallback từ thành phố khác
+      // Giới hạn về 25km (tương đương phí ~135k, hợp lý cho HCMC)
+      if ((distanceResult.fallback || !distanceResult.success) && distanceResult.distanceKm > 50) {
+        console.warn(
+          `⚠️  Distance seems too large (${distanceResult.distanceKm}km), likely fallback coordinates issue. Capping to 25km for fee calculation.`
+        );
+        distanceResult.distanceKm = 25; // Cap at 25km = (10k + 5k*25) = 135k max
+      }
+
       // Nếu VietMap API thất bại, sử dụng công thức haversine đơn giản
       if (!distanceResult.success && !distanceResult.fallback) {
         // Công thức Haversine đơn giản
@@ -1318,13 +1326,85 @@ class RentalOrderService {
   }
 
   async checkAllContractsSigned(masterOrderId) {
-    const subOrders = await SubOrder.find({ masterOrder: masterOrderId });
-    const allSigned = subOrders.every((so) => so.status === 'CONTRACT_SIGNED');
+    try {
+      if (!masterOrderId) {
+        console.warn('⚠️ checkAllContractsSigned: masterOrderId is null or undefined');
+        return;
+      }
 
-    if (allSigned) {
-      await MasterOrder.findByIdAndUpdate(masterOrderId, {
-        status: 'CONTRACT_SIGNED'
-      });
+      const subOrders = await SubOrder.find({ masterOrder: masterOrderId }).populate('owner', 'address profile');
+      console.log(`📋 checkAllContractsSigned: Found ${subOrders.length} subOrders for master order ${masterOrderId}`);
+
+      if (subOrders.length === 0) {
+        console.warn('⚠️ No subOrders found for master order');
+        return;
+      }
+
+      const allSigned = subOrders.every((so) => so.status === 'CONTRACT_SIGNED');
+      console.log(`   Status breakdown: ${subOrders.map(so => so.status).join(', ')}`);
+      console.log(`   All signed? ${allSigned}`);
+
+      if (allSigned) {
+        // Update master order status
+        const masterOrder = await MasterOrder.findByIdAndUpdate(masterOrderId, {
+          status: 'CONTRACT_SIGNED'
+        }, { new: true });
+        console.log(`✅ Master Order status updated to CONTRACT_SIGNED`);
+
+        // 🚀 Tự động tạo shipments cho tất cả subOrders
+        console.log(`\n🚀 Auto-creating shipments for master order ${masterOrderId}...`);
+        
+        try {
+          const ShipmentService = require('./shipment.service');
+          
+          // Lấy owner từ subOrders (ưu tiên subOrder đầu tiên để tìm shipper)
+          // Nếu có multiple owners, sẽ tìm shipper cho từng owner nhưng chỉ assign 1 shipper cho tất cả
+          const owners = subOrders
+            .filter(so => so.owner)
+            .map(so => so.owner);
+
+          if (owners.length === 0) {
+            throw new Error('No owners found for shipment creation');
+          }
+
+          console.log(`   Found ${owners.length} owner(s)`);
+
+          // Tìm shipper dựa trên owner đầu tiên (hoặc có thể implement logic khác)
+          let shipperId = null;
+          
+          for (const owner of owners) {
+            console.log(`   📦 Trying owner ${owner._id} with address:`, owner.address);
+            const shipper = await ShipmentService.findShipperInSameArea(owner.address);
+            
+            if (shipper) {
+              console.log(`   ✅ Found shipper in same area: ${shipper._id}`);
+              shipperId = shipper._id;
+              break;
+            }
+          }
+
+          if (!shipperId) {
+            console.warn('   ⚠️ Could not find shipper in same area for any owner. Creating shipments without shipper assignment...');
+          }
+
+          // Tạo shipments cho toàn bộ masterOrder (nó sẽ tạo cho tất cả subOrders)
+          const result = await ShipmentService.createDeliveryAndReturnShipments(masterOrderId, shipperId);
+          
+          console.log(`✅ Shipments created automatically:`, result);
+          console.log(`   Total shipments: ${result.count}`);
+          console.log(`   Shipment pairs: ${result.pairs}`);
+        } catch (shipmentError) {
+          console.error('❌ Error creating shipments automatically:', shipmentError.message);
+          console.error('   Stack:', shipmentError.stack);
+          console.error('   This is a non-critical error - system will continue');
+          // Không throw error - để cho process tiếp tục
+        }
+      }
+    } catch (error) {
+      console.error('❌ Error in checkAllContractsSigned:', error.message);
+      if (error.stack) {
+        console.error('Stack trace:', error.stack);
+      }
     }
   }
 
@@ -1730,6 +1810,15 @@ class RentalOrderService {
 
       if (!distanceResult.success && !distanceResult.fallback) {
         throw new Error('Không thể tính khoảng cách giao hàng');
+      }
+
+      // ⚠️  FIX: Nếu fallback hoặc API lỗi, cập nhật distanceKm để tránh phí quá cao
+      // Giới hạn về 25km để tránh phí bất hợp lý
+      if ((distanceResult.fallback || !distanceResult.success) && distanceResult.distanceKm > 50) {
+        console.warn(
+          `⚠️  Distance seems too large (${distanceResult.distanceKm}km), likely fallback coordinates issue. Capping to 25km.`
+        );
+        distanceResult.distanceKm = 25;
       }
 
       const distanceKm = distanceResult.distanceKm;
@@ -2310,10 +2399,10 @@ class RentalOrderService {
       const transaction = new Transaction({
         user: userId,
         wallet: wallet._id,
-        type: 'REFUND',
+        type: 'refund',
         amount: amount,
         description: description,
-        status: 'COMPLETED',
+        status: 'success',
         metadata: {
           refundReason: 'ORDER_REJECTION_OR_EXPIRY',
           previousBalance: previousBalance,
@@ -2397,11 +2486,33 @@ class RentalOrderService {
         masterOrder.paymentStatus = 'PAID';
         masterOrder.status = 'PENDING_CONFIRMATION';
         console.log('📝 Setting: paymentStatus=PAID, status=PENDING_CONFIRMATION');
+
+        // Credit system wallet because external payment received by platform
+        try {
+          const creditAmount = Number(payosPaymentInfo.amount) || transaction?.amount || 0;
+          if (creditAmount > 0) {
+            await SystemWalletService.addFunds(process.env.SYSTEM_ADMIN_ID || null, creditAmount, `PayOS payment for order ${masterOrder.masterOrderNumber}`);
+            console.log('✅ Credited system wallet with PayOS amount:', creditAmount);
+          }
+        } catch (err) {
+          console.error('Failed to credit system wallet after PayOS payment:', err.message || String(err));
+        }
       } else if (isCODDeposit) {
         // Deposit payment for COD
         masterOrder.paymentStatus = 'PARTIALLY_PAID';
         masterOrder.status = 'PENDING_CONFIRMATION';
         console.log('📝 Setting: paymentStatus=PARTIALLY_PAID, status=PENDING_CONFIRMATION');
+
+        // If a transaction was created (deposit via PayOS), credit system wallet with deposit
+        try {
+          const depositAmount = transaction?.amount || Number(payosPaymentInfo.amount) || 0;
+          if (depositAmount > 0) {
+            await SystemWalletService.addFunds(process.env.SYSTEM_ADMIN_ID || null, depositAmount, `PayOS deposit for order ${masterOrder.masterOrderNumber}`);
+            console.log('✅ Credited system wallet with deposit amount:', depositAmount);
+          }
+        } catch (err) {
+          console.error('Failed to credit system wallet for deposit after PayOS:', err.message || String(err));
+        }
       }
 
       // Update payment info

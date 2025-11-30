@@ -53,7 +53,9 @@ app.use(
       'Authorization',
       'X-Requested-With',
       'token', // Thêm header 'token'
-      'x-verification-token' // Thêm header này nếu cần
+      'x-verification-token', // Thêm header này nếu cần
+      'Cache-Control',
+      'Pragma'
     ]
   })
 );

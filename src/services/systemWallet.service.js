@@ -77,20 +77,34 @@ class SystemWalletService {
       await systemWallet.save({ session });
 
       // Create transaction record
-      const transaction = new Transaction({
-        type: 'DEPOSIT',
-        amount: amount,
-        status: 'COMPLETED',
-        method: 'ADMIN_ACTION',
-        description: description,
-        metadata: {
-          adminId: adminId,
-          action: 'ADD_FUNDS',
-          previousBalance: systemWallet.balance.available - amount,
-          newBalance: systemWallet.balance.available
-        }
-      });
-      await transaction.save({ session });
+      // Check if we have a valid admin user to assign this transaction to
+      let transactionUser = null;
+      if (adminId && mongoose.Types.ObjectId.isValid(adminId)) {
+        transactionUser = adminId;
+      } else {
+        // If no valid admin, skip transaction creation (system operation)
+        // Or you could create a placeholder system user in your DB
+        console.warn('⚠️ addFunds: No valid admin ObjectId provided, skipping transaction creation');
+      }
+
+      if (transactionUser) {
+        const transaction = new Transaction({
+          user: transactionUser,
+          wallet: systemWallet._id,
+          type: 'deposit',
+          amount: amount,
+          status: 'success',
+          paymentMethod: 'wallet',
+          description: description,
+          metadata: {
+            adminId: adminId,
+            action: 'ADD_FUNDS',
+            previousBalance: systemWallet.balance.available - amount,
+            newBalance: systemWallet.balance.available
+          }
+        });
+        await transaction.save({ session });
+      }
 
       await session.commitTransaction();
 
@@ -140,20 +154,33 @@ class SystemWalletService {
       await systemWallet.save({ session });
 
       // Create transaction record
-      const transaction = new Transaction({
-        type: 'WITHDRAWAL',
-        amount: amount,
-        status: 'COMPLETED',
-        method: 'ADMIN_ACTION',
-        description: description,
-        metadata: {
-          adminId: adminId,
-          action: 'DEDUCT_FUNDS',
-          previousBalance: systemWallet.balance.available + amount,
-          newBalance: systemWallet.balance.available
-        }
-      });
-      await transaction.save({ session });
+      // Check if we have a valid admin user to assign this transaction to
+      let transactionUser = null;
+      if (adminId && mongoose.Types.ObjectId.isValid(adminId)) {
+        transactionUser = adminId;
+      } else {
+        // If no valid admin, skip transaction creation (system operation)
+        console.warn('⚠️ deductFunds: No valid admin ObjectId provided, skipping transaction creation');
+      }
+
+      if (transactionUser) {
+        const transaction = new Transaction({
+          user: transactionUser,
+          wallet: systemWallet._id,
+          type: 'withdrawal',
+          amount: amount,
+          status: 'success',
+          paymentMethod: 'wallet',
+          description: description,
+          metadata: {
+            adminId: adminId,
+            action: 'DEDUCT_FUNDS',
+            previousBalance: systemWallet.balance.available + amount,
+            newBalance: systemWallet.balance.available
+          }
+        });
+        await transaction.save({ session });
+      }
 
       await session.commitTransaction();
 
@@ -184,10 +211,18 @@ class SystemWalletService {
     session.startTransaction();
 
     try {
-      // Get system wallet
-      const systemWallet = await SystemWallet.findOne({}).session(session);
+      // Get or create system wallet within transaction session
+      let systemWallet = await SystemWallet.findOne({}).session(session);
       if (!systemWallet) {
-        throw new Error('System wallet not found');
+        // Create a system wallet record as part of this transaction
+        systemWallet = new SystemWallet({
+          name: 'PIRA Platform Wallet',
+          balance: { available: 0, frozen: 0, pending: 0 },
+          currency: 'VND',
+          status: 'ACTIVE'
+        });
+        await systemWallet.save({ session });
+        console.log('Created system wallet inside transferToUser transaction');
       }
 
       // Check sufficient balance
@@ -197,15 +232,26 @@ class SystemWalletService {
         );
       }
 
-      // Get user wallet
-      const userWallet = await Wallet.findOne({ user: userId }).session(session);
+      // Get user wallet, or create if not exists
+      let userWallet = await Wallet.findOne({ user: userId }).session(session);
       if (!userWallet) {
-        throw new Error('User wallet not found');
+        console.log(`📝 User wallet not found for ${userId}, creating new wallet...`);
+        userWallet = new Wallet({
+          user: userId,
+          balance: { available: 0, frozen: 0, pending: 0 },
+          currency: 'VND',
+          status: 'ACTIVE'
+        });
+        await userWallet.save({ session });
+        console.log(`✅ Created user wallet for ${userId}`);
       }
 
       // Deduct from system wallet
       systemWallet.balance.available -= amount;
-      systemWallet.lastModifiedBy = adminId;
+      // Only set lastModifiedBy if adminId is a valid ObjectId
+      if (adminId && adminId !== 'SYSTEM_AUTO_TRANSFER' && adminId !== null) {
+        systemWallet.lastModifiedBy = adminId;
+      }
       systemWallet.lastModifiedAt = new Date();
       await systemWallet.save({ session });
 
@@ -214,12 +260,18 @@ class SystemWalletService {
       await userWallet.save({ session });
 
       // Create transaction records
+      // Create transaction records compatible with Transaction schema
       const systemTransaction = new Transaction({
+        user: adminId && adminId !== 'SYSTEM_AUTO_TRANSFER' ? adminId : userId, // audit: admin if available, else fallback to recipient
+        wallet: systemWallet._id,
         type: 'TRANSFER_OUT',
         amount: amount,
-        status: 'COMPLETED',
-        method: 'ADMIN_ACTION',
+        status: 'success',
+        paymentMethod: 'system_wallet',
         description: `Transfer to user ${userId}: ${description}`,
+        fromSystemWallet: true,
+        toWallet: userWallet._id,
+        systemWalletAction: 'transfer_out',
         metadata: {
           adminId: adminId,
           action: 'TRANSFER_TO_USER',
@@ -229,12 +281,15 @@ class SystemWalletService {
       });
 
       const userTransaction = new Transaction({
+        user: userId,
         wallet: userWallet._id,
         type: 'TRANSFER_IN',
         amount: amount,
-        status: 'COMPLETED',
-        method: 'ADMIN_ACTION',
+        status: 'success',
+        paymentMethod: 'system_wallet',
         description: `Received from system: ${description}`,
+        fromSystemWallet: true,
+        toWallet: userWallet._id,
         metadata: {
           adminId: adminId,
           action: 'RECEIVED_FROM_SYSTEM',
@@ -381,27 +436,35 @@ class SystemWalletService {
       systemWallet.lastModifiedAt = new Date();
       await systemWallet.save({ session });
 
-      // Create transaction records
-      const systemTransaction = new Transaction({
-        type: 'TRANSFER_IN',
-        amount: amount,
-        status: 'COMPLETED',
-        method: 'ADMIN_ACTION',
-        description: `Transfer from user ${userId}: ${description}`,
-        metadata: {
-          adminId: adminId,
-          action: 'TRANSFER_FROM_USER',
-          sourceUserId: userId,
-          sourceWalletId: userWallet._id
-        }
-      });
+      // Create transaction record
+      // Only create system transaction if we have a valid admin ObjectId
+      let systemTransaction = null;
+      if (adminId && mongoose.Types.ObjectId.isValid(adminId)) {
+        systemTransaction = new Transaction({
+          user: adminId,  // Admin user for audit trail
+          wallet: systemWallet._id,
+          type: 'withdrawal',
+          amount: amount,
+          status: 'success',
+          paymentMethod: 'wallet',
+          description: `Transfer from user ${userId}: ${description}`,
+          metadata: {
+            adminId: adminId,
+            action: 'TRANSFER_FROM_USER',
+            sourceUserId: userId,
+            sourceWalletId: userWallet._id
+          }
+        });
+        await systemTransaction.save({ session });
+      }
 
       const userTransaction = new Transaction({
+        user: userId,
         wallet: userWallet._id,
-        type: 'TRANSFER_OUT',
+        type: 'withdrawal',
         amount: amount,
-        status: 'COMPLETED',
-        method: 'ADMIN_ACTION',
+        status: 'success',
+        paymentMethod: 'wallet',
         description: `Transferred to system: ${description}`,
         metadata: {
           adminId: adminId,
@@ -409,8 +472,6 @@ class SystemWalletService {
           destinationWallet: 'SYSTEM'
         }
       });
-
-      await systemTransaction.save({ session });
       await userTransaction.save({ session });
 
       await session.commitTransaction();
@@ -705,6 +766,358 @@ class SystemWalletService {
     } catch (error) {
       console.error('❌ Error getting dashboard data:', error);
       throw error;
+    }
+  }
+
+  /**
+   * Transfer rental fee with platform fee tracking
+   * Splits the amount: ownerShare (80%) to owner, platformFee (20%) stays in system
+   * Creates separate transaction records for audit trail
+   */
+  async transferRentalFeeWithPlatformFee(adminId, ownerId, totalRentalAmount, subOrderNumber) {
+    if (totalRentalAmount <= 0) {
+      throw new Error('Rental amount must be positive');
+    }
+
+    const platformFeePercentage = 0.20; // 20% fee
+    const ownerSharePercentage = 0.80;  // 80% to owner
+    const platformFeeAmount = Math.round(totalRentalAmount * platformFeePercentage);
+    const ownerShareAmount = Math.round(totalRentalAmount * ownerSharePercentage);
+
+    const session = await mongoose.startSession();
+    session.startTransaction();
+
+    try {
+      // Get or create system wallet
+      let systemWallet = await SystemWallet.findOne({}).session(session);
+      if (!systemWallet) {
+        systemWallet = new SystemWallet({
+          name: 'PIRA Platform Wallet',
+          balance: { available: 0, frozen: 0, pending: 0 },
+          currency: 'VND',
+          status: 'ACTIVE'
+        });
+        await systemWallet.save({ session });
+      }
+
+      // Check sufficient balance
+      if (systemWallet.balance.available < totalRentalAmount) {
+        throw new Error(
+          `Insufficient system wallet balance for rental fee transfer. Available: ${systemWallet.balance.available.toLocaleString()} VND, Required: ${totalRentalAmount.toLocaleString()} VND`
+        );
+      }
+
+      // Get or create owner wallet
+      let ownerWallet = await Wallet.findOne({ user: ownerId }).session(session);
+      if (!ownerWallet) {
+        ownerWallet = new Wallet({
+          user: ownerId,
+          balance: { available: 0, frozen: 0, pending: 0 },
+          currency: 'VND',
+          status: 'ACTIVE'
+        });
+        await ownerWallet.save({ session });
+      }
+
+      // Deduct total from system wallet
+      systemWallet.balance.available -= totalRentalAmount;
+      systemWallet.lastModifiedAt = new Date();
+      if (adminId && adminId !== 'SYSTEM_AUTO_TRANSFER') {
+        systemWallet.lastModifiedBy = adminId;
+      }
+      await systemWallet.save({ session });
+
+      // Add owner share to owner wallet as FROZEN (will be unfrozen after 24h)
+      ownerWallet.balance.frozen += ownerShareAmount;
+      await ownerWallet.save({ session });
+      
+      // Create frozen record for automatic unlock in 24h
+      const FrozenBalance = require('../models/FrozenBalance');
+      const frozenRecord = new FrozenBalance({
+        wallet: ownerWallet._id,
+        user: ownerId,
+        amount: ownerShareAmount,
+        reason: 'RENTAL_FEE_TRANSFER',
+        subOrderNumber: subOrderNumber,
+        unlocksAt: new Date(Date.now() + 24 * 60 * 60 * 1000), // 24 hours from now
+        status: 'FROZEN'
+      });
+      await frozenRecord.save({ session });
+
+      // Create transaction records with platform fee tracking
+      
+      // System transaction: Total amount transferred out (80% to owner + 20% platform fee retained)
+      const systemTransaction = new Transaction({
+        user: adminId && adminId !== 'SYSTEM_AUTO_TRANSFER' ? adminId : ownerId,
+        wallet: systemWallet._id,
+        type: 'TRANSFER_OUT',
+        amount: totalRentalAmount,
+        status: 'success',
+        paymentMethod: 'system_wallet',
+        description: `Rental fee transfer for suborder ${subOrderNumber}`,
+        fromSystemWallet: true,
+        toWallet: ownerWallet._id,
+        systemWalletAction: 'transfer_out',
+        metadata: {
+          subOrderNumber: subOrderNumber,
+          totalRentalAmount: totalRentalAmount,
+          ownerShare: ownerShareAmount,
+          platformFee: platformFeeAmount,
+          platformFeePercentage: 20,
+          ownerSharePercentage: 80,
+          recipientUserId: ownerId,
+          action: 'RENTAL_FEE_WITH_PLATFORM_FEE'
+        }
+      });
+
+      // Owner transaction: Amount received (80% only)
+      const ownerTransaction = new Transaction({
+        user: ownerId,
+        wallet: ownerWallet._id,
+        type: 'TRANSFER_IN',
+        amount: ownerShareAmount,
+        status: 'success',
+        paymentMethod: 'system_wallet',
+        description: `Received rental fee (80%) for suborder ${subOrderNumber}`,
+        fromSystemWallet: true,
+        toWallet: ownerWallet._id,
+        metadata: {
+          subOrderNumber: subOrderNumber,
+          totalRentalAmount: totalRentalAmount,
+          receivedAmount: ownerShareAmount,
+          platformFeeDeducted: platformFeeAmount,
+          platformFeePercentage: 20,
+          action: 'RENTAL_FEE_RECEIVED'
+        }
+      });
+
+      // Platform fee transaction: Platform retains 20%
+      const platformFeeTransaction = new Transaction({
+        user: adminId && adminId !== 'SYSTEM_AUTO_TRANSFER' ? adminId : null,
+        wallet: systemWallet._id,
+        type: 'PROMOTION_REVENUE',
+        amount: platformFeeAmount,
+        status: 'success',
+        paymentMethod: 'system_wallet',
+        description: `Platform fee (20%) from suborder ${subOrderNumber}`,
+        toSystemWallet: true,
+        systemWalletAction: 'fee_collection',
+        metadata: {
+          subOrderNumber: subOrderNumber,
+          totalRentalAmount: totalRentalAmount,
+          platformFeePercentage: 20,
+          ownerSharePercentage: 80,
+          ownerUserId: ownerId,
+          action: 'PLATFORM_FEE_COLLECTION'
+        }
+      });
+
+      await systemTransaction.save({ session });
+      await ownerTransaction.save({ session });
+      await platformFeeTransaction.save({ session });
+
+      await session.commitTransaction();
+
+      // Emit socket update for owner wallet
+      if (global.chatGateway) {
+        global.chatGateway.emitWalletUpdate(ownerId.toString(), {
+          type: 'RENTAL_FEE_TRANSFER',
+          amount: ownerShareAmount,
+          newBalance: ownerWallet.balance.available
+        });
+      }
+
+      return {
+        success: true,
+        systemWallet: await this.getBalance(),
+        ownerWallet: {
+          walletId: ownerWallet._id,
+          userId: ownerId,
+          availableBalance: ownerWallet.balance.available,
+          frozenBalance: ownerWallet.balance.frozen,
+          unlocksAt: new Date(Date.now() + 24 * 60 * 60 * 1000)
+        },
+        transfer: {
+          totalRentalAmount: totalRentalAmount,
+          ownerShareAmount: ownerShareAmount,
+          platformFeeAmount: platformFeeAmount,
+          platformFeePercentage: 20,
+          ownerSharePercentage: 80,
+          status: 'FROZEN',
+          unlocksAfter: '24 hours'
+        },
+        transactions: {
+          system: systemTransaction,
+          owner: ownerTransaction,
+          platformFee: platformFeeTransaction
+        },
+        message: `Transferred ${ownerShareAmount.toLocaleString()} VND (80%) to owner (FROZEN for 24h). Platform fee ${platformFeeAmount.toLocaleString()} VND (20%) retained.`
+      };
+    } catch (error) {
+      await session.abortTransaction();
+      throw error;
+    } finally {
+      session.endSession();
+    }
+  }
+
+  /**
+   * Transfer deposit refund with frozen status
+   * Deposit is added as FROZEN and will unlock after 24 hours
+   */
+  async transferDepositRefundWithFrozen(adminId, renterId, depositAmount, subOrderNumber) {
+    if (depositAmount <= 0) {
+      throw new Error('Deposit amount must be positive');
+    }
+
+    const session = await mongoose.startSession();
+    session.startTransaction();
+
+    try {
+      // Get or create system wallet
+      let systemWallet = await SystemWallet.findOne({}).session(session);
+      if (!systemWallet) {
+        systemWallet = new SystemWallet({
+          name: 'PIRA Platform Wallet',
+          balance: { available: 0, frozen: 0, pending: 0 },
+          currency: 'VND',
+          status: 'ACTIVE'
+        });
+        await systemWallet.save({ session });
+      }
+
+      // Check sufficient balance
+      if (systemWallet.balance.available < depositAmount) {
+        throw new Error(
+          `Insufficient system wallet balance for deposit refund. Available: ${systemWallet.balance.available.toLocaleString()} VND, Required: ${depositAmount.toLocaleString()} VND`
+        );
+      }
+
+      // Get or create renter wallet
+      let renterWallet = await Wallet.findOne({ user: renterId }).session(session);
+      if (!renterWallet) {
+        renterWallet = new Wallet({
+          user: renterId,
+          balance: { available: 0, frozen: 0, pending: 0 },
+          currency: 'VND',
+          status: 'ACTIVE'
+        });
+        await renterWallet.save({ session });
+      }
+
+      // Deduct from system wallet
+      systemWallet.balance.available -= depositAmount;
+      systemWallet.lastModifiedAt = new Date();
+      if (adminId && adminId !== 'SYSTEM_AUTO_TRANSFER') {
+        systemWallet.lastModifiedBy = adminId;
+      }
+      await systemWallet.save({ session });
+
+      // Add to renter wallet as FROZEN (will be unfrozen after 24h)
+      renterWallet.balance.frozen += depositAmount;
+      await renterWallet.save({ session });
+
+      // Create frozen record for automatic unlock in 24h
+      const FrozenBalance = require('../models/FrozenBalance');
+      const frozenRecord = new FrozenBalance({
+        wallet: renterWallet._id,
+        user: renterId,
+        amount: depositAmount,
+        reason: 'DEPOSIT_REFUND',
+        subOrderNumber: subOrderNumber,
+        unlocksAt: new Date(Date.now() + 24 * 60 * 60 * 1000), // 24 hours from now
+        status: 'FROZEN',
+        metadata: {
+          adminId: adminId,
+          action: 'DEPOSIT_REFUND'
+        }
+      });
+      await frozenRecord.save({ session });
+
+      // Create transaction records
+
+      // System transaction: Amount transferred out
+      const systemTransaction = new Transaction({
+        user: adminId && adminId !== 'SYSTEM_AUTO_TRANSFER' ? adminId : renterId,
+        wallet: systemWallet._id,
+        type: 'TRANSFER_OUT',
+        amount: depositAmount,
+        status: 'success',
+        paymentMethod: 'system_wallet',
+        description: `Deposit refund for suborder ${subOrderNumber}`,
+        fromSystemWallet: true,
+        toWallet: renterWallet._id,
+        systemWalletAction: 'refund',
+        metadata: {
+          subOrderNumber: subOrderNumber,
+          depositAmount: depositAmount,
+          recipientUserId: renterId,
+          action: 'DEPOSIT_REFUND_TRANSFER_OUT'
+        }
+      });
+
+      // Renter transaction: Amount received (FROZEN)
+      const renterTransaction = new Transaction({
+        user: renterId,
+        wallet: renterWallet._id,
+        type: 'TRANSFER_IN',
+        amount: depositAmount,
+        status: 'success',
+        paymentMethod: 'system_wallet',
+        description: `Deposit refund for suborder ${subOrderNumber} (FROZEN for 24h)`,
+        fromSystemWallet: true,
+        toWallet: renterWallet._id,
+        metadata: {
+          subOrderNumber: subOrderNumber,
+          depositAmount: depositAmount,
+          status: 'FROZEN',
+          unlocksAfter: '24 hours',
+          action: 'DEPOSIT_REFUND_RECEIVED'
+        }
+      });
+
+      await systemTransaction.save({ session });
+      await renterTransaction.save({ session });
+
+      await session.commitTransaction();
+
+      // Emit socket update for renter wallet
+      if (global.chatGateway) {
+        global.chatGateway.emitWalletUpdate(renterId.toString(), {
+          type: 'DEPOSIT_REFUND',
+          amount: depositAmount,
+          status: 'FROZEN',
+          frozenBalance: renterWallet.balance.frozen,
+          unlocksAt: new Date(Date.now() + 24 * 60 * 60 * 1000)
+        });
+      }
+
+      return {
+        success: true,
+        systemWallet: await this.getBalance(),
+        renterWallet: {
+          walletId: renterWallet._id,
+          userId: renterId,
+          availableBalance: renterWallet.balance.available,
+          frozenBalance: renterWallet.balance.frozen,
+          unlocksAt: new Date(Date.now() + 24 * 60 * 60 * 1000)
+        },
+        transfer: {
+          depositAmount: depositAmount,
+          status: 'FROZEN',
+          unlocksAfter: '24 hours'
+        },
+        transactions: {
+          system: systemTransaction,
+          renter: renterTransaction
+        },
+        message: `Deposit refund ${depositAmount.toLocaleString()} VND returned to renter (FROZEN for 24h).`
+      };
+    } catch (error) {
+      await session.abortTransaction();
+      throw error;
+    } finally {
+      session.endSession();
     }
   }
 }
