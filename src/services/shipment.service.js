@@ -144,27 +144,21 @@ class ShipmentService {
 
     await shipment.save();
 
-    // Update subOrder status based on shipment type
-    try {
-      if (shipment.subOrder) {
-        if (shipment.type === 'DELIVERY') {
-          // After DELIVERY completed, subOrder is DELIVERED
-          shipment.subOrder.status = 'DELIVERED';
-          // Set readyAt for auto-confirmation (24h auto-confirm if renter doesn't manually confirm)
-          if (!shipment.subOrder.autoConfirmation.readyAt) {
-            shipment.subOrder.autoConfirmation.readyAt = new Date();
-            console.log(`   → Auto-confirmation readyAt set (24h countdown started)`);
-          }
-          console.log(`   → SubOrder status updated to DELIVERED`);
-        } else if (shipment.type === 'RETURN') {
-          // After RETURN completed, subOrder is RETURNED
-          shipment.subOrder.status = 'RETURNED';
-          console.log(`   → SubOrder status updated to RETURNED`);
-        }
-        await shipment.subOrder.save();
-      }
-    } catch (err) {
-      console.warn('Failed to update subOrder status:', err.message);
+    // 🔒 CRITICAL: Do NOT automatically update SubOrder status!
+    // SubOrder status should ONLY be changed when:
+    // - DELIVERY shipment: Only RENTER can confirm via renterConfirmDelivered()
+    // - RETURN shipment: Only OWNER can confirm via ownerConfirmDelivery()
+    // 
+    // Just log that shipment was delivered - let renter/owner decide
+    console.log(`\n📋 Shipment marked DELIVERED - Awaiting confirmation:`);
+    if (shipment.type === 'DELIVERY') {
+      console.log(`   ✓ Renter must confirm delivery receipt via renterConfirmDelivered()`);
+      console.log(`   ✓ Shipment status: DELIVERED`);
+      console.log(`   ✓ SubOrder status: REMAINS as-is (waiting for renter confirmation)`);
+    } else if (shipment.type === 'RETURN') {
+      console.log(`   ✓ Owner must confirm return receipt via ownerConfirmDelivery()`);
+      console.log(`   ✓ Shipment status: DELIVERED`);
+      console.log(`   ✓ SubOrder status: REMAINS as-is (waiting for owner confirmation)`);
     }
 
     // Transfer shipping fee to shipper when RETURN shipment is DELIVERED

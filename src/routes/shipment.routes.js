@@ -25,11 +25,19 @@ router.get('/:id', [param('id').isMongoId().withMessage('Invalid ID'), validateR
 // Shipper accepts
 router.post('/:id/accept', [param('id').isMongoId().withMessage('Invalid ID'), validateRequest], ShipmentController.shipperAccept);
 
-// Pickup / mark in transit
-router.post('/:id/pickup', [param('id').isMongoId().withMessage('Invalid ID'), validateRequest], ShipmentController.pickup);
+// Pickup / mark in transit - ONLY SHIPPER can pickup shipments
+router.post('/:id/pickup', [
+  param('id').isMongoId().withMessage('Invalid ID'), 
+  validateRequest,
+  authMiddleware.checkUserRole(['SHIPPER']) // Only shippers can pickup shipments
+], ShipmentController.pickup);
 
-// Deliver
-router.post('/:id/deliver', [param('id').isMongoId().withMessage('Invalid ID'), validateRequest], ShipmentController.deliver);
+// Deliver - ONLY SHIPPER can mark shipment as delivered
+router.post('/:id/deliver', [
+  param('id').isMongoId().withMessage('Invalid ID'), 
+  validateRequest,
+  authMiddleware.checkUserRole(['SHIPPER']) // Only shippers can deliver shipments
+], ShipmentController.deliver);
 
 // Renter confirm delivery
 router.post('/:id/confirm', [param('id').isMongoId().withMessage('Invalid ID'), validateRequest], ShipmentController.renterConfirm);

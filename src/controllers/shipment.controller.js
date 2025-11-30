@@ -133,7 +133,26 @@ class ShipmentController {
 
   async pickup(req, res) {
     try {
-      const shipment = await ShipmentService.updatePickup(req.params.id, req.body);
+      const shipperId = req.user._id;
+      const shipmentId = req.params.id;
+      const userRole = req.user.role;
+
+      console.log('📥 POST /shipments/:id/pickup');
+      console.log('👤 User ID:', shipperId);
+      console.log('👤 User Role:', userRole);
+      console.log('📦 Shipment ID:', shipmentId);
+
+      // Only SHIPPER role can pickup shipments
+      if (userRole !== 'SHIPPER') {
+        console.error('❌ User is not a shipper - access denied');
+        return res.status(403).json({ 
+          status: 'error', 
+          message: 'Only shippers can pick up shipments. This action has been logged.' 
+        });
+      }
+
+      const shipment = await ShipmentService.updatePickup(shipmentId, req.body);
+      console.log('✅ Shipment pickup marked successfully');
       return res.json({ status: 'success', data: shipment });
     } catch (err) {
       console.error('pickup error', err.message);
@@ -143,7 +162,26 @@ class ShipmentController {
 
   async deliver(req, res) {
     try {
-      const shipment = await ShipmentService.markDelivered(req.params.id, req.body);
+      const shipperId = req.user._id;
+      const shipmentId = req.params.id;
+      const userRole = req.user.role;
+
+      console.log('📥 POST /shipments/:id/deliver');
+      console.log('👤 User ID:', shipperId);
+      console.log('👤 User Role:', userRole);
+      console.log('📦 Shipment ID:', shipmentId);
+
+      // Double-check: Only SHIPPER role can deliver shipments
+      if (userRole !== 'SHIPPER') {
+        console.error('❌ User is not a shipper - access denied');
+        return res.status(403).json({ 
+          status: 'error', 
+          message: 'Only shippers can mark shipments as delivered. This action has been logged.' 
+        });
+      }
+
+      const shipment = await ShipmentService.markDelivered(shipmentId, req.body);
+      console.log('✅ Shipment marked as delivered successfully');
       return res.json({ status: 'success', data: shipment });
     } catch (err) {
       console.error('deliver error', err.message);

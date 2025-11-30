@@ -1356,11 +1356,30 @@ class RentalOrderController {
         return res.status(404).json({ status: 'error', message: 'SubOrder not found' });
       }
 
-      // Verify renter authorization
+      // Verify renter authorization - ONLY the renter can confirm delivery
       const masterOrder = await MasterOrder.findById(subOrder.masterOrder);
-      if (!masterOrder || String(masterOrder.renter) !== String(userId)) {
-        console.error('❌ Renter not authorized');
-        return res.status(403).json({ status: 'error', message: 'You do not have permission' });
+      if (!masterOrder) {
+        console.error('❌ MasterOrder not found');
+        return res.status(404).json({ status: 'error', message: 'MasterOrder not found' });
+      }
+
+      const masterOrderRenterId = String(masterOrder.renter);
+      const currentUserId = String(userId);
+      
+      console.log(`🔐 Authorization Check:`);
+      console.log(`   MasterOrder Renter ID: ${masterOrderRenterId}`);
+      console.log(`   Current User ID: ${currentUserId}`);
+      console.log(`   User Role: ${req.user.role}`);
+      console.log(`   Match: ${masterOrderRenterId === currentUserId}`);
+
+      // Strict check: current user MUST be the renter
+      if (masterOrderRenterId !== currentUserId) {
+        console.error('❌ User is not the renter - access denied');
+        console.error(`   Renter: ${masterOrderRenterId}, Attempted by: ${currentUserId}`);
+        return res.status(403).json({ 
+          status: 'error', 
+          message: 'Only the renter can confirm delivery. This action has been logged.' 
+        });
       }
 
       // If already marked DELIVERED, return error - only 1 confirmation allowed
@@ -1518,10 +1537,23 @@ class RentalOrderController {
         return res.status(404).json({ status: 'error', message: 'SubOrder not found' });
       }
 
-      // Verify owner authorization
-      if (String(subOrder.owner) !== String(userId)) {
-        console.error('❌ Owner not authorized');
-        return res.status(403).json({ status: 'error', message: 'You do not have permission' });
+      // Strict owner authorization check - ONLY the owner can confirm return
+      const subOrderOwnerId = String(subOrder.owner);
+      const currentUserId = String(userId);
+      
+      console.log(`🔐 Authorization Check:`);
+      console.log(`   SubOrder Owner ID: ${subOrderOwnerId}`);
+      console.log(`   Current User ID: ${currentUserId}`);
+      console.log(`   User Role: ${req.user.role}`);
+      console.log(`   Match: ${subOrderOwnerId === currentUserId}`);
+
+      if (subOrderOwnerId !== currentUserId) {
+        console.error('❌ User is not the owner - access denied');
+        console.error(`   Owner: ${subOrderOwnerId}, Attempted by: ${currentUserId}`);
+        return res.status(403).json({ 
+          status: 'error', 
+          message: 'Only the owner can confirm return receipt. This action has been logged.' 
+        });
       }
 
       const masterOrder = await MasterOrder.findById(subOrder.masterOrder);
@@ -1543,12 +1575,17 @@ class RentalOrderController {
         });
       }
 
-      // Check if renter has confirmed delivery
+      // Check if renter has confirmed delivery - CRITICAL BUSINESS LOGIC
+      // Renter MUST confirm first (SubOrder = DELIVERED) before owner can confirm return (SubOrder = COMPLETED)
       if (subOrder.status !== 'DELIVERED') {
         console.error('❌ Renter has not confirmed delivery yet');
+        console.error(`   Current SubOrder status: ${subOrder.status}`);
+        console.error(`   Expected status: DELIVERED`);
+        console.error(`   This prevents owner from bypassing renter confirmation`);
         return res.status(400).json({ 
           status: 'error', 
-          message: 'Renter must confirm delivery first before owner can confirm return' 
+          message: 'Renter must confirm delivery first before owner can confirm return. Your action has been prevented and logged.',
+          details: `Cannot proceed: SubOrder status is ${subOrder.status}, expected DELIVERED. This ensures renter confirms receipt before payment is released.`
         });
       }
 
