@@ -1346,7 +1346,7 @@ class RentalOrderService {
         return;
       }
 
-      const subOrders = await SubOrder.find({ masterOrder: masterOrderId });
+      const subOrders = await SubOrder.find({ masterOrder: masterOrderId }).populate('owner', 'address profile');
       console.log(`📋 checkAllContractsSigned: Found ${subOrders.length} subOrders for master order ${masterOrderId}`);
 
       if (subOrders.length === 0) {
@@ -1360,11 +1360,59 @@ class RentalOrderService {
 
       if (allSigned) {
         // Update master order status
-        await MasterOrder.findByIdAndUpdate(masterOrderId, {
+        const masterOrder = await MasterOrder.findByIdAndUpdate(masterOrderId, {
           status: 'CONTRACT_SIGNED'
-        });
+        }, { new: true });
         console.log(`✅ Master Order status updated to CONTRACT_SIGNED`);
-        console.log(`📝 Waiting for renter to request shipment creation...`);
+
+        // 🚀 Tự động tạo shipments cho tất cả subOrders
+        console.log(`\n🚀 Auto-creating shipments for master order ${masterOrderId}...`);
+        
+        try {
+          const ShipmentService = require('./shipment.service');
+          
+          // Lấy owner từ subOrders (ưu tiên subOrder đầu tiên để tìm shipper)
+          // Nếu có multiple owners, sẽ tìm shipper cho từng owner nhưng chỉ assign 1 shipper cho tất cả
+          const owners = subOrders
+            .filter(so => so.owner)
+            .map(so => so.owner);
+
+          if (owners.length === 0) {
+            throw new Error('No owners found for shipment creation');
+          }
+
+          console.log(`   Found ${owners.length} owner(s)`);
+
+          // Tìm shipper dựa trên owner đầu tiên (hoặc có thể implement logic khác)
+          let shipperId = null;
+          
+          for (const owner of owners) {
+            console.log(`   📦 Trying owner ${owner._id} with address:`, owner.address);
+            const shipper = await ShipmentService.findShipperInSameArea(owner.address);
+            
+            if (shipper) {
+              console.log(`   ✅ Found shipper in same area: ${shipper._id}`);
+              shipperId = shipper._id;
+              break;
+            }
+          }
+
+          if (!shipperId) {
+            console.warn('   ⚠️ Could not find shipper in same area for any owner. Creating shipments without shipper assignment...');
+          }
+
+          // Tạo shipments cho toàn bộ masterOrder (nó sẽ tạo cho tất cả subOrders)
+          const result = await ShipmentService.createDeliveryAndReturnShipments(masterOrderId, shipperId);
+          
+          console.log(`✅ Shipments created automatically:`, result);
+          console.log(`   Total shipments: ${result.count}`);
+          console.log(`   Shipment pairs: ${result.pairs}`);
+        } catch (shipmentError) {
+          console.error('❌ Error creating shipments automatically:', shipmentError.message);
+          console.error('   Stack:', shipmentError.stack);
+          console.error('   This is a non-critical error - system will continue');
+          // Không throw error - để cho process tiếp tục
+        }
       }
     } catch (error) {
       console.error('❌ Error in checkAllContractsSigned:', error.message);

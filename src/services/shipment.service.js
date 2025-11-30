@@ -497,7 +497,7 @@ class ShipmentService {
               shipment: outboundShipment._id,
               imageBeforeDelivery: '',
               imageAfterDelivery: '',
-              notes: `Delivery proof placeholder for shipment ${outboundShipment.shipmentId}`
+              notes: `DELIVERY: ${product.name} | From: ${renter.profile?.fullName || 'Renter'} | To: ${owner.profile?.fullName || 'Owner'} | Date: ${subOrder.rentalPeriod?.startDate}`
             });
             await deliveryProof.save();
             console.log(`        ✅ Created ShipmentProof for DELIVERY: ${deliveryProof._id}`);
@@ -578,7 +578,7 @@ class ShipmentService {
               shipment: returnShipment._id,
               imageBeforeDelivery: '',
               imageAfterDelivery: '',
-              notes: `Return proof placeholder for shipment ${returnShipment.shipmentId}`
+              notes: `RETURN: ${product.name} | From: ${owner.profile?.fullName || 'Owner'} | To: ${renter.profile?.fullName || 'Renter'} | Date: ${subOrder.rentalPeriod?.endDate}`
             });
             await returnProof.save();
             console.log(`        ✅ Created ShipmentProof for RETURN: ${returnProof._id}`);
@@ -637,6 +637,87 @@ class ShipmentService {
       if (error.stack) {
         console.error('Stack trace:', error.stack);
       }
+      throw error;
+    }
+  }
+
+  /**
+   * Tìm shipper cùng khu vực với owner
+   * So sánh địa chỉ dựa trên: district, city, province
+   */
+  async findShipperInSameArea(ownerAddress) {
+    try {
+      if (!ownerAddress) {
+        console.warn('⚠️ findShipperInSameArea: ownerAddress is null/undefined');
+        return null;
+      }
+
+      console.log('🔍 Finding shipper in same area as owner');
+      console.log('   Owner address:', ownerAddress);
+
+      // Tìm shipper có địa chỉ trùng với owner
+      // Ưu tiên: district → city → province
+      let shipper = null;
+
+      if (ownerAddress.district) {
+        // Tìm shipper cùng district
+        shipper = await User.findOne({
+          role: 'SHIPPER',
+          'address.district': ownerAddress.district,
+          status: 'ACTIVE'
+        }).select('_id email phone profile address');
+
+        if (shipper) {
+          console.log(`✅ Found shipper in same district: ${shipper._id}`);
+          return shipper;
+        }
+      }
+
+      if (!shipper && ownerAddress.city) {
+        // Tìm shipper cùng city nhưng khác district
+        shipper = await User.findOne({
+          role: 'SHIPPER',
+          'address.city': ownerAddress.city,
+          status: 'ACTIVE'
+        }).select('_id email phone profile address');
+
+        if (shipper) {
+          console.log(`✅ Found shipper in same city: ${shipper._id}`);
+          return shipper;
+        }
+      }
+
+      if (!shipper && ownerAddress.province) {
+        // Tìm shipper cùng province
+        shipper = await User.findOne({
+          role: 'SHIPPER',
+          'address.province': ownerAddress.province,
+          status: 'ACTIVE'
+        }).select('_id email phone profile address');
+
+        if (shipper) {
+          console.log(`✅ Found shipper in same province: ${shipper._id}`);
+          return shipper;
+        }
+      }
+
+      // Nếu không tìm thấy, lấy shipper bất kỳ
+      if (!shipper) {
+        shipper = await User.findOne({
+          role: 'SHIPPER',
+          status: 'ACTIVE'
+        }).select('_id email phone profile address');
+
+        if (shipper) {
+          console.log(`✅ No local shipper found, assigned any available shipper: ${shipper._id}`);
+          return shipper;
+        }
+      }
+
+      console.warn('⚠️ No shipper found');
+      return null;
+    } catch (error) {
+      console.error('❌ Error finding shipper in same area:', error);
       throw error;
     }
   }
