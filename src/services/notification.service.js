@@ -108,4 +108,54 @@ const notificationService = {
   }
 };
 
+/**
+ * Send notification to user (both push and in-app)
+ * @param {string|ObjectId} recipientId - User ID to send notification to
+ * @param {string} title - Notification title
+ * @param {string} body - Notification body/message
+ * @param {object} options - Additional options
+ * @param {string} options.type - Notification type (ORDER, PAYMENT, etc)
+ * @param {string} options.category - Category (INFO, SUCCESS, WARNING, ERROR)
+ * @param {ObjectId} options.relatedExtension - Related extension ID
+ * @param {object} options.data - Additional metadata
+ */
+const sendNotification = async (recipientId, title, body, options = {}) => {
+  try {
+    const {
+      type = 'SYSTEM',
+      category = 'INFO',
+      relatedExtension = null,
+      data = {}
+    } = options;
+
+    // Create in-app notification
+    const notification = new Notification({
+      recipient: recipientId,
+      title,
+      message: body,
+      type,
+      category,
+      relatedExtension,
+      data,
+      status: 'DELIVERED'
+    });
+
+    await notification.save();
+
+    console.log('✅ Notification created:', {
+      recipientId,
+      notificationId: notification._id,
+      type,
+      title
+    });
+
+    return notification;
+  } catch (error) {
+    console.error('❌ Error creating notification:', error);
+    // Don't throw - notifications are not critical
+    return null;
+  }
+};
+
 module.exports = notificationService;
+module.exports.sendNotification = sendNotification;

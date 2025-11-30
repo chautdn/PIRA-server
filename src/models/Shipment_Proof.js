@@ -8,13 +8,21 @@ const shipmentProofSchema = new mongoose.Schema(
       required: true
     },
     imageBeforeDelivery: {
-      type: String,
-      required: true
+      type: String
     },
+    imagesBeforeDelivery: [
+      {
+        type: String
+      }
+    ],
     imageAfterDelivery: {
-      type: String,
-      required: true
+      type: String
     },
+    imagesAfterDelivery: [
+      {
+        type: String
+      }
+    ],
     imageAfterUsage: {
       type: String
     },
@@ -39,3 +47,9 @@ const shipmentProofSchema = new mongoose.Schema(
     collection: 'shipment_proofs'
   }
 );
+
+// Index for quick lookup by shipment
+shipmentProofSchema.index({ shipment: 1 });
+shipmentProofSchema.index({ createdAt: -1 });
+
+module.exports = mongoose.model('ShipmentProof', shipmentProofSchema);
