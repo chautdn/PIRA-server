@@ -91,6 +91,7 @@ const disputeSchema = new mongoose.Schema(
     // Evidence
     evidence: {
       photos: [String],
+      videos: [String],
       documents: [String],
       additionalInfo: String
     },
@@ -133,6 +134,7 @@ const disputeSchema = new mongoose.Schema(
       respondedAt: Date,
       evidence: {
         photos: [String],
+        videos: [String],
         documents: [String],
         notes: String
       }
@@ -243,6 +245,7 @@ const disputeSchema = new mongoose.Schema(
       evidence: {
         documents: [String],
         photos: [String],
+        videos: [String],
         officialDecision: String,
         uploadedBy: {
           type: mongoose.Schema.Types.ObjectId,
@@ -324,9 +327,9 @@ disputeSchema.methods.canOpenDispute = function(productStatus, shipmentType, use
     if (userId.toString() === ownerId.toString()) {
       return { allowed: false, reason: 'Owner không thể mở dispute trong giai đoạn giao hàng' };
     }
-    // Chỉ cho phép khi DELIVERY_FAILED
-    if (productStatus !== 'DELIVERY_FAILED') {
-      return { allowed: false, reason: 'Chỉ có thể mở dispute khi trạng thái là DELIVERY_FAILED' };
+    // Cho phép khi DELIVERY_FAILED hoặc ACTIVE (renter có thể dispute khi đang sử dụng)
+    if (!['DELIVERY_FAILED', 'ACTIVE'].includes(productStatus)) {
+      return { allowed: false, reason: 'Chỉ có thể mở dispute khi trạng thái là DELIVERY_FAILED hoặc ACTIVE' };
     }
   }
   
