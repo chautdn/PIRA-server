@@ -55,6 +55,10 @@ router.use('/system-promotions', systemPromotionRoutes);
 const voucherRoutes = require('./voucher.routes');
 router.use('/vouchers', voucherRoutes);
 
+// Extension routes
+const extensionRoutes = require('./extension.routes');
+router.use('/extensions', extensionRoutes);
+
 // Register all routes from the registry FIRST
 getRoutes()?.forEach(({ path, router: moduleRouter }) => {
   if (!path || typeof path !== 'string') {

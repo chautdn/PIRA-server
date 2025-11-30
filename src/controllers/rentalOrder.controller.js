@@ -1640,6 +1640,205 @@ class RentalOrderController {
       return res.status(400).json({ status: 'error', message: error.message });
     }
   }
+
+  /**
+   * Tính phí gia hạn thuê
+   * POST /api/rental-orders/:masterOrderId/calculate-extend-fee
+   */
+  async calculateExtendFee(req, res) {
+    try {
+      const { masterOrderId } = req.params;
+      const { extendDays } = req.body;
+      const userId = req.user.id;
+
+      console.log('📥 POST /api/rental-orders/:masterOrderId/calculate-extend-fee');
+      console.log('👤 User ID:', userId);
+      console.log('📋 Request data:', { masterOrderId, extendDays });
+
+      if (!extendDays || extendDays <= 0) {
+        throw new BadRequest('Số ngày gia hạn phải > 0');
+      }
+
+      // Get master order with full populate
+      const masterOrder = await MasterOrder.findById(masterOrderId)
+        .populate({
+          path: 'subOrders',
+          populate: {
+            path: 'products.product'
+          }
+        });
+
+      if (!masterOrder) {
+        throw new NotFoundError('Không tìm thấy đơn hàng');
+      }
+
+      console.log('📦 Master order found:', { masterOrderNumber: masterOrder.masterOrderNumber, status: masterOrder.status });
+      console.log('📊 SubOrders count:', masterOrder.subOrders?.length);
+
+      // Check if user is the renter
+      if (masterOrder.renter.toString() !== userId) {
+        throw new ForbiddenError('Bạn không có quyền gia hạn đơn hàng này');
+      }
+
+      // Calculate extend fee based on all products in all suborders
+      let extendFee = 0;
+      
+      for (let soIndex = 0; soIndex < masterOrder.subOrders.length; soIndex++) {
+        const subOrder = masterOrder.subOrders[soIndex];
+        console.log(`\n🔹 SubOrder ${soIndex}:`, { subOrderNumber: subOrder.subOrderNumber, productsCount: subOrder.products?.length });
+        
+        if (subOrder.products && subOrder.products.length > 0) {
+          for (let pIndex = 0; pIndex < subOrder.products.length; pIndex++) {
+            const productItem = subOrder.products[pIndex];
+            console.log(`   └─ Product ${pIndex}:`, {
+              productName: productItem.product?.name,
+              rentalRate: productItem.rentalRate,
+              quantity: productItem.quantity,
+              totalRental: productItem.totalRental
+            });
+            
+            // Use totalRental if available, otherwise calculate from rental rate
+            if (productItem.totalRental && productItem.rentalPeriod) {
+              // Get duration in days
+              const startDate = new Date(productItem.rentalPeriod.startDate);
+              const endDate = new Date(productItem.rentalPeriod.endDate);
+              const durationMs = endDate - startDate;
+              const durationDays = Math.ceil(durationMs / (1000 * 60 * 60 * 24));
+              
+              if (durationDays > 0) {
+                const dailyRate = productItem.totalRental / durationDays;
+                const productExtendFee = dailyRate * extendDays;
+                console.log(`      📊 Calculated: daily=${dailyRate.toFixed(0)}, extend=${productExtendFee.toFixed(0)}`);
+                extendFee += productExtendFee;
+              }
+            } else if (productItem.rentalRate) {
+              const productExtendFee = productItem.rentalRate * extendDays * (productItem.quantity || 1);
+              console.log(`      📊 Using rentalRate: ${productExtendFee.toFixed(0)}`);
+              extendFee += productExtendFee;
+            }
+          }
+        }
+      }
+
+      console.log('\n✅ Total extend fee calculated:', { extendDays, extendFee: extendFee.toFixed(0) });
+
+      return new SuccessResponse({
+        message: 'Tính phí gia hạn thành công',
+        metadata: {
+          extendDays,
+          extendFee: Math.round(extendFee)
+        }
+      }).send(res);
+    } catch (error) {
+      console.error('❌ calculateExtendFee error:', error.message);
+      return res.status(error.statusCode || 400).json({
+        success: false,
+        message: error.message || 'Không thể tính phí gia hạn'
+      });
+    }
+  }
+
+  /**
+   * Gia hạn thuê
+   * POST /api/rental-orders/:masterOrderId/extend-rental
+   */
+  async extendRental(req, res) {
+    try {
+      const { masterOrderId } = req.params;
+      const { extendDays, extendFee, notes } = req.body;
+      const userId = req.user.id;
+
+      console.log('📥 POST /api/rental-orders/:masterOrderId/extend-rental');
+      console.log('👤 User ID:', userId);
+      console.log('📋 Request data:', { masterOrderId, extendDays, extendFee, notes });
+
+      if (!extendDays || extendDays <= 0) {
+        throw new BadRequest('Số ngày gia hạn phải > 0');
+      }
+
+      // Get master order
+      const masterOrder = await MasterOrder.findById(masterOrderId).populate('subOrders');
+
+      if (!masterOrder) {
+        throw new NotFoundError('Không tìm thấy đơn hàng');
+      }
+
+      // Check if user is the renter
+      if (masterOrder.renter.toString() !== userId) {
+        throw new ForbiddenError('Bạn không có quyền gia hạn đơn hàng này');
+      }
+
+      // Check order status is ACTIVE
+      if (masterOrder.status !== 'ACTIVE') {
+        throw new BadRequest('Chỉ có thể gia hạn đơn hàng đang hoạt động');
+      }
+
+      // Get first suborder to update rental period
+      const subOrder = masterOrder.subOrders?.[0];
+      if (!subOrder) {
+        throw new NotFoundError('Không tìm thấy thông tin sản phẩm');
+      }
+
+      // Update rental period for all products in all suborders
+      for (const so of masterOrder.subOrders) {
+        if (so.products && so.products.length > 0) {
+          for (const productItem of so.products) {
+            if (productItem.rentalPeriod && productItem.rentalPeriod.endDate) {
+              const newEndDate = new Date(productItem.rentalPeriod.endDate);
+              newEndDate.setDate(newEndDate.getDate() + extendDays);
+              productItem.rentalPeriod.endDate = newEndDate;
+            }
+          }
+        }
+      }
+
+      // Also update master order rental period if it exists
+      if (masterOrder.rentalPeriod && masterOrder.rentalPeriod.endDate) {
+        const newEndDate = new Date(masterOrder.rentalPeriod.endDate);
+        newEndDate.setDate(newEndDate.getDate() + extendDays);
+        masterOrder.rentalPeriod.endDate = newEndDate;
+      }
+
+      // Deduct extend fee from renter wallet
+      if (extendFee && extendFee > 0) {
+        try {
+          await SystemWalletService.deductFromUserWallet(userId, extendFee, {
+            type: 'RENTAL_EXTENSION',
+            masterOrderId,
+            description: `Phí gia hạn thuê ${extendDays} ngày - Đơn ${masterOrder.masterOrderNumber}`,
+            notes
+          });
+          console.log('✅ Deducted extend fee from wallet:', extendFee);
+        } catch (walletError) {
+          console.error('❌ Wallet deduction error:', walletError.message);
+          // Continue anyway, don't fail the request
+        }
+      }
+
+      // Save all suborders
+      for (const so of masterOrder.subOrders) {
+        await so.save();
+      }
+
+      // Save master order
+      await masterOrder.save();
+
+      console.log('✅ Rental extended:', { masterOrderId, extendDays, newEndDate: subOrder.products[0]?.rentalPeriod?.endDate });
+
+      return new SuccessResponse({
+        message: 'Gia hạn thuê thành công',
+        metadata: {
+          masterOrder
+        }
+      }).send(res);
+    } catch (error) {
+      console.error('❌ extendRental error:', error.message);
+      return res.status(error.statusCode || 400).json({
+        success: false,
+        message: error.message || 'Không thể gia hạn thuê'
+      });
+    }
+  }
 }
 
 module.exports = new RentalOrderController();
