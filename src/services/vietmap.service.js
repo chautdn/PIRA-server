@@ -20,14 +20,16 @@ class VietMapService {
     const params = new URLSearchParams();
     params.append('api-version', '1.1');
     params.append('apikey', this.apiKey);
-    params.append('point', `${latOwner},${lonOwner}`);     // LAT,LON
-    params.append('point', `${latUser},${lonUser}`);       // LAT,LON
+    params.append('point', `${latOwner},${lonOwner}`); // LAT,LON
+    params.append('point', `${latUser},${lonUser}`); // LAT,LON
     params.append('points_encoded', 'true');
-    params.append('vehicle', 'bike');        // hoặc 'motorcycle' nếu muốn chính xác hơn
+    params.append('vehicle', 'bike'); // Xe máy
     params.append('optimize', 'true');
 
+    console.log('VietMap Route request urlsearchParams:', params.toString());
     try {
       const response = await axios.get(url, { params, timeout: 10000 });
+      console.log('VietMap Route response:', response.data);
 
       if (response.data?.code === 'OK' || response.data?.code === 'Ok') {
         if (response.data.paths?.length > 0) {
@@ -47,7 +49,6 @@ class VietMapService {
 
       // Nếu VietMap trả lỗi hoặc không tìm được đường
       throw new Error(response.data?.messages || 'No route found');
-
     } catch (error) {
       // BỎ FALLBACK HAVERSINE HOÀN TOÀN (nếu bạn muốn tính phí chính xác)
       // Chỉ log lỗi, trả về thất bại rõ ràng
@@ -60,10 +61,10 @@ class VietMapService {
    * Tính phí ship theo khoảng cách thực tế (dùng trong controller)
    */
   calculateShippingFee(distanceKm, options = {}) {
-    const baseFee = options.baseFee || 15000;           // 15k cố định
-    const pricePerKm = options.pricePerKm || 5000;      // 5k/km
-    const minFee = options.minFee || 20000;             // tối thiểu 20k
-    const maxFee = options.maxFee || 150000;            // tối đa 150k
+    const baseFee = options.baseFee || 15000; // 15k cố định
+    const pricePerKm = options.pricePerKm || 5000; // 5k/km
+    const minFee = options.minFee || 20000; // tối thiểu 20k
+    const maxFee = options.maxFee || 150000; // tối đa 150k
 
     let fee = baseFee + Math.round(distanceKm) * pricePerKm;
 
@@ -94,6 +95,7 @@ class VietMapService {
       ...options
     };
 
+    // Nhóm products theo ngày giao (startDate)
     const deliveryBatches = {};
     products.forEach((item, idx) => {
       const date = item.rentalPeriod?.startDate
@@ -101,25 +103,41 @@ class VietMapService {
         : 'unknown';
 
       if (!deliveryBatches[date]) deliveryBatches[date] = [];
-      deliveryBatches[date].push({ ...item, idx });
+      deliveryBatches[date].push({ ...item, productIndex: idx });
     });
 
     let totalShippingFee = 0;
     const batches = [];
+    const productFees = []; // Phí ship cho từng product
 
     Object.entries(deliveryBatches).forEach(([date, items], batchIndex) => {
+      // Tính phí cho batch này (1 lần giao)
       const rawFee = config.baseFeePerDelivery + distanceKm * config.pricePerKm;
-      let fee = Math.max(config.minFeePerDelivery, Math.min(config.maxFeePerDelivery, rawFee));
-      fee = Math.ceil(fee / 1000) * 1000; // làm tròn đẹp
+      let batchFee = Math.max(config.minFeePerDelivery, Math.min(config.maxFeePerDelivery, rawFee));
+      batchFee = Math.ceil(batchFee / 1000) * 1000; // làm tròn đẹp
 
-      totalShippingFee += fee;
+      totalShippingFee += batchFee;
+
+      // Phân bổ phí cho từng product trong batch
+      const feePerProduct = Math.round(batchFee / items.length);
+
+      items.forEach((item) => {
+        productFees.push({
+          productIndex: item.productIndex,
+          deliveryDate: date === 'unknown' ? null : date,
+          deliveryBatch: batchIndex + 1,
+          batchSize: items.length,
+          batchTotalFee: batchFee,
+          allocatedFee: feePerProduct
+        });
+      });
 
       batches.push({
         deliveryDate: date === 'unknown' ? null : date,
         batchIndex: batchIndex + 1,
         productCount: items.length,
         distanceKm,
-        deliveryFee: fee
+        deliveryFee: batchFee
       });
     });
 
@@ -129,6 +147,7 @@ class VietMapService {
       deliveryCount: batches.length,
       distanceKm,
       batches,
+      productFees, // ✅ Thêm phân bổ phí cho từng product
       summary: `Tổng phí ship: ${totalShippingFee.toLocaleString()}đ cho ${batches.length} lần giao (khoảng cách ${distanceKm.toFixed(1)}km)`
     };
   }
@@ -145,7 +164,10 @@ class VietMapService {
         userLocation.latitude
       );
 
-      // Bây giờ distanceResult luôn là thật 100%, không fallback
+      if (!distanceResult.success) {
+        throw new Error('Không thể tính khoảng cách từ VietMap API');
+      }
+
       const distanceKm = distanceResult.distanceKm;
 
       const shipping = this.calculateProductShippingFees(subOrder.products, distanceKm);
@@ -160,15 +182,11 @@ class VietMapService {
         },
         shippingFee: shipping.totalShippingFee,
         shippingDetails: shipping,
-        message: "Tính phí ship theo khoảng cách thực tế bằng VietMap"
+        message: 'Tính phí ship theo khoảng cách thực tế bằng VietMap'
       };
-
     } catch (error) {
-      return {
-        success: false,
-        subOrderId: subOrder._id || 'unknown',
-        error: error.message || 'Không thể tính khoảng cách'
-      };
+      console.error('❌ Error calculating SubOrder shipping:', error);
+      throw error; // Throw error thay vì return success: false
     }
   }
 
