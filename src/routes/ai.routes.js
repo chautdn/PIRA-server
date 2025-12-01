@@ -9,7 +9,7 @@ const { registerRoute } = require('./register.routes');
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: {
-    fileSize: 10 * 1024 * 1024, // 10MB max
+    fileSize: 10 * 1024 * 1024 // 10MB max
   },
   fileFilter: (req, file, cb) => {
     if (file.mimetype.startsWith('image/')) {
@@ -17,7 +17,7 @@ const upload = multer({
     } else {
       cb(new Error('Chỉ chấp nhận file ảnh'), false);
     }
-  },
+  }
 });
 
 /**
@@ -29,7 +29,7 @@ router.post('/analyze-image', upload.single('image'), async (req, res) => {
     if (!req.file) {
       return res.status(400).json({
         success: false,
-        message: 'Vui lòng upload ảnh',
+        message: 'Vui lòng upload ảnh'
       });
     }
 
@@ -48,13 +48,13 @@ router.post('/analyze-image', upload.single('image'), async (req, res) => {
     res.json({
       success: true,
       labels,
-      message: 'Phân tích ảnh thành công',
+      message: 'Phân tích ảnh thành công'
     });
   } catch (error) {
     console.error('❌ Error analyzing image:', error);
     res.status(500).json({
       success: false,
-      message: error.message || 'Lỗi khi phân tích ảnh',
+      message: error.message || 'Lỗi khi phân tích ảnh'
     });
   }
 });
@@ -72,17 +72,17 @@ function extractLabelsFromAnalysis(analysisResult) {
       const concepts = analysisResult.conceptDetection.rawConcepts;
       concepts.forEach((concept) => {
         const name = concept.name.toLowerCase();
-        
+
         // Bỏ qua NSFW labels và các labels không liên quan
         if (name === 'sfw' || name === 'nsfw' || name === 'no person' || name === 'indoors') {
           return;
         }
-        
+
         if (concept.value >= 0.5) {
           labels.push({
             name: concept.name,
             confidence: concept.value,
-            id: concept.id || concept.name,
+            id: concept.id || concept.name
           });
         }
       });
@@ -91,7 +91,10 @@ function extractLabelsFromAnalysis(analysisResult) {
     // Sort theo confidence
     labels.sort((a, b) => b.confidence - a.confidence);
 
-    console.log('✅ Final labels (filtered):', labels.map(l => l.name));
+    console.log(
+      '✅ Final labels (filtered):',
+      labels.map((l) => l.name)
+    );
 
     // Top 10 labels
     return labels.slice(0, 10);
