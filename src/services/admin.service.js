@@ -2173,12 +2173,70 @@ class AdminService {
   async getTransactionById(transactionId) {
     try {
       const transaction = await Transaction.findById(transactionId)
-        .populate('user', 'email profile.firstName profile.lastName profile.phone')
+        .populate({
+          path: 'user', 
+          select: 'email profile.firstName profile.lastName profile.phone profile.dateOfBirth role status createdAt bankAccount kycStatus',
+          populate: {
+            path: 'bankAccount',
+            select: 'accountNumber bankName accountHolder verificationStatus'
+          }
+        })
         .populate('wallet', 'balance user')
         .lean();
 
       if (!transaction) {
         throw new Error('Không tìm thấy giao dịch');
+      }
+
+      // Get additional user statistics if user exists
+      if (transaction.user) {
+        const userId = transaction.user._id;
+        
+        // Get user's transaction history summary
+        const [transactionStats, walletInfo, recentTransactions] = await Promise.all([
+          Transaction.aggregate([
+            { $match: { user: userId } },
+            {
+              $group: {
+                _id: null,
+                totalTransactions: { $sum: 1 },
+                totalAmount: { $sum: '$amount' },
+                successfulTransactions: {
+                  $sum: { $cond: [{ $eq: ['$status', 'success'] }, 1, 0] }
+                },
+                failedTransactions: {
+                  $sum: { $cond: [{ $eq: ['$status', 'failed'] }, 1, 0] }
+                },
+                averageAmount: { $avg: '$amount' },
+                firstTransaction: { $min: '$createdAt' },
+                lastTransaction: { $max: '$createdAt' }
+              }
+            }
+          ]),
+          
+          Wallet.findOne({ user: userId }).select('balance createdAt updatedAt').lean(),
+          
+          Transaction.find({ user: userId })
+            .sort({ createdAt: -1 })
+            .limit(5)
+            .select('type amount status createdAt description')
+            .lean()
+        ]);
+
+        // Add user statistics to transaction
+        transaction.userStats = {
+          transactionHistory: transactionStats[0] || {
+            totalTransactions: 0,
+            totalAmount: 0,
+            successfulTransactions: 0,
+            failedTransactions: 0,
+            averageAmount: 0,
+            firstTransaction: null,
+            lastTransaction: null
+          },
+          wallet: walletInfo,
+          recentTransactions: recentTransactions || []
+        };
       }
 
       return transaction;
