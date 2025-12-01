@@ -633,6 +633,118 @@ class DisputeService {
 
     return dispute;
   }
+
+  /**
+   * Admin xử lý tranh chấp lỗi shipper
+   * @param {String} disputeId - ID của dispute
+   * @param {String} adminId - ID của admin
+   * @param {Object} resolution - Thông tin giải quyết
+   * @returns {Promise<Dispute>}
+   */
+  async resolveShipperDamage(disputeId, adminId, resolution) {
+    const { solution, reasoning, shipperEvidence, insuranceClaim, refundAmount, compensationAmount } = resolution;
+
+    const dispute = await Dispute.findOne(this._buildDisputeQuery(disputeId))
+      .populate('complainant')
+      .populate('respondent')
+      .populate({
+        path: 'subOrder',
+        populate: [
+          { path: 'owner' },
+          { path: 'masterOrder', populate: { path: 'renter' } }
+        ]
+      });
+
+    if (!dispute) {
+      throw new Error('Dispute không tồn tại');
+    }
+
+    // Kiểm tra status và type
+    if (dispute.status !== 'ADMIN_REVIEW') {
+      throw new Error('Dispute phải ở trạng thái ADMIN_REVIEW');
+    }
+
+    if (dispute.type !== 'DAMAGED_BY_SHIPPER') {
+      throw new Error('Chỉ áp dụng cho dispute loại DAMAGED_BY_SHIPPER');
+    }
+
+    // Kiểm tra admin role
+    const admin = await User.findById(adminId);
+    if (!admin || admin.role !== 'ADMIN') {
+      throw new Error('Chỉ admin mới có quyền xử lý');
+    }
+
+    // Cập nhật admin decision
+    dispute.assignedAdmin = adminId;
+    dispute.status = 'RESOLVED';
+    dispute.adminDecision = {
+      decision: solution === 'REPLACEMENT' 
+        ? 'Gửi hàng thay thế - Shipper chịu trách nhiệm'
+        : 'Hoàn tiền + Hủy đơn - Shipper chịu trách nhiệm',
+      reasoning,
+      decidedAt: new Date(),
+      decidedBy: adminId,
+      shipperEvidence: shipperEvidence || {},
+      insuranceClaim: insuranceClaim
+    };
+
+    // Add timeline
+    dispute.timeline.push({
+      action: 'SHIPPER_DAMAGE_RESOLVED',
+      performedBy: adminId,
+      details: `Admin xác định lỗi shipper. Giải pháp: ${solution === 'REPLACEMENT' ? 'Gửi hàng thay thế' : 'Hoàn tiền + Hủy đơn'}`,
+      timestamp: new Date()
+    });
+
+    await dispute.save();
+
+    // TODO: Execute financial transactions based on solution
+    // - REPLACEMENT: No transactions for owner/renter, charge shipper
+    // - REFUND_CANCEL: Refund renter, compensate owner, charge shipper
+
+    // Gửi notification cho cả 2 bên
+    try {
+      const solutionText = solution === 'REPLACEMENT' 
+        ? 'gửi hàng thay thế' 
+        : 'hoàn tiền và hủy đơn';
+
+      const notificationData = {
+        type: 'DISPUTE',
+        category: 'SUCCESS',
+        title: 'Tranh chấp đã được giải quyết',
+        message: `Admin xác nhận lỗi do shipper. Giải pháp: ${solutionText}. Credit score của bạn không bị ảnh hưởng.`,
+        relatedDispute: dispute._id,
+        relatedOrder: dispute.subOrder.masterOrder._id,
+        actions: [{
+          label: 'Xem chi tiết',
+          url: `/disputes/${dispute._id}`,
+          action: 'VIEW_DISPUTE'
+        }],
+        data: {
+          disputeId: dispute.disputeId,
+          solution,
+          noImpact: true
+        },
+        status: 'SENT'
+      };
+
+      // Gửi cho complainant
+      await notificationService.createNotification({
+        ...notificationData,
+        recipient: dispute.complainant._id
+      });
+
+      // Gửi cho respondent
+      await notificationService.createNotification({
+        ...notificationData,
+        recipient: dispute.respondent._id
+      });
+    } catch (error) {
+      console.error('Failed to send resolution notifications:', error);
+    }
+
+    return dispute.populate(['complainant', 'respondent', 'assignedAdmin']);
+  }
 }
 
 module.exports = new DisputeService();

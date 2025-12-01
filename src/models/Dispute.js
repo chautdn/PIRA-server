@@ -103,6 +103,7 @@ const disputeSchema = new mongoose.Schema(
         'OPEN', // Mới tạo, chờ respondent phản hồi
         'RESPONDENT_ACCEPTED', // Respondent đồng ý -> Done
         'RESPONDENT_REJECTED', // Respondent từ chối -> Chuyển admin
+        'ADMIN_REVIEW', // Auto-escalated lên admin (cho shipper damage)
         'ADMIN_REVIEWING', // Admin đang xem xét bằng chứng
         'ADMIN_DECISION_MADE', // Admin đưa ra quyết định sơ bộ
         'BOTH_ACCEPTED', // Cả 2 bên đồng ý quyết định admin -> Done
