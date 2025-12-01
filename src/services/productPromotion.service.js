@@ -168,15 +168,17 @@ const productPromotionService = {
       try {
         const startDateStr = startDate.toLocaleDateString('vi-VN');
         const endDateStr = endDate.toLocaleDateString('vi-VN');
-        
+
         const notificationMessage = shouldActivateNow
           ? `Trừ ${totalAmount.toLocaleString('vi-VN')}đ để quảng cáo sản phẩm tier ${tier} từ ngày ${startDateStr} tới ngày ${endDateStr}`
           : `Trừ ${totalAmount.toLocaleString('vi-VN')}đ để đặt lịch quảng cáo sản phẩm tier ${tier}. Sẽ tự động kích hoạt từ ${startDateStr} tới ${endDateStr}`;
-        
+
         await notificationService.createNotification({
           recipient: userId,
           type: 'PROMOTION_PAYMENT',
-          title: shouldActivateNow ? 'Thanh toán quảng cáo thành công' : 'Đặt lịch quảng cáo thành công',
+          title: shouldActivateNow
+            ? 'Thanh toán quảng cáo thành công'
+            : 'Đặt lịch quảng cáo thành công',
           message: notificationMessage,
           data: {
             promotionId: promotion._id.toString(),
@@ -534,7 +536,9 @@ const productPromotionService = {
             isPromoted: updatedProduct.isPromoted
           });
         } else {
-          console.log('[Promotion Webhook] Promotion scheduled for later, product not activated yet');
+          console.log(
+            '[Promotion Webhook] Promotion scheduled for later, product not activated yet'
+          );
         }
 
         // Get user's wallet
@@ -593,7 +597,7 @@ const productPromotionService = {
         try {
           const startDateStr = promotion.startDate.toLocaleDateString('vi-VN');
           const endDateStr = promotion.endDate.toLocaleDateString('vi-VN');
-          
+
           await notificationService.createNotification({
             recipient: promotion.user,
             type: 'PROMOTION_PAYMENT',

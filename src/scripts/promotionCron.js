@@ -41,7 +41,7 @@ const startPromotionCronJob = () => {
 const runImmediately = async () => {
   try {
     console.log('[Promotion Cron] Running initial cleanup and activation...');
-    
+
     const deactivated = await productPromotionService.deactivateExpired();
     if (deactivated > 0) {
       console.log(
