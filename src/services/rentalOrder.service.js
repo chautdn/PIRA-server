@@ -101,6 +101,13 @@ class RentalOrderService {
             `${timeMessage} cho sản phẩm "${item.product.title || item.product.name}" "${startDate.toISOString().split('T')[0]}"`
           );
         }
+
+        // Check if renter is trying to rent their own product
+        if (item.product.owner._id.toString() === renterId.toString()) {
+          throw new Error(
+            `Bạn không thể đặt đơn thuê sản phẩm của chính mình: "${item.product.title || item.product.name}"`
+          );
+        }
       }
 
       // Nhóm sản phẩm theo chủ sở hữu (chỉ từ selected/processed items)
