@@ -7,6 +7,7 @@ const compression = require('compression');
 const path = require('path');
 const { successHandler } = require('../core/success');
 const { handleError } = require('../core/error');
+const timezoneMiddleware = require('../middleware/timezoneMiddleware');
 const router = require('../routes');
 const cookieParser = require('cookie-parser');
 
@@ -90,6 +91,9 @@ app.use((req, res, next) => {
 
 // Custom middleware for API responses
 app.use(successHandler);
+
+// Add timezone information to API responses
+app.use(timezoneMiddleware);
 
 // API Routes
 app.use('/api', router);

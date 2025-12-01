@@ -3138,7 +3138,6 @@ class RentalOrderService {
       // Cập nhật SubOrder với contract ID
       subOrder.contract = contract._id;
 
-
       if (session) {
         await subOrder.save({ session });
       } else {
