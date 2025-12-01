@@ -58,6 +58,12 @@ router.patch('/bank-accounts/:userId/verify', adminController.verifyBankAccount)
 router.patch('/bank-accounts/:userId/reject', adminController.rejectBankAccount);
 router.patch('/bank-accounts/:userId/status', adminController.updateBankAccountStatus);
 
+// ========== TRANSACTION MANAGEMENT ==========
+router.get('/transactions', adminController.getAllTransactions);
+router.get('/transactions/:transactionId', adminController.getTransactionById);
+router.get('/transactions/stats', adminController.getTransactionStats);
+router.get('/transactions/export', adminController.exportTransactions);
+
 // ========== SYSTEM SETTINGS ==========
 router.get('/settings', adminController.getSystemSettings);
 router.put('/settings', adminController.updateSystemSettings);
