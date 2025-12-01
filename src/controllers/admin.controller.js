@@ -677,6 +677,11 @@ class AdminController {
       }
       
       return res.send(exportData);
+    } catch (error) {
+      return responseUtils.error(res, error.message, 500);
+    }
+  }
+
   // ========== WITHDRAWAL FINANCIAL ANALYSIS ==========
   
   /**

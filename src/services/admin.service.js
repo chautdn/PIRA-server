@@ -9,7 +9,6 @@ const Transaction = require('../models/Transaction');
 const Wallet = require('../models/Wallet');
 const SystemWallet = require('../models/SystemWallet');
 const mongoose = require('mongoose');
-const Transaction = require('../models/Transaction');
 
 class AdminService {
   // ========== DASHBOARD STATISTICS ==========
