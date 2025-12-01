@@ -4,6 +4,11 @@ const Category = require('../models/Category');
 const Order = require('../models/MasterOrder');
 const SubOrder = require('../models/SubOrder');
 const Report = require('../models/Report');
+const Withdrawal = require('../models/Withdrawal');
+const Transaction = require('../models/Transaction');
+const Wallet = require('../models/Wallet');
+const SystemWallet = require('../models/SystemWallet');
+const mongoose = require('mongoose');
 const Transaction = require('../models/Transaction');
 
 class AdminService {
@@ -1521,6 +1526,524 @@ class AdminService {
     } catch (error) {
       throw new Error(`Lỗi khi cập nhật trạng thái tài khoản ngân hàng: ${error.message}`);
     }
+  }
+
+  // ========== WITHDRAWAL FINANCIAL ANALYSIS ==========
+  
+  /**
+   * Get detailed financial analysis for a withdrawal request
+   * @param {string} withdrawalId - Withdrawal request ID
+   * @returns {Object} Comprehensive financial data for admin review
+   */
+  async getWithdrawalFinancialAnalysis(withdrawalId) {
+    try {
+      // Get withdrawal request with full user data
+      const withdrawal = await Withdrawal.findById(withdrawalId)
+        .populate('user', 'email profile bankAccount cccd role createdAt')
+        .populate('wallet')
+        .populate('processedBy', 'email profile')
+        .lean();
+
+      if (!withdrawal) {
+        throw new Error('Withdrawal request not found');
+      }
+
+      const userId = withdrawal.user._id;
+      const userWallet = withdrawal.wallet;
+
+      // 1. User's current wallet status
+      const currentWalletStatus = await this.getUserWalletAnalysis(userId);
+
+      // 2. Transaction history analysis (last 90 days)
+      const transactionAnalysis = await this.getUserTransactionAnalysis(userId);
+
+      // 3. Withdrawal history
+      const withdrawalHistory = await this.getUserWithdrawalHistory(userId);
+
+      // 4. System wallet interactions
+      const systemInteractions = await this.getUserSystemWalletInteractions(userId);
+
+      // 5. PayOS transaction verification codes
+      const payosVerificationCodes = await this.getPayOSVerificationCodes(userId);
+
+      // 6. Risk assessment
+      const riskAssessment = await this.calculateWithdrawalRiskScore(userId, withdrawal.amount);
+
+      // 7. Account activity timeline
+      const activityTimeline = await this.getUserActivityTimeline(userId);
+
+      return {
+        withdrawal: {
+          ...withdrawal,
+          requestedAmount: withdrawal.amount,
+          formattedAmount: withdrawal.amount.toLocaleString('vi-VN') + ' VND'
+        },
+        user: {
+          ...withdrawal.user,
+          accountAge: this.calculateAccountAge(withdrawal.user.createdAt),
+          verificationStatus: {
+            kyc: withdrawal.user.cccd?.isVerified || false,
+            bankAccount: withdrawal.user.bankAccount?.isVerified || false
+          }
+        },
+        currentWalletStatus,
+        transactionAnalysis,
+        withdrawalHistory,
+        systemInteractions,
+        payosVerificationCodes,
+        riskAssessment,
+        activityTimeline,
+        recommendedAction: this.getWithdrawalRecommendation(riskAssessment),
+        generatedAt: new Date()
+      };
+    } catch (error) {
+      throw new Error(`Error generating financial analysis: ${error.message}`);
+    }
+  }
+
+  /**
+   * Get user's wallet analysis
+   */
+  async getUserWalletAnalysis(userId) {
+    const wallet = await Wallet.findOne({ user: userId }).lean();
+    
+    if (!wallet) {
+      return {
+        exists: false,
+        balance: { available: 0, frozen: 0, pending: 0, total: 0 }
+      };
+    }
+
+    const total = (wallet.balance.available || 0) + (wallet.balance.frozen || 0) + (wallet.balance.pending || 0);
+
+    return {
+      exists: true,
+      balance: {
+        available: wallet.balance.available || 0,
+        frozen: wallet.balance.frozen || 0,
+        pending: wallet.balance.pending || 0,
+        total,
+        formattedAvailable: (wallet.balance.available || 0).toLocaleString('vi-VN') + ' VND',
+        formattedTotal: total.toLocaleString('vi-VN') + ' VND'
+      },
+      lastActivity: wallet.updatedAt,
+      createdAt: wallet.createdAt
+    };
+  }
+
+  /**
+   * Get comprehensive transaction analysis
+   */
+  async getUserTransactionAnalysis(userId) {
+    const last90Days = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000);
+    
+    // Get all transactions in last 90 days
+    const transactions = await Transaction.find({
+      user: userId,
+      createdAt: { $gte: last90Days }
+    })
+    .sort({ createdAt: -1 })
+    .lean();
+
+    // Categorize transactions
+    const categories = {
+      deposits: transactions.filter(t => ['deposit', 'DEPOSIT'].includes(t.type)),
+      withdrawals: transactions.filter(t => ['withdrawal', 'WITHDRAWAL'].includes(t.type)),
+      payments: transactions.filter(t => ['payment', 'order_payment'].includes(t.type)),
+      refunds: transactions.filter(t => t.type === 'refund'),
+      penalties: transactions.filter(t => t.type === 'penalty'),
+      promotionRevenue: transactions.filter(t => t.type === 'PROMOTION_REVENUE'),
+      transfers: transactions.filter(t => ['TRANSFER_IN', 'TRANSFER_OUT'].includes(t.type))
+    };
+
+    // Calculate totals and statistics
+    const stats = {};
+    for (const [category, txns] of Object.entries(categories)) {
+      const amounts = txns.map(t => t.amount);
+      stats[category] = {
+        count: txns.length,
+        total: amounts.reduce((sum, amt) => sum + amt, 0),
+        average: amounts.length > 0 ? amounts.reduce((sum, amt) => sum + amt, 0) / amounts.length : 0,
+        largest: amounts.length > 0 ? Math.max(...amounts) : 0,
+        smallest: amounts.length > 0 ? Math.min(...amounts) : 0,
+        successRate: txns.length > 0 ? txns.filter(t => t.status === 'success').length / txns.length * 100 : 0
+      };
+    }
+
+    // Monthly breakdown
+    const monthlyBreakdown = this.groupTransactionsByMonth(transactions);
+
+    return {
+      totalTransactions: transactions.length,
+      period: '90 days',
+      categories,
+      statistics: stats,
+      monthlyBreakdown,
+      recentTransactions: transactions.slice(0, 10) // Latest 10
+    };
+  }
+
+  /**
+   * Get user's withdrawal history and patterns
+   */
+  async getUserWithdrawalHistory(userId) {
+    const withdrawals = await Withdrawal.find({ user: userId })
+      .sort({ createdAt: -1 })
+      .limit(20)
+      .lean();
+
+    const stats = {
+      totalRequests: withdrawals.length,
+      successful: withdrawals.filter(w => w.status === 'completed').length,
+      rejected: withdrawals.filter(w => w.status === 'rejected').length,
+      pending: withdrawals.filter(w => w.status === 'pending').length,
+      processing: withdrawals.filter(w => w.status === 'processing').length,
+      cancelled: withdrawals.filter(w => w.status === 'cancelled').length
+    };
+
+    const amounts = withdrawals.filter(w => w.status === 'completed').map(w => w.amount);
+    const totalWithdrawn = amounts.reduce((sum, amt) => sum + amt, 0);
+
+    // Pattern analysis
+    const patterns = {
+      averageAmount: amounts.length > 0 ? totalWithdrawn / amounts.length : 0,
+      largestWithdrawal: amounts.length > 0 ? Math.max(...amounts) : 0,
+      totalWithdrawn,
+      averageProcessingTime: this.calculateAverageProcessingTime(withdrawals),
+      frequencyPattern: this.analyzeWithdrawalFrequency(withdrawals)
+    };
+
+    return {
+      history: withdrawals,
+      statistics: stats,
+      patterns,
+      successRate: stats.totalRequests > 0 ? (stats.successful / stats.totalRequests * 100).toFixed(2) : 0
+    };
+  }
+
+  /**
+   * Get system wallet interactions
+   */
+  async getUserSystemWalletInteractions(userId) {
+    const systemInteractions = await Transaction.find({
+      user: userId,
+      $or: [
+        { fromSystemWallet: true },
+        { toSystemWallet: true },
+        { systemWalletAction: { $exists: true } }
+      ]
+    })
+    .sort({ createdAt: -1 })
+    .limit(50)
+    .lean();
+
+    const summary = {
+      totalInteractions: systemInteractions.length,
+      receivedFromSystem: systemInteractions.filter(t => t.fromSystemWallet).reduce((sum, t) => sum + t.amount, 0),
+      paidToSystem: systemInteractions.filter(t => t.toSystemWallet).reduce((sum, t) => sum + t.amount, 0),
+      recentInteractions: systemInteractions.slice(0, 10)
+    };
+
+    return summary;
+  }
+
+  /**
+   * Get PayOS verification codes for bank verification
+   */
+  async getPayOSVerificationCodes(userId) {
+    // Get PayOS transactions including deposits and promotion payments
+    const payosTransactions = await Transaction.find({
+      $or: [
+        // Direct PayOS deposits
+        {
+          user: userId,
+          provider: 'payos',
+          status: 'success',
+          type: { $in: ['deposit', 'DEPOSIT'] }
+        },
+        // PayOS promotion payments (these go to system wallet but show user as payer)
+        {
+          user: userId,
+          status: 'success',
+          type: 'PROMOTION_REVENUE',
+          description: { $regex: 'PayOS', $options: 'i' }
+        }
+      ]
+    })
+    .sort({ createdAt: -1 })
+    .limit(20)
+    .select('amount externalId orderCode createdAt description paymentMethod metadata type')
+    .lean();
+
+    // Also get promotion payments from orders using PayOS
+    const promotionOrders = await Order.find({
+      customer: userId,
+      paymentMethod: 'payos',
+      paymentStatus: 'COMPLETED'
+    })
+    .select('totalAmount masterOrderNumber paymentInfo createdAt')
+    .sort({ createdAt: -1 })
+    .limit(10)
+    .lean();
+
+    // Combine and format all PayOS-related transactions
+    const allPayOSActivity = [
+      ...payosTransactions.map(t => ({
+        amount: t.amount,
+        orderCode: t.externalId || t.orderCode || 'N/A',
+        date: t.createdAt,
+        formattedAmount: t.amount.toLocaleString('vi-VN') + ' VND',
+        description: t.description,
+        type: t.type === 'PROMOTION_REVENUE' ? 'Promotion Payment' : 'Deposit',
+        source: 'transaction',
+        metadata: t.metadata
+      })),
+      ...promotionOrders.map(o => ({
+        amount: o.totalAmount,
+        orderCode: o.paymentInfo?.orderCode || o.masterOrderNumber,
+        date: o.createdAt,
+        formattedAmount: o.totalAmount.toLocaleString('vi-VN') + ' VND',
+        description: `Order payment: ${o.masterOrderNumber}`,
+        type: 'Order Payment',
+        source: 'order',
+        metadata: o.paymentInfo
+      }))
+    ];
+
+    // Sort by date and return most recent
+    return allPayOSActivity
+      .sort((a, b) => new Date(b.date) - new Date(a.date))
+      .slice(0, 20);
+  }
+
+  /**
+   * Calculate withdrawal risk score
+   */
+  async calculateWithdrawalRiskScore(userId, requestedAmount) {
+    let riskScore = 0;
+    const riskFactors = [];
+
+    // 1. Account age (newer accounts = higher risk)
+    const user = await User.findById(userId).select('createdAt').lean();
+    const accountAgeDays = (Date.now() - user.createdAt) / (24 * 60 * 60 * 1000);
+    
+    if (accountAgeDays < 7) {
+      riskScore += 30;
+      riskFactors.push('Tài khoản mới (< 7 ngày)');
+    } else if (accountAgeDays < 30) {
+      riskScore += 20;
+      riskFactors.push('Tài khoản mới (< 30 ngày)');
+    } else if (accountAgeDays < 90) {
+      riskScore += 10;
+      riskFactors.push('Tài khoản tương đối mới (< 90 ngày)');
+    }
+
+    // 2. Transaction history
+    const transactionCount = await Transaction.countDocuments({ user: userId, status: 'success' });
+    if (transactionCount < 5) {
+      riskScore += 25;
+      riskFactors.push('Lịch sử giao dịch hạn chế (< 5 giao dịch thành công)');
+    } else if (transactionCount < 15) {
+      riskScore += 15;
+      riskFactors.push('Hoạt động giao dịch thấp (< 15 giao dịch)');
+    }
+
+    // 3. Withdrawal amount vs. typical activity
+    const wallet = await Wallet.findOne({ user: userId }).lean();
+    const balanceRatio = wallet ? (requestedAmount / (wallet.balance.available + requestedAmount)) : 1;
+    
+    if (balanceRatio > 0.8) {
+      riskScore += 20;
+      riskFactors.push('Rút số tiền lớn so với số dư (>80%)');
+    } else if (balanceRatio > 0.5) {
+      riskScore += 10;
+      riskFactors.push('Rút số tiền vừa phải so với số dư (>50%)');
+    }
+
+    // 4. Recent failed transactions
+    const recentFailures = await Transaction.countDocuments({
+      user: userId,
+      status: 'failed',
+      createdAt: { $gte: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000) }
+    });
+    
+    if (recentFailures > 3) {
+      riskScore += 25;
+      riskFactors.push('Nhiều giao dịch thất bại gần đây');
+    } else if (recentFailures > 1) {
+      riskScore += 15;
+      riskFactors.push('Một số giao dịch thất bại gần đây');
+    }
+
+    // 5. Previous rejection rate
+    const withdrawals = await Withdrawal.find({ user: userId }).lean();
+    const rejectionRate = withdrawals.length > 0 ? 
+      withdrawals.filter(w => w.status === 'rejected').length / withdrawals.length : 0;
+    
+    if (rejectionRate > 0.5) {
+      riskScore += 30;
+      riskFactors.push('Tỷ lệ từ chối rút tiền cao (>50%)');
+    } else if (rejectionRate > 0.2) {
+      riskScore += 15;
+      riskFactors.push('Tỷ lệ từ chối rút tiền vừa phải (>20%)');
+    }
+
+    // Determine risk level
+    let riskLevel;
+    if (riskScore <= 20) riskLevel = 'LOW';
+    else if (riskScore <= 50) riskLevel = 'MEDIUM';
+    else if (riskScore <= 75) riskLevel = 'HIGH';
+    else riskLevel = 'VERY_HIGH';
+
+    return {
+      score: riskScore,
+      level: riskLevel,
+      factors: riskFactors,
+      recommendation: this.getRiskRecommendation(riskLevel, riskScore)
+    };
+  }
+
+  /**
+   * Get user activity timeline
+   */
+  async getUserActivityTimeline(userId) {
+    const activities = [];
+
+    // Get key activities from last 30 days
+    const last30Days = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+
+    // Recent transactions
+    const recentTransactions = await Transaction.find({
+      user: userId,
+      createdAt: { $gte: last30Days }
+    })
+    .sort({ createdAt: -1 })
+    .limit(20)
+    .select('type amount status createdAt description')
+    .lean();
+
+    recentTransactions.forEach(t => {
+      activities.push({
+        type: 'transaction',
+        action: t.type,
+        amount: t.amount,
+        status: t.status,
+        timestamp: t.createdAt,
+        description: t.description
+      });
+    });
+
+    // Recent withdrawals
+    const recentWithdrawals = await Withdrawal.find({
+      user: userId,
+      createdAt: { $gte: last30Days }
+    })
+    .sort({ createdAt: -1 })
+    .limit(10)
+    .select('amount status createdAt')
+    .lean();
+
+    recentWithdrawals.forEach(w => {
+      activities.push({
+        type: 'withdrawal',
+        action: 'withdrawal_request',
+        amount: w.amount,
+        status: w.status,
+        timestamp: w.createdAt,
+        description: `Withdrawal request: ${w.amount.toLocaleString('vi-VN')} VND`
+      });
+    });
+
+    // Sort by timestamp
+    activities.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+
+    return activities.slice(0, 30); // Latest 30 activities
+  }
+
+  // Helper methods
+  calculateAccountAge(createdAt) {
+    const days = Math.floor((Date.now() - createdAt) / (24 * 60 * 60 * 1000));
+    if (days < 30) return `${days} days`;
+    if (days < 365) return `${Math.floor(days / 30)} months`;
+    return `${Math.floor(days / 365)} years`;
+  }
+
+  groupTransactionsByMonth(transactions) {
+    const monthlyData = {};
+    
+    transactions.forEach(t => {
+      const month = new Date(t.createdAt).toISOString().slice(0, 7); // YYYY-MM
+      if (!monthlyData[month]) {
+        monthlyData[month] = { count: 0, total: 0, types: {} };
+      }
+      monthlyData[month].count++;
+      monthlyData[month].total += t.amount;
+      monthlyData[month].types[t.type] = (monthlyData[month].types[t.type] || 0) + 1;
+    });
+
+    return monthlyData;
+  }
+
+  calculateAverageProcessingTime(withdrawals) {
+    const completed = withdrawals.filter(w => w.status === 'completed' && w.processedAt);
+    if (completed.length === 0) return null;
+
+    const totalTime = completed.reduce((sum, w) => {
+      return sum + (new Date(w.processedAt) - new Date(w.createdAt));
+    }, 0);
+
+    const avgMs = totalTime / completed.length;
+    const avgHours = Math.round(avgMs / (1000 * 60 * 60));
+    
+    return `${avgHours} hours`;
+  }
+
+  analyzeWithdrawalFrequency(withdrawals) {
+    if (withdrawals.length < 2) return 'Dữ liệu không đủ';
+
+    const intervals = [];
+    for (let i = 1; i < withdrawals.length; i++) {
+      const interval = new Date(withdrawals[i-1].createdAt) - new Date(withdrawals[i].createdAt);
+      intervals.push(interval);
+    }
+
+    const avgInterval = intervals.reduce((sum, int) => sum + int, 0) / intervals.length;
+    const avgDays = Math.round(avgInterval / (24 * 60 * 60 * 1000));
+
+    if (avgDays < 7) return 'Rất thường xuyên (< 1 tuần)';
+    if (avgDays < 30) return 'Thường xuyên (< 1 tháng)';
+    if (avgDays < 90) return 'Đều đặn (< 3 tháng)';
+    return 'Không thường xuyên (> 3 tháng)';
+  }
+
+  getRiskRecommendation(riskLevel, riskScore) {
+    switch (riskLevel) {
+      case 'LOW':
+        return 'DUYỆT - Hồ sơ rủi ro thấp, khuyến nghị phê duyệt';
+      case 'MEDIUM':
+        return 'KIỂM TRA - Rủi ro vừa phải, khuyến nghị xác minh bổ sung';
+      case 'HIGH':
+        return 'ĐIỀU TRA - Rủi ro cao, cần điều tra kỹ lưỡng';
+      case 'VERY_HIGH':
+        return 'TỪ CHỐI - Rủi ro rất cao, khuyến nghị từ chối trừ khi có hoàn cảnh đặc biệt';
+      default:
+        return 'KHÔNG XÁC ĐỊNH';
+    }
+  }
+
+  getWithdrawalRecommendation(riskAssessment) {
+    const { level, score, factors } = riskAssessment;
+    
+    return {
+      action: level === 'LOW' ? 'DUYỆT' : 
+              level === 'MEDIUM' ? 'ĐIỀU TRA' : 
+              level === 'HIGH' ? 'KIỂM TRA THỦ CÔNG' : 'TỪ CHỐI',
+      confidence: level === 'LOW' ? 'CAO' : 
+                  level === 'MEDIUM' ? 'TRUNG BÌNH' : 'THẤP',
+      reasoning: factors.length > 0 ? factors.join(', ') : 'Không có yếu tố rủi ro đáng kể nào được xác định',
+      priority: level === 'VERY_HIGH' ? 'KHẨN CẤP' : 
+                level === 'HIGH' ? 'CAO' : 'BÌNH THƯỜNG'
+    };
   }
 
   // ========== TRANSACTION MANAGEMENT ==========

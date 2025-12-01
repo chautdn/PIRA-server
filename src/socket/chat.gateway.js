@@ -235,16 +235,17 @@ class ChatGateway {
     }
   }
 
-  emitMessageDeleted(messageId, userId) {
+  emitMessageDeleted(messageId, userId, conversationId) {
     try {
-      // Emit message deletion to all connected sockets
-      this.io.emit('chat:message-deleted', {
+      // Emit message deletion to conversation room
+      this.io.to(`chat:${conversationId}`).emit('chat:message-deleted', {
         messageId,
+        conversationId,
         deletedBy: userId,
         timestamp: new Date()
       });
     } catch (error) {
-      // Error emitting message deleted
+      console.error('Error emitting message deleted:', error);
     }
   }
 

@@ -63,6 +63,10 @@ router.get('/transactions', adminController.getAllTransactions);
 router.get('/transactions/:transactionId', adminController.getTransactionById);
 router.get('/transactions/stats', adminController.getTransactionStats);
 router.get('/transactions/export', adminController.exportTransactions);
+// ========== WITHDRAWAL FINANCIAL ANALYSIS ==========
+router.get('/withdrawals/enhanced', adminController.getEnhancedWithdrawalRequests);
+router.get('/withdrawals/:withdrawalId/financial-analysis', adminController.getWithdrawalFinancialAnalysis);
+router.get('/users/:userId/financial-profile', adminController.getUserFinancialProfile);
 
 // ========== SYSTEM SETTINGS ==========
 router.get('/settings', adminController.getSystemSettings);

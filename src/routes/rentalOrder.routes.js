@@ -299,6 +299,20 @@ router.post(
   RentalOrderController.confirmSubOrder
 );
 
+// POST /api/rental-orders/suborders/:id/confirm-delivered - Renter xác nhận đã nhận hàng
+router.post(
+  '/suborders/:id/confirm-delivered',
+  [param('id').isMongoId().withMessage('ID SubOrder không hợp lệ'), validateRequest],
+  RentalOrderController.renterConfirmDelivery
+);
+
+// POST /api/rental-orders/suborders/:id/owner-confirm-delivered - Owner xác nhận đã nhận hàng trả
+router.post(
+  '/suborders/:id/owner-confirm-delivered',
+  [param('id').isMongoId().withMessage('ID SubOrder không hợp lệ'), validateRequest],
+  RentalOrderController.ownerConfirmDelivery
+);
+
 // POST /api/rental-orders/suborders/:id/reject - Từ chối SubOrder
 router.post(
   '/suborders/:id/reject',
@@ -463,6 +477,36 @@ router.post(
     validateRequest
   ],
   RentalOrderController.renterRejectSubOrder
+);
+
+/**
+ * Tính phí gia hạn thuê
+ * POST /api/rental-orders/:masterOrderId/calculate-extend-fee
+ */
+router.post(
+  '/:masterOrderId/calculate-extend-fee',
+  [
+    param('masterOrderId').isMongoId().withMessage('ID MasterOrder không hợp lệ'),
+    body('extendDays').isInt({ min: 1, max: 365 }).withMessage('Số ngày gia hạn phải từ 1-365'),
+    validateRequest
+  ],
+  RentalOrderController.calculateExtendFee
+);
+
+/**
+ * Gia hạn thuê
+ * POST /api/rental-orders/:masterOrderId/extend-rental
+ */
+router.post(
+  '/:masterOrderId/extend-rental',
+  [
+    param('masterOrderId').isMongoId().withMessage('ID MasterOrder không hợp lệ'),
+    body('extendDays').isInt({ min: 1, max: 365 }).withMessage('Số ngày gia hạn phải từ 1-365'),
+    body('extendFee').isFloat({ min: 0 }).withMessage('Phí gia hạn không hợp lệ'),
+    body('notes').optional().isString().withMessage('Ghi chú phải là chuỗi ký tự'),
+    validateRequest
+  ],
+  RentalOrderController.extendRental
 );
 
 // Register routes

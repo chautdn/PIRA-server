@@ -677,6 +677,161 @@ class AdminController {
       }
       
       return res.send(exportData);
+  // ========== WITHDRAWAL FINANCIAL ANALYSIS ==========
+  
+  /**
+   * Get detailed financial analysis for a withdrawal request
+   * GET /api/admin/withdrawals/:withdrawalId/financial-analysis
+   */
+  async getWithdrawalFinancialAnalysis(req, res) {
+    try {
+      const { withdrawalId } = req.params;
+      
+      if (!withdrawalId) {
+        return responseUtils.error(res, 'Withdrawal ID is required', 400);
+      }
+      
+      const analysis = await adminService.getWithdrawalFinancialAnalysis(withdrawalId);
+      return responseUtils.success(res, analysis, 'Financial analysis retrieved successfully');
+    } catch (error) {
+      if (error.message.includes('not found')) {
+        return responseUtils.error(res, error.message, 404);
+      }
+      return responseUtils.error(res, error.message, 500);
+    }
+  }
+
+  /**
+   * Get user's comprehensive financial profile
+   * GET /api/admin/users/:userId/financial-profile
+   */
+  async getUserFinancialProfile(req, res) {
+    try {
+      const { userId } = req.params;
+      
+      if (!userId) {
+        return responseUtils.error(res, 'User ID is required', 400);
+      }
+
+      // Get user basic info
+      const user = await adminService.getUserById(userId);
+      
+      // Get comprehensive financial data
+      const walletAnalysis = await adminService.getUserWalletAnalysis(userId);
+      const transactionAnalysis = await adminService.getUserTransactionAnalysis(userId);
+      const withdrawalHistory = await adminService.getUserWithdrawalHistory(userId);
+      const systemInteractions = await adminService.getUserSystemWalletInteractions(userId);
+      const payosVerificationCodes = await adminService.getPayOSVerificationCodes(userId);
+      const activityTimeline = await adminService.getUserActivityTimeline(userId);
+
+      const financialProfile = {
+        user,
+        walletAnalysis,
+        transactionAnalysis,
+        withdrawalHistory,
+        systemInteractions,
+        payosVerificationCodes,
+        activityTimeline,
+        generatedAt: new Date()
+      };
+
+      return responseUtils.success(res, financialProfile, 'User financial profile retrieved successfully');
+    } catch (error) {
+      if (error.message.includes('not found')) {
+        return responseUtils.error(res, error.message, 404);
+      }
+      return responseUtils.error(res, error.message, 500);
+    }
+  }
+
+  /**
+   * Get withdrawal requests with enhanced data for admin review
+   * GET /api/admin/withdrawals/enhanced
+   */
+  async getEnhancedWithdrawalRequests(req, res) {
+    try {
+      const {
+        page = 1,
+        limit = 20,
+        status,
+        userId,
+        riskLevel,
+        sortBy = 'createdAt',
+        sortOrder = 'desc'
+      } = req.query;
+
+      // Get basic withdrawal data
+      const withdrawalService = require('../services/withdrawal.service');
+      const withdrawalData = await withdrawalService.getAllWithdrawals({
+        page: parseInt(page),
+        limit: parseInt(limit),
+        status,
+        userId
+      });
+
+      // Enhance each withdrawal with risk analysis
+      const enhancedWithdrawals = await Promise.all(
+        withdrawalData.withdrawals.map(async (withdrawal) => {
+          try {
+            const riskAssessment = await adminService.calculateWithdrawalRiskScore(
+              withdrawal.user._id,
+              withdrawal.amount
+            );
+
+            return {
+              ...withdrawal,
+              riskAssessment,
+              formattedAmount: withdrawal.amount.toLocaleString('vi-VN') + ' VND',
+              accountAge: adminService.calculateAccountAge(withdrawal.user.createdAt || new Date()),
+              recommendation: adminService.getWithdrawalRecommendation(riskAssessment)
+            };
+          } catch (error) {
+            console.error(`Error enhancing withdrawal ${withdrawal._id}:`, error);
+            return {
+              ...withdrawal,
+              riskAssessment: { level: 'UNKNOWN', score: 0, factors: [] },
+              formattedAmount: withdrawal.amount.toLocaleString('vi-VN') + ' VND',
+              accountAge: 'Unknown',
+              recommendation: { action: 'MANUAL_REVIEW', confidence: 'LOW' }
+            };
+          }
+        })
+      );
+
+      // Filter by risk level if specified
+      const filteredWithdrawals = riskLevel 
+        ? enhancedWithdrawals.filter(w => w.riskAssessment.level === riskLevel.toUpperCase())
+        : enhancedWithdrawals;
+
+      // Sort if needed
+      if (sortBy === 'riskScore') {
+        filteredWithdrawals.sort((a, b) => {
+          const order = sortOrder === 'desc' ? -1 : 1;
+          return order * (a.riskAssessment.score - b.riskAssessment.score);
+        });
+      }
+
+      const result = {
+        withdrawals: filteredWithdrawals,
+        pagination: withdrawalData.pagination,
+        summary: {
+          total: filteredWithdrawals.length,
+          byRisk: {
+            low: filteredWithdrawals.filter(w => w.riskAssessment.level === 'LOW').length,
+            medium: filteredWithdrawals.filter(w => w.riskAssessment.level === 'MEDIUM').length,
+            high: filteredWithdrawals.filter(w => w.riskAssessment.level === 'HIGH').length,
+            veryHigh: filteredWithdrawals.filter(w => w.riskAssessment.level === 'VERY_HIGH').length
+          },
+          byStatus: {
+            pending: filteredWithdrawals.filter(w => w.status === 'pending').length,
+            processing: filteredWithdrawals.filter(w => w.status === 'processing').length,
+            completed: filteredWithdrawals.filter(w => w.status === 'completed').length,
+            rejected: filteredWithdrawals.filter(w => w.status === 'rejected').length
+          }
+        }
+      };
+
+      return responseUtils.success(res, result, 'Enhanced withdrawal requests retrieved successfully');
     } catch (error) {
       return responseUtils.error(res, error.message, 500);
     }

@@ -33,6 +33,10 @@ const notificationSchema = new mongoose.Schema(
         'REVIEW',
         'DISPUTE',
         'PROMOTION',
+        'PROMOTION_PAYMENT',
+        'EXTENSION_REQUEST',
+        'EXTENSION_APPROVED',
+        'EXTENSION_REJECTED',
         'SYSTEM',
         'REMINDER',
         'WITHDRAWAL'
@@ -65,6 +69,10 @@ const notificationSchema = new mongoose.Schema(
     relatedWithdrawal: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'Withdrawal'
+    },
+    relatedExtension: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Extension'
     },
 
     // Status

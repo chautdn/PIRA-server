@@ -110,5 +110,8 @@ router.put('/:conversationId/block', validateBlockUser, chatController.toggleBlo
 // DELETE /api/chat/messages/:messageId - Delete message
 router.delete('/messages/:messageId', validateMessageId, chatController.deleteMessage);
 
+// DELETE /api/chat/:conversationId - Delete conversation for current user
+router.delete('/:conversationId', validateConversationId, chatController.deleteConversation);
+
 registerRoute('/chat', router);
 module.exports = router;

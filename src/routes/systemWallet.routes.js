@@ -29,6 +29,23 @@ router.post('/transfer-from-user', systemWalletController.transferFromUser);
 // Get system wallet transaction history
 router.get('/transactions', systemWalletController.getTransactions);
 
+// Get system wallet transaction statistics
+router.get('/statistics', systemWalletController.getStatistics);
+
+// ========== COMPREHENSIVE TRANSACTION MONITORING ==========
+
+// Get ALL transactions involving system wallet
+router.get('/all-transactions', systemWalletController.getAllTransactions);
+
+// Get transaction flow analytics
+router.get('/flow-analytics', systemWalletController.getFlowAnalytics);
+
+// Get recent system wallet activity
+router.get('/recent-activity', systemWalletController.getRecentActivity);
+
+// Get comprehensive dashboard data
+router.get('/dashboard', systemWalletController.getDashboard);
+
 // Update system wallet status
 router.patch('/status', systemWalletController.updateStatus);
 

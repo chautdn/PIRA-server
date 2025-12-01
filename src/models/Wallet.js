@@ -11,6 +11,11 @@ const walletSchema = new mongoose.Schema(
 
     // Balance
     balance: {
+      display:{
+        type: Number,
+        default: 0,
+        min: 0,
+      },
       available: {
         type: Number,
         default: 0,
@@ -57,7 +62,16 @@ const walletSchema = new mongoose.Schema(
   }
 );
 
+// Pre-save hook to auto-calculate display balance
+walletSchema.pre('save', function(next) {
+  if (this.balance) {
+    this.balance.display = this.balance.available + this.balance.frozen;
+  }
+  next();
+});
+
 walletSchema.index({ user: 1 });
 walletSchema.index({ status: 1 });
 
 module.exports = mongoose.model('Wallet', walletSchema);
+

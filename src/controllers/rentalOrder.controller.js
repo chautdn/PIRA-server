@@ -1,7 +1,10 @@
-const RentalOrderService = require('../services/rentalOrder.service');
+﻿const RentalOrderService = require('../services/rentalOrder.service');
 const MasterOrder = require('../models/MasterOrder');
 const SubOrder = require('../models/SubOrder');
 const Contract = require('../models/Contract');
+const Shipment = require('../models/Shipment');
+const ShipmentService = require('../services/shipment.service');
+const SystemWalletService = require('../services/systemWallet.service');
 const { SuccessResponse } = require('../core/success');
 const { BadRequest, NotFoundError, ForbiddenError } = require('../core/error');
 
@@ -13,7 +16,7 @@ class RentalOrderController {
   async createDraftOrder(req, res) {
     try {
       const userId = req.user.id;
-      const { rentalPeriod, deliveryAddress, deliveryMethod } = req.body;
+      const { rentalPeriod, deliveryAddress, deliveryMethod, selectedItems } = req.body;
 
       console.log('📥 POST /api/rental-orders/create-draft');
       console.log('📋 Request body:', JSON.stringify(req.body, null, 2));
@@ -61,7 +64,8 @@ class RentalOrderController {
       const masterOrder = await RentalOrderService.createDraftOrderFromCart(userId, {
         rentalPeriod,
         deliveryAddress,
-        deliveryMethod
+        deliveryMethod,
+        selectedItems
       });
 
       return new SuccessResponse({
@@ -97,7 +101,9 @@ class RentalOrderController {
         // COD specific fields
         depositAmount,
         depositPaymentMethod,
-        depositTransactionId
+        depositTransactionId,
+        // Selected items from frontend
+        selectedItems
       } = req.body;
 
       console.log('📥 POST /api/rental-orders/create-paid');
@@ -115,7 +121,9 @@ class RentalOrderController {
         // Include COD specific fields
         depositAmount,
         depositPaymentMethod,
-        depositTransactionId
+        depositTransactionId,
+        // Pass selected items to service
+        selectedItems
       });
 
       if (!masterOrder) {
@@ -367,10 +375,32 @@ class RentalOrderController {
    */
   async getMyOrders(req, res) {
     try {
-      const userId = req.user.id;
+      const userId = req.user._id || req.user.id;
       const { status, page = 1, limit = 10 } = req.query;
 
+      console.log('🔍 getMyOrders called');
+      console.log('   User object:', req.user);
+      console.log('   userId:', userId);
+      console.log('   userId type:', typeof userId);
+      console.log('   status filter:', status);
+
+      // Check ALL MasterOrders in database
+      const allOrdersCount = await MasterOrder.countDocuments({});
+      console.log('📊 Total MasterOrders in DB:', allOrdersCount);
+
+      // Check orders with this renter
       const filter = { renter: userId };
+      const allOrdersForRenter = await MasterOrder.find({ renter: userId });
+      console.log('📋 Filter:', JSON.stringify(filter));
+      console.log('✅ Orders found with renter filter:', allOrdersForRenter.length);
+      
+      if (allOrdersForRenter.length > 0) {
+        console.log('📌 Sample order renter ID:', allOrdersForRenter[0].renter);
+        console.log('📌 Sample order status:', allOrdersForRenter[0].status);
+        console.log('📌 All statuses:', allOrdersForRenter.map(o => o.status));
+      }
+
+      // Now apply status filter if provided
       if (status) {
         filter.status = status;
       }
@@ -389,6 +419,9 @@ class RentalOrderController {
 
       const total = await MasterOrder.countDocuments(filter);
 
+      console.log('✅ Final result - Found orders:', orders.length, 'Total matching:', total);
+      console.log('📤 Sending response with metadata:', JSON.stringify({ orders: orders.length, total }));
+
       return new SuccessResponse({
         message: 'Lấy danh sách đơn hàng thành công',
         metadata: {
@@ -402,6 +435,7 @@ class RentalOrderController {
         }
       }).send(res);
     } catch (error) {
+      console.error('❌ getMyOrders error:', error);
       throw new BadRequest(error.message);
     }
   }
@@ -461,11 +495,11 @@ class RentalOrderController {
       const { masterOrderId } = req.params;
 
       const masterOrder = await MasterOrder.findById(masterOrderId).populate([
-        { path: 'renter', select: 'profile email' },
+        { path: 'renter', select: 'profile email phone' },
         {
           path: 'subOrders',
           populate: [
-            { path: 'owner', select: 'profile email' },
+            { path: 'owner', select: 'profile email phone' },
             { path: 'products.product' },
             { path: 'contract' }
           ]
@@ -1303,6 +1337,561 @@ class RentalOrderController {
       });
     }
   }
+
+  /**
+   * Renter confirms delivery after receiving the rented item
+   * POST /api/rental-orders/suborders/:id/confirm-delivered
+   * ✅ Tiền thuê sẽ được chuyển ngay từ ví hệ thống sang ví chủ cho thuê
+   */
+  async renterConfirmDelivery(req, res) {
+    try {
+      const userId = req.user.id;
+      const subOrderId = req.params.id;
+
+      console.log('📥 POST /api/rental-orders/suborders/:id/confirm-delivered');
+      console.log('👤 Renter ID:', userId);
+      console.log('📦 SubOrder ID:', subOrderId);
+
+      const subOrder = await SubOrder.findById(subOrderId).populate({
+        path: 'products.product',
+        select: 'name price deposit'
+      });
+      if (!subOrder) {
+        console.error('❌ SubOrder not found');
+        return res.status(404).json({ status: 'error', message: 'SubOrder not found' });
+      }
+
+      // Verify renter authorization - ONLY the renter can confirm delivery
+      const masterOrder = await MasterOrder.findById(subOrder.masterOrder);
+      if (!masterOrder) {
+        console.error('❌ MasterOrder not found');
+        return res.status(404).json({ status: 'error', message: 'MasterOrder not found' });
+      }
+
+      const masterOrderRenterId = String(masterOrder.renter);
+      const currentUserId = String(userId);
+      
+      console.log(`🔐 Authorization Check:`);
+      console.log(`   MasterOrder Renter ID: ${masterOrderRenterId}`);
+      console.log(`   Current User ID: ${currentUserId}`);
+      console.log(`   User Role: ${req.user.role}`);
+      console.log(`   Match: ${masterOrderRenterId === currentUserId}`);
+
+      // Strict check: current user MUST be the renter
+      if (masterOrderRenterId !== currentUserId) {
+        console.error('❌ User is not the renter - access denied');
+        console.error(`   Renter: ${masterOrderRenterId}, Attempted by: ${currentUserId}`);
+        return res.status(403).json({ 
+          status: 'error', 
+          message: 'Only the renter can confirm delivery. This action has been logged.' 
+        });
+      }
+
+      // If already marked DELIVERED, return error - only 1 confirmation allowed
+      if (subOrder.status === 'DELIVERED') {
+        console.log('⚠️ SubOrder already marked DELIVERED - cannot confirm again');
+        return res.status(400).json({ 
+          status: 'error', 
+          message: 'Bạn chỉ được xác nhận nhận đơn 1 lần duy nhất. Đơn này đã được xác nhận trước đó.',
+          data: subOrder
+        });
+      }
+
+      // Mark as DELIVERED - renter confirmed receipt of rented item
+      console.log('🔄 Marking SubOrder as DELIVERED...');
+      subOrder.status = 'DELIVERED';
+      
+      // Update productStatus to ACTIVE for all products when renter confirms delivery
+      console.log('📦 Updating product statuses to ACTIVE...');
+      subOrder.products.forEach((product, idx) => {
+        const oldStatus = product.productStatus;
+        product.productStatus = 'ACTIVE';
+        console.log(`   Product ${idx + 1}: ${oldStatus} → ACTIVE`);
+      });
+      
+      const savedSubOrder = await subOrder.save();
+      console.log(`✅ SubOrder saved with status: ${savedSubOrder.status}`);
+      console.log(`✅ All products updated to ACTIVE status`);
+      
+      console.log(`\n📊 SubOrder Pricing Info:`);
+      console.log(`   Full pricing object: ${JSON.stringify(savedSubOrder.pricing)}`);
+      console.log(`   subtotalRental: ${savedSubOrder.pricing?.subtotalRental}`);
+      console.log(`   subtotalDeposit: ${savedSubOrder.pricing?.subtotalDeposit}`);
+      console.log(`   owner: ${savedSubOrder.owner}`);
+      console.log(`   products count: ${savedSubOrder.products?.length}`);
+      
+      // 💰 AUTO TRANSFER: Transfer 80% rental fee to owner immediately (20% is platform fee)
+      let rentalTransferResult = null;
+      let transferError = null;
+      try {
+        const ownerId = savedSubOrder.owner;
+        const totalRentalAmount = savedSubOrder.pricing?.subtotalRental;
+        
+        console.log(`\n💳 Auto Transfer Rental Fee (80% to owner, 20% platform fee):`);
+        console.log(`   ✅ Renter confirmed delivery - SubOrder status changed to DELIVERED`);
+        console.log(`   Owner ID: ${ownerId} (type: ${typeof ownerId})`);
+        console.log(`   Total rental amount: ${totalRentalAmount} VND`);
+
+        const adminId = process.env.SYSTEM_ADMIN_ID || 'SYSTEM_AUTO_TRANSFER';
+        console.log(`   Admin ID: ${adminId}`);
+
+        // Validate owner ID
+        if (!ownerId) {
+          throw new Error('Owner ID is missing or invalid');
+        }
+
+        // Validate rental amount
+        if (totalRentalAmount === undefined || totalRentalAmount === null) {
+          throw new Error('Rental amount is undefined or null');
+        }
+
+        if (totalRentalAmount <= 0) {
+          console.log(`   ⚠️ Rental amount is <= 0 (${totalRentalAmount}), skipping transfer`);
+        } else {
+          try {
+            console.log(`   🔄 Calling SystemWalletService.transferRentalFeeWithPlatformFee...`);
+            console.log(`      Total amount: ${totalRentalAmount} VND (80% to owner, 20% platform fee)`);
+            
+            rentalTransferResult = await SystemWalletService.transferRentalFeeWithPlatformFee(
+              adminId,
+              ownerId,
+              totalRentalAmount,
+              savedSubOrder.subOrderNumber
+            );
+            
+            console.log(`   ✅ Transfer successful!`);
+            console.log(`   📊 Transaction Records Created:`);
+            console.log(`      - System transaction: ${rentalTransferResult.transactions.system._id}`);
+            console.log(`      - Owner transaction: ${rentalTransferResult.transactions.owner._id}`);
+            console.log(`      - Platform fee transaction: ${rentalTransferResult.transactions.platformFee._id}`);
+            console.log(`   Result:`, {
+              ownerShare: rentalTransferResult.transfer.ownerShareAmount,
+              platformFee: rentalTransferResult.transfer.platformFeeAmount,
+              ownerNewBalance: rentalTransferResult.ownerWallet?.newBalance,
+              timestamp: new Date().toISOString()
+            });
+          } catch (err) {
+            const errMsg = err.message || String(err);
+            transferError = errMsg;
+            console.error(`   ❌ Transfer failed:`, {
+              message: errMsg,
+              error: err
+            });
+          }
+        }
+      } catch (err) {
+        const errMsg = err.message || String(err);
+        transferError = errMsg;
+        console.error(`   ❌ Transfer logic error:`, {
+          message: errMsg,
+          error: err
+        });
+      }
+
+      // Update MasterOrder status to ACTIVE (rental period starts)
+      console.log(`\n🔄 Updating MasterOrder status to ACTIVE...`);
+      console.log(`   Current status: ${masterOrder.status}`);
+      if (masterOrder.status !== 'ACTIVE') {
+        masterOrder.status = 'ACTIVE';
+        const savedMasterOrder = await masterOrder.save();
+        console.log(`   ✅ MasterOrder status updated to ACTIVE`);
+        console.log(`   Saved status: ${savedMasterOrder.status}`);
+      } else {
+        console.log(`   ℹ️  MasterOrder already ACTIVE`);
+      }
+
+      console.log(`\n✅ Renter confirmed delivery complete for SubOrder ${savedSubOrder.subOrderNumber}`);
+      console.log(`   SubOrder status: ${savedSubOrder.status}`);
+      console.log(`   MasterOrder status: ${masterOrder.status}`);
+      console.log(`   Transfer status: ${transferError ? '❌ FAILED' : '✅ SUCCESS'}`);
+      
+      // Fetch fresh data to return
+      const freshSubOrder = await SubOrder.findById(subOrderId).populate([
+        'masterOrder',
+        { path: 'products.product' }
+      ]);
+      const freshMasterOrder = await MasterOrder.findById(subOrder.masterOrder).populate('subOrders');
+      
+      console.log(`   Fresh data fetched from DB\n`);
+      
+      return res.json({
+        status: 'success',
+        message: transferError 
+          ? `✅ Đơn hàng nhận thành công. ⚠️ Nhưng gặp lỗi chuyển tiền: ${transferError}`
+          : '✅ Đơn hàng nhận thành công. Tiền thuê (80%) đã được chuyển cho chủ cho thuê. Phí nền tảng (20%) được giữ lại.',
+        data: freshSubOrder,
+        masterOrder: freshMasterOrder,
+        transfer: {
+          rentalTransfer: rentalTransferResult,
+          error: transferError,
+          timestamp: new Date().toISOString()
+        }
+      });
+    } catch (error) {
+      console.error('❌ renterConfirmDelivery error:', error);
+      return res.status(400).json({ 
+        status: 'error', 
+        message: error.message || 'Có lỗi xảy ra' 
+      });
+    }
+  }
+
+  // Owner confirms delivery for a returned suborder (transfer deposit to renter + rental fee to owner)
+  async ownerConfirmDelivery(req, res) {
+    try {
+      const userId = req.user.id;
+      const subOrderId = req.params.id;
+
+      console.log('📥 POST /api/rental-orders/suborders/:id/owner-confirm-delivered');
+      console.log('👤 Owner ID:', userId);
+      console.log('📦 SubOrder ID:', subOrderId);
+
+      const subOrder = await SubOrder.findById(subOrderId);
+      if (!subOrder) {
+        console.error('❌ SubOrder not found');
+        return res.status(404).json({ status: 'error', message: 'SubOrder not found' });
+      }
+
+      // Strict owner authorization check - ONLY the owner can confirm return
+      const subOrderOwnerId = String(subOrder.owner);
+      const currentUserId = String(userId);
+      
+      console.log(`🔐 Authorization Check:`);
+      console.log(`   SubOrder Owner ID: ${subOrderOwnerId}`);
+      console.log(`   Current User ID: ${currentUserId}`);
+      console.log(`   User Role: ${req.user.role}`);
+      console.log(`   Match: ${subOrderOwnerId === currentUserId}`);
+
+      if (subOrderOwnerId !== currentUserId) {
+        console.error('❌ User is not the owner - access denied');
+        console.error(`   Owner: ${subOrderOwnerId}, Attempted by: ${currentUserId}`);
+        return res.status(403).json({ 
+          status: 'error', 
+          message: 'Only the owner can confirm return receipt. This action has been logged.' 
+        });
+      }
+
+      const masterOrder = await MasterOrder.findById(subOrder.masterOrder);
+      if (!masterOrder) {
+        console.error('❌ MasterOrder not found');
+        return res.status(404).json({ status: 'error', message: 'MasterOrder not found' });
+      }
+
+      // If already marked COMPLETED, return immediately
+      if (subOrder.status === 'COMPLETED') {
+        console.log('⚠️ SubOrder already marked COMPLETED');
+        // Fetch fresh data
+        const freshSubOrder = await SubOrder.findById(subOrderId).populate('masterOrder');
+        const freshMasterOrder = await MasterOrder.findById(subOrder.masterOrder).populate('subOrders');
+        return res.json({ 
+          status: 'success', 
+          data: freshSubOrder,
+          masterOrder: freshMasterOrder
+        });
+      }
+
+      // Check if renter has confirmed delivery - CRITICAL BUSINESS LOGIC
+      // Renter MUST confirm first (SubOrder = DELIVERED) before owner can confirm return (SubOrder = COMPLETED)
+      if (subOrder.status !== 'DELIVERED') {
+        console.error('❌ Renter has not confirmed delivery yet');
+        console.error(`   Current SubOrder status: ${subOrder.status}`);
+        console.error(`   Expected status: DELIVERED`);
+        console.error(`   This prevents owner from bypassing renter confirmation`);
+        return res.status(400).json({ 
+          status: 'error', 
+          message: 'Renter must confirm delivery first before owner can confirm return. Your action has been prevented and logged.',
+          details: `Cannot proceed: SubOrder status is ${subOrder.status}, expected DELIVERED. This ensures renter confirms receipt before payment is released.`
+        });
+      }
+
+      // Mark as COMPLETED - owner confirmed receipt of returned item
+      console.log('🔄 Marking SubOrder as COMPLETED...');
+      subOrder.status = 'COMPLETED';
+      await subOrder.save();
+
+      // Now transfer deposit back to renter:
+      // ✅ Rental fee was ALREADY transferred when renter confirmed delivery
+      // ⬇️ Only transfer deposit refund now (as FROZEN, will unlock after 24h)
+      let depositTransferResult = null;
+      let transferError = null;
+
+      try {
+        const renterId = masterOrder.renter;
+        const depositAmount = subOrder.pricing?.subtotalDeposit || 0;
+        
+        console.log(`\n💰 Payment Transfer breakdown when owner confirms:`);
+        console.log(`   ✅ Renter confirmed delivery (DELIVERED) - Rental fee already transferred (80% to owner, 20% platform fee)`);
+        console.log(`   ✅ Owner confirmed return receipt (COMPLETED)`);
+        console.log(`   Deposit refund (→ renter as FROZEN): ${depositAmount} VND (will unlock after 24h)`);
+
+        const adminId = process.env.SYSTEM_ADMIN_ID || 'SYSTEM_AUTO_TRANSFER';
+
+        // Transfer deposit back to renter (as FROZEN)
+        if (depositAmount > 0) {
+          try {
+            depositTransferResult = await SystemWalletService.transferDepositRefundWithFrozen(
+              adminId,
+              renterId,
+              depositAmount,
+              subOrder.subOrderNumber
+            );
+            console.log(`   ✅ Deposit refund transfer successful (FROZEN):`);
+            console.log(`      Amount: ${depositAmount} VND → renter ${renterId}`);
+            console.log(`      Status: FROZEN`);
+            console.log(`      Unlocks at: ${new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString()}`);
+            console.log(`      System transaction: ${depositTransferResult.transactions.system._id}`);
+            console.log(`      Renter transaction: ${depositTransferResult.transactions.renter._id}`);
+          } catch (err) {
+            const errMsg = err.message || String(err);
+            transferError = errMsg;
+            console.error(`   ❌ Failed to refund deposit to renter: ${errMsg}`);
+          }
+        } else {
+          console.log('   ⚠️ Deposit amount is 0 or undefined, skipping refund');
+        }
+
+      } catch (err) {
+        const errMsg = err.message || String(err);
+        transferError = errMsg;
+        console.error(`   ❌ Payment transfer error: ${errMsg}`);
+      }
+
+      // Update MasterOrder status to COMPLETED if all suborders are completed
+      console.log(`\n🔄 Checking if all SubOrders are COMPLETED...`);
+      const allSubOrders = await SubOrder.find({ masterOrder: masterOrder._id });
+      const allCompleted = allSubOrders.every(so => so.status === 'COMPLETED');
+      
+      if (allCompleted) {
+        masterOrder.status = 'COMPLETED';
+        await masterOrder.save();
+        console.log(`   ✅ All SubOrders completed, MasterOrder status updated to COMPLETED`);
+      } else {
+        console.log(`   ℹ️  Not all SubOrders completed yet`);
+      }
+
+      console.log(`✅ Owner confirmed delivery for SubOrder ${subOrder.subOrderNumber}`);
+      
+      // Fetch fresh data to return
+      const freshSubOrder = await SubOrder.findById(subOrderId).populate('masterOrder');
+      const freshMasterOrder = await MasterOrder.findById(subOrder.masterOrder).populate('subOrders');
+
+      return res.json({
+        status: 'success',
+        message: transferError
+          ? `Xác nhận nhận hàng trả thành công nhưng hoàn tiền cọc thất bại: ${transferError}`
+          : 'Xác nhận nhận hàng trả thành công. Tiền cọc đã được hoàn lại cho khách thuê. (Tiền thuê đã được chuyển khi bạn nhận hàng)',
+        data: freshSubOrder,
+        masterOrder: freshMasterOrder,
+        transfer: { 
+          depositTransfer: depositTransferResult,
+          error: transferError
+        }
+      });
+    } catch (error) {
+      console.error('❌ ownerConfirmDelivery error:', error.message);
+      return res.status(400).json({ status: 'error', message: error.message });
+    }
+  }
+
+  /**
+   * Tính phí gia hạn thuê
+   * POST /api/rental-orders/:masterOrderId/calculate-extend-fee
+   */
+  async calculateExtendFee(req, res) {
+    try {
+      const { masterOrderId } = req.params;
+      const { extendDays } = req.body;
+      const userId = req.user.id;
+
+      console.log('📥 POST /api/rental-orders/:masterOrderId/calculate-extend-fee');
+      console.log('👤 User ID:', userId);
+      console.log('📋 Request data:', { masterOrderId, extendDays });
+
+      if (!extendDays || extendDays <= 0) {
+        throw new BadRequest('Số ngày gia hạn phải > 0');
+      }
+
+      // Get master order with full populate
+      const masterOrder = await MasterOrder.findById(masterOrderId)
+        .populate({
+          path: 'subOrders',
+          populate: {
+            path: 'products.product'
+          }
+        });
+
+      if (!masterOrder) {
+        throw new NotFoundError('Không tìm thấy đơn hàng');
+      }
+
+      console.log('📦 Master order found:', { masterOrderNumber: masterOrder.masterOrderNumber, status: masterOrder.status });
+      console.log('📊 SubOrders count:', masterOrder.subOrders?.length);
+
+      // Check if user is the renter
+      if (masterOrder.renter.toString() !== userId) {
+        throw new ForbiddenError('Bạn không có quyền gia hạn đơn hàng này');
+      }
+
+      // Calculate extend fee based on all products in all suborders
+      let extendFee = 0;
+      
+      for (let soIndex = 0; soIndex < masterOrder.subOrders.length; soIndex++) {
+        const subOrder = masterOrder.subOrders[soIndex];
+        console.log(`\n🔹 SubOrder ${soIndex}:`, { subOrderNumber: subOrder.subOrderNumber, productsCount: subOrder.products?.length });
+        
+        if (subOrder.products && subOrder.products.length > 0) {
+          for (let pIndex = 0; pIndex < subOrder.products.length; pIndex++) {
+            const productItem = subOrder.products[pIndex];
+            console.log(`   └─ Product ${pIndex}:`, {
+              productName: productItem.product?.name,
+              rentalRate: productItem.rentalRate,
+              quantity: productItem.quantity,
+              totalRental: productItem.totalRental
+            });
+            
+            // Use totalRental if available, otherwise calculate from rental rate
+            if (productItem.totalRental && productItem.rentalPeriod) {
+              // Get duration in days
+              const startDate = new Date(productItem.rentalPeriod.startDate);
+              const endDate = new Date(productItem.rentalPeriod.endDate);
+              const durationMs = endDate - startDate;
+              const durationDays = Math.ceil(durationMs / (1000 * 60 * 60 * 24));
+              
+              if (durationDays > 0) {
+                const dailyRate = productItem.totalRental / durationDays;
+                const productExtendFee = dailyRate * extendDays;
+                console.log(`      📊 Calculated: daily=${dailyRate.toFixed(0)}, extend=${productExtendFee.toFixed(0)}`);
+                extendFee += productExtendFee;
+              }
+            } else if (productItem.rentalRate) {
+              const productExtendFee = productItem.rentalRate * extendDays * (productItem.quantity || 1);
+              console.log(`      📊 Using rentalRate: ${productExtendFee.toFixed(0)}`);
+              extendFee += productExtendFee;
+            }
+          }
+        }
+      }
+
+      console.log('\n✅ Total extend fee calculated:', { extendDays, extendFee: extendFee.toFixed(0) });
+
+      return new SuccessResponse({
+        message: 'Tính phí gia hạn thành công',
+        metadata: {
+          extendDays,
+          extendFee: Math.round(extendFee)
+        }
+      }).send(res);
+    } catch (error) {
+      console.error('❌ calculateExtendFee error:', error.message);
+      return res.status(error.statusCode || 400).json({
+        success: false,
+        message: error.message || 'Không thể tính phí gia hạn'
+      });
+    }
+  }
+
+  /**
+   * Gia hạn thuê
+   * POST /api/rental-orders/:masterOrderId/extend-rental
+   */
+  async extendRental(req, res) {
+    try {
+      const { masterOrderId } = req.params;
+      const { extendDays, extendFee, notes } = req.body;
+      const userId = req.user.id;
+
+      console.log('📥 POST /api/rental-orders/:masterOrderId/extend-rental');
+      console.log('👤 User ID:', userId);
+      console.log('📋 Request data:', { masterOrderId, extendDays, extendFee, notes });
+
+      if (!extendDays || extendDays <= 0) {
+        throw new BadRequest('Số ngày gia hạn phải > 0');
+      }
+
+      // Get master order
+      const masterOrder = await MasterOrder.findById(masterOrderId).populate('subOrders');
+
+      if (!masterOrder) {
+        throw new NotFoundError('Không tìm thấy đơn hàng');
+      }
+
+      // Check if user is the renter
+      if (masterOrder.renter.toString() !== userId) {
+        throw new ForbiddenError('Bạn không có quyền gia hạn đơn hàng này');
+      }
+
+      // Check order status is ACTIVE
+      if (masterOrder.status !== 'ACTIVE') {
+        throw new BadRequest('Chỉ có thể gia hạn đơn hàng đang hoạt động');
+      }
+
+      // Get first suborder to update rental period
+      const subOrder = masterOrder.subOrders?.[0];
+      if (!subOrder) {
+        throw new NotFoundError('Không tìm thấy thông tin sản phẩm');
+      }
+
+      // Update rental period for all products in all suborders
+      for (const so of masterOrder.subOrders) {
+        if (so.products && so.products.length > 0) {
+          for (const productItem of so.products) {
+            if (productItem.rentalPeriod && productItem.rentalPeriod.endDate) {
+              const newEndDate = new Date(productItem.rentalPeriod.endDate);
+              newEndDate.setDate(newEndDate.getDate() + extendDays);
+              productItem.rentalPeriod.endDate = newEndDate;
+            }
+          }
+        }
+      }
+
+      // Also update master order rental period if it exists
+      if (masterOrder.rentalPeriod && masterOrder.rentalPeriod.endDate) {
+        const newEndDate = new Date(masterOrder.rentalPeriod.endDate);
+        newEndDate.setDate(newEndDate.getDate() + extendDays);
+        masterOrder.rentalPeriod.endDate = newEndDate;
+      }
+
+      // Deduct extend fee from renter wallet
+      if (extendFee && extendFee > 0) {
+        try {
+          await SystemWalletService.deductFromUserWallet(userId, extendFee, {
+            type: 'RENTAL_EXTENSION',
+            masterOrderId,
+            description: `Phí gia hạn thuê ${extendDays} ngày - Đơn ${masterOrder.masterOrderNumber}`,
+            notes
+          });
+          console.log('✅ Deducted extend fee from wallet:', extendFee);
+        } catch (walletError) {
+          console.error('❌ Wallet deduction error:', walletError.message);
+          // Continue anyway, don't fail the request
+        }
+      }
+
+      // Save all suborders
+      for (const so of masterOrder.subOrders) {
+        await so.save();
+      }
+
+      // Save master order
+      await masterOrder.save();
+
+      console.log('✅ Rental extended:', { masterOrderId, extendDays, newEndDate: subOrder.products[0]?.rentalPeriod?.endDate });
+
+      return new SuccessResponse({
+        message: 'Gia hạn thuê thành công',
+        metadata: {
+          masterOrder
+        }
+      }).send(res);
+    } catch (error) {
+      console.error('❌ extendRental error:', error.message);
+      return res.status(error.statusCode || 400).json({
+        success: false,
+        message: error.message || 'Không thể gia hạn thuê'
+      });
+    }
+  }
 }
 
 module.exports = new RentalOrderController();
+

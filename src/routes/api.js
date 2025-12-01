@@ -36,6 +36,8 @@ require('./wishlist.routes');
 require('./systemWallet.routes');
 require('./earlyReturn.routes.register');
 require('./systemPromotion.routes');
+require('./shipment.routes.register');
+require('./upload.routes.register');
 
 // Owner Statistics routes
 const ownerStatisticsRoutes = require('./ownerStatistics.routes');
@@ -56,6 +58,18 @@ router.use('/system-promotions', systemPromotionRoutes);
 // Voucher routes
 const voucherRoutes = require('./voucher.routes');
 router.use('/vouchers', voucherRoutes);
+
+// Dispute routes
+const disputeRoutes = require('./dispute.routes');
+router.use('/disputes', disputeRoutes);
+
+// Upload routes
+const uploadRoutes = require('./upload.routes');
+router.use('/upload', uploadRoutes);
+
+// Extension routes
+const extensionRoutes = require('./extension.routes');
+router.use('/extensions', extensionRoutes);
 
 // Register all routes from the registry FIRST
 getRoutes()?.forEach(({ path, router: moduleRouter }) => {

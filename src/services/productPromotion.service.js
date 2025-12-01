@@ -124,6 +124,53 @@ const productPromotionService = {
       product.promotionTier = tier;
       await product.save();
 
+      // Add amount to system wallet
+      const SystemWalletService = require('./systemWallet.service');
+      try {
+        await SystemWalletService.addPromotionRevenue(
+          totalAmount,
+          `Promotion payment from user ${userId} - Tier ${tier} for ${duration} days`,
+          userId,
+          {
+            promotionMethod: 'wallet',
+            productId: productId.toString(),
+            fromWallet: wallet._id.toString(),
+            tier: tier,
+            duration: duration,
+            originalBalance: wallet.balance.available + totalAmount,
+            newBalance: wallet.balance.available
+          }
+        );
+      } catch (error) {
+        console.error('Failed to add promotion revenue to system wallet:', error);
+      }
+
+      // Create notification for the user
+      const notificationService = require('./notification.service');
+      try {
+        const startDateStr = startDate.toLocaleDateString('vi-VN');
+        const endDateStr = endDate.toLocaleDateString('vi-VN');
+        
+        await notificationService.createNotification({
+          recipient: userId,
+          type: 'PROMOTION_PAYMENT',
+          title: 'Thanh toán quảng cáo thành công',
+          message: `Trừ ${totalAmount.toLocaleString('vi-VN')}đ để quảng cáo sản phẩm tier ${tier} từ ngày ${startDateStr} tới ngày ${endDateStr}`,
+          data: {
+            promotionId: promotion._id.toString(),
+            productId: productId.toString(),
+            tier: tier,
+            duration: duration,
+            amount: totalAmount,
+            startDate: startDate.toISOString(),
+            endDate: endDate.toISOString()
+          },
+          status: 'SENT'
+        });
+      } catch (error) {
+        console.error('Failed to create promotion notification:', error);
+      }
+
       return {
         promotion,
         newBalance: wallet.balance.available
@@ -398,6 +445,54 @@ const productPromotionService = {
 
         promotion.transaction = transaction._id;
         await promotion.save();
+
+        // Add amount to system wallet
+        const SystemWalletService = require('./systemWallet.service');
+        try {
+          await SystemWalletService.addPromotionRevenue(
+            promotion.totalAmount,
+            `PayOS promotion payment from user ${promotion.user} - Tier ${promotion.tier} for ${promotion.duration} days`,
+            promotion.user,
+            {
+              promotionMethod: 'payos',
+              productId: promotion.product.toString(),
+              payosOrderId: orderCode,
+              tier: promotion.tier,
+              duration: promotion.duration,
+              payosTransactionId: promotion._id.toString()
+            }
+          );
+        } catch (error) {
+          console.error('Failed to add promotion revenue to system wallet:', error);
+        }
+
+        // Create notification for the user
+        const notificationService = require('./notification.service');
+        try {
+          const startDateStr = promotion.startDate.toLocaleDateString('vi-VN');
+          const endDateStr = promotion.endDate.toLocaleDateString('vi-VN');
+          
+          await notificationService.createNotification({
+            recipient: promotion.user,
+            type: 'PROMOTION_PAYMENT',
+            title: 'Thanh toán quảng cáo thành công',
+            message: `Trừ ${promotion.totalAmount.toLocaleString('vi-VN')}đ để quảng cáo sản phẩm tier ${promotion.tier} từ ngày ${startDateStr} tới ngày ${endDateStr}`,
+            data: {
+              promotionId: promotion._id.toString(),
+              productId: promotion.product.toString(),
+              tier: promotion.tier,
+              duration: promotion.duration,
+              amount: promotion.totalAmount,
+              startDate: promotion.startDate.toISOString(),
+              endDate: promotion.endDate.toISOString(),
+              orderCode: orderCode
+            },
+            status: 'SENT'
+          });
+          console.log('[Promotion Webhook] Created promotion notification for user');
+        } catch (error) {
+          console.error('[Promotion Webhook] Failed to create promotion notification:', error);
+        }
 
         console.log('[Promotion Webhook] ✅ Promotion activation complete');
         return {
