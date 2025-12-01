@@ -6,6 +6,7 @@ const {
   getProfile,
   updateProfile,
   updateProfileByKyc,
+  changePassword,
   getBankAccount,
   addBankAccount,
   updateBankAccount,
@@ -20,6 +21,7 @@ router.post('/create', authMiddleware.checkUserRole('admin'), createUser); // T�
 router.get('/profile', authMiddleware.verifyToken, getProfile); // Lấy thông tin user
 router.put('/profile', authMiddleware.verifyToken, updateProfile); // Cập nhật thông tin user
 router.put('/profile-by-kyc', authMiddleware.verifyToken, updateProfileByKyc); // Cập nhật thông tin user
+router.put('/change-password', authMiddleware.verifyToken, changePassword); // Đổi mật khẩu
 
 // Bank Account routes
 router.get('/banks', getVietnameseBanks); // Get list of Vietnamese banks (public)

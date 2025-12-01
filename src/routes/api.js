@@ -39,6 +39,10 @@ require('./systemPromotion.routes');
 require('./shipment.routes.register');
 require('./upload.routes.register');
 
+// Owner Statistics routes
+const ownerStatisticsRoutes = require('./ownerStatistics.routes');
+router.use('/owner/statistics', ownerStatisticsRoutes);
+
 // Withdrawal routes
 const withdrawalRoutes = require('./withdrawal.routes');
 router.use('/withdrawals', withdrawalRoutes);
