@@ -1,4 +1,8 @@
 require('dotenv').config();
+
+// Set timezone for the entire application
+process.env.TZ = process.env.TIMEZONE || 'Asia/Ho_Chi_Minh';
+
 const connectToDatabase = require('./config/database');
 const app = require('./config/express');
 const http = require('http');

@@ -477,7 +477,7 @@ subOrderSchema.pre('save', function (next) {
 });
 
 // Virtual field: canConfirmDelivery - renter can only confirm delivery once
-subOrderSchema.virtual('canConfirmDelivery').get(function() {
+subOrderSchema.virtual('canConfirmDelivery').get(function () {
   // Renter can confirm delivery only if status is not DELIVERED yet
   return this.status !== 'DELIVERED';
 });
@@ -487,4 +487,3 @@ subOrderSchema.set('toJSON', { virtuals: true });
 subOrderSchema.set('toObject', { virtuals: true });
 
 module.exports = mongoose.model('SubOrder', subOrderSchema);
-
