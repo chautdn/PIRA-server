@@ -1045,13 +1045,29 @@ class AdminService {
 
     stats.forEach(stat => {
       statusStats.total += stat.count;
-      if (stat._id === 'ACTIVE') {
-        statusStats.active = stat.count;
-      } else if (stat._id === 'PENDING' || stat._id === 'PENDING_PAYMENT' || stat._id === 'PENDING_CONFIRMATION') {
+      
+      // Pending statuses
+      if (stat._id === 'DRAFT' || 
+          stat._id === 'PENDING' || 
+          stat._id === 'PENDING_PAYMENT' || 
+          stat._id === 'PENDING_CONFIRMATION' ||
+          stat._id === 'READY_FOR_CONTRACT') {
         statusStats.pending += stat.count;
-      } else if (stat._id === 'COMPLETED') {
+      } 
+      // Active statuses (đang hoạt động)
+      else if (stat._id === 'PAYMENT_COMPLETED' ||
+               stat._id === 'CONTRACT_SIGNED' ||
+               stat._id === 'PROCESSING' || 
+               stat._id === 'DELIVERED' || 
+               stat._id === 'ACTIVE') {
+        statusStats.active += stat.count;
+      } 
+      // Completed
+      else if (stat._id === 'COMPLETED') {
         statusStats.completed = stat.count;
-      } else if (stat._id === 'CANCELLED') {
+      } 
+      // Cancelled
+      else if (stat._id === 'CANCELLED') {
         statusStats.cancelled = stat.count;
       }
     });
