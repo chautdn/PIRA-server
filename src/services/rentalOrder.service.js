@@ -25,7 +25,7 @@ class RentalOrderService {
    */
   async createDraftOrderFromCart(renterId, orderData) {
     try {
-      const { rentalPeriod, deliveryAddress, deliveryMethod } = orderData;
+      const { rentalPeriod, deliveryAddress, deliveryMethod, selectedItems } = orderData;
 
       // Lấy thông tin giỏ hàng
       const cart = await Cart.findOne({ user: renterId }).populate({
@@ -40,8 +40,26 @@ class RentalOrderService {
         throw new Error('Giỏ hàng trống');
       }
 
+      // Filter items: nếu có selectedItems từ frontend, chỉ lấy những items đó
+      let itemsToProcess = cart.items;
+      if (selectedItems && Array.isArray(selectedItems) && selectedItems.length > 0) {
+        console.log(`📋 Received selectedItems from frontend: ${selectedItems.length} items`);
+        console.log('DEBUG selectedItems:', JSON.stringify(selectedItems.map(item => ({ _id: item._id, product: item.product?._id }))));
+        
+        const selectedItemIds = new Set(selectedItems.map(item => item._id?.toString() || item._id));
+        itemsToProcess = cart.items.filter(item => selectedItemIds.has(item._id.toString()));
+        
+        if (itemsToProcess.length === 0) {
+          throw new Error('Không tìm thấy các sản phẩm được chọn trong giỏ hàng');
+        }
+        
+        console.log(`✅ Processing ${itemsToProcess.length} selected items out of ${cart.items.length} in cart`);
+      } else {
+        console.log('⚠️ No selectedItems provided, using all cart items');
+      }
+
       // Kiểm tra các items trong cart có đầy đủ thông tin không
-      for (const item of cart.items) {
+      for (const item of itemsToProcess) {
         if (!item.product) {
           throw new Error('Có sản phẩm trong giỏ hàng đã bị xóa');
         }
@@ -85,8 +103,8 @@ class RentalOrderService {
         }
       }
 
-      // Nhóm sản phẩm theo chủ sở hữu
-      const productsByOwner = this.groupProductsByOwner(cart.items);
+      // Nhóm sản phẩm theo chủ sở hữu (chỉ từ selected/processed items)
+      const productsByOwner = this.groupProductsByOwner(itemsToProcess);
 
       // Tạo masterOrderNumber
       const orderNumber = `MO${Date.now()}${Math.random().toString(36).substr(2, 5).toUpperCase()}`;
@@ -154,17 +172,18 @@ class RentalOrderService {
             deliveryAddress
           );
 
-          subOrder.shipping = {
-            ...subOrder.shipping,
-            ...shippingInfo
-          };
-          
           // ✅ Set totalFee from calculated fee
           const calculatedFee = shippingInfo.fee.calculatedFee || shippingInfo.fee.breakdown?.total || 0;
-          subOrder.shipping.fee = {
-            ...subOrder.shipping.fee,
-            totalFee: calculatedFee
-          };
+          
+          // Update shipping with distance and time info
+          subOrder.shipping.distance = shippingInfo.distance;
+          subOrder.shipping.estimatedTime = shippingInfo.estimatedTime;
+          subOrder.shipping.vietmapResponse = shippingInfo.vietmapResponse;
+          
+          // Set shipping fee properly without conflict
+          subOrder.shipping.fee.totalFee = calculatedFee;
+          subOrder.shipping.fee.baseFee = shippingInfo.fee.baseFee || 15000;
+          subOrder.shipping.fee.pricePerKm = shippingInfo.fee.pricePerKm || 0;
           
           subOrder.pricing.shippingFee = calculatedFee;
 
@@ -215,7 +234,7 @@ class RentalOrderService {
         .populate({
           path: 'subOrders',
           populate: [
-            { path: 'owner', select: 'profile.fullName profile.phone profile.address' },
+            { path: 'owner', select: 'profile email phone' },
             { path: 'products.product', select: 'name images price deposit category' }
           ]
         })
@@ -249,15 +268,18 @@ class RentalOrderService {
       // COD specific fields
       depositAmount,
       depositPaymentMethod,
-      depositTransactionId
+      depositTransactionId,
+      // Selected items from frontend
+      selectedItems
     } = orderData;
 
     try {
-      // First create draft order using existing method
+      // First create draft order using existing method, pass selectedItems
       const draftOrder = await this.createDraftOrderFromCart(renterId, {
         rentalPeriod,
         deliveryAddress,
-        deliveryMethod
+        deliveryMethod,
+        selectedItems
       });
 
       if (!draftOrder || !draftOrder._id) {
@@ -333,12 +355,29 @@ class RentalOrderService {
       // The availability API will handle showing correct quantities per date ranges
       console.log('✅ Product quantities remain unchanged - availability calculated via SubOrders');
 
+      // Remove selected items from cart (only selected items, not entire cart)
+      if (selectedItems && Array.isArray(selectedItems) && selectedItems.length > 0) {
+        const selectedItemIds = new Set(selectedItems.map(item => item._id?.toString() || item._id));
+        await Cart.findOneAndUpdate(
+          { user: renterId },
+          { $pull: { items: { _id: { $in: Array.from(selectedItemIds) } } } }
+        );
+        console.log(`✅ Removed ${selectedItemIds.size} selected items from cart`);
+      } else {
+        // If no selectedItems specified, remove all items (backward compatibility)
+        await Cart.findOneAndUpdate(
+          { user: renterId },
+          { $set: { items: [] } }
+        );
+        console.log('✅ Cleared entire cart');
+      }
+
       // Return populated order
       return await MasterOrder.findById(draftOrder._id)
         .populate({
           path: 'subOrders',
           populate: [
-            { path: 'owner', select: 'profile.firstName profile.lastName phone profile address' },
+            { path: 'owner', select: 'profile email phone' },
             { path: 'products.product', select: 'name images price deposit category' }
           ]
         })
@@ -2557,7 +2596,7 @@ class RentalOrderService {
           .populate({
             path: 'subOrders',
             populate: [
-              { path: 'owner', select: 'profile.firstName profile.lastName phone profile address' },
+              { path: 'owner', select: 'profile email phone' },
               { path: 'products.product', select: 'name images price deposit' }
             ]
           })
