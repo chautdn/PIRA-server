@@ -270,6 +270,11 @@ class CartService {
       throw new Error('Sản phẩm không khả dụng');
     }
 
+    // Check if user is trying to add their own product to cart
+    if (product.owner.toString() === userId.toString()) {
+      throw new Error('Bạn không thể thêm sản phẩm của chính mình vào giỏ hàng');
+    }
+
     // Check stock availability
     const availableStock = product.availability?.quantity || 0;
 

@@ -16,7 +16,7 @@ class RentalOrderController {
   async createDraftOrder(req, res) {
     try {
       const userId = req.user.id;
-      const { rentalPeriod, deliveryAddress, deliveryMethod } = req.body;
+      const { rentalPeriod, deliveryAddress, deliveryMethod, selectedItems } = req.body;
 
       console.log('📥 POST /api/rental-orders/create-draft');
       console.log('📋 Request body:', JSON.stringify(req.body, null, 2));
@@ -64,7 +64,8 @@ class RentalOrderController {
       const masterOrder = await RentalOrderService.createDraftOrderFromCart(userId, {
         rentalPeriod,
         deliveryAddress,
-        deliveryMethod
+        deliveryMethod,
+        selectedItems
       });
 
       return new SuccessResponse({
@@ -100,7 +101,9 @@ class RentalOrderController {
         // COD specific fields
         depositAmount,
         depositPaymentMethod,
-        depositTransactionId
+        depositTransactionId,
+        // Selected items from frontend
+        selectedItems
       } = req.body;
 
       console.log('📥 POST /api/rental-orders/create-paid');
@@ -118,7 +121,9 @@ class RentalOrderController {
         // Include COD specific fields
         depositAmount,
         depositPaymentMethod,
-        depositTransactionId
+        depositTransactionId,
+        // Pass selected items to service
+        selectedItems
       });
 
       if (!masterOrder) {
