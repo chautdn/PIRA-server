@@ -38,6 +38,7 @@ require('./earlyReturn.routes.register');
 require('./systemPromotion.routes');
 require('./shipment.routes.register');
 require('./upload.routes.register');
+require('./ai.routes'); // AI Visual Search
 
 // Owner Statistics routes
 const ownerStatisticsRoutes = require('./ownerStatistics.routes');
