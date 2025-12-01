@@ -5,6 +5,8 @@ const MasterOrder = require('../models/MasterOrder');
 const Product = require('../models/Product');
 const User = require('../models/User');
 const Wallet = require('../models/Wallet');
+const Transaction = require('../models/Transaction');
+const { PayOS } = require('@payos/node');
 
 
 class ExtensionService {
@@ -190,6 +192,8 @@ class ExtensionService {
       switch (paymentMethod) {
         case 'WALLET':
           return await this.processWalletPayment(renterId, amount);
+        case 'PAYOS':
+          return await this.processPayOSPayment(renterId, extensionRequest, amount);
         case 'COD':
           return await this.processCODPayment(renterId, amount);
         default:
@@ -266,6 +270,102 @@ class ExtensionService {
     } catch (error) {
       console.error('❌ Wallet payment failed:', error.message);
       throw error;
+    }
+  }
+
+  /**
+   * Process PayOS payment
+   */
+  async processPayOSPayment(renterId, extensionRequest, amount) {
+    try {
+      // Validate amount
+      if (!amount || amount <= 0 || isNaN(amount)) {
+        throw new Error(`Số tiền thanh toán không hợp lệ: ${amount}`);
+      }
+
+      // Initialize PayOS
+      const payos = new PayOS({
+        clientId: process.env.PAYOS_CLIENT_ID,
+        apiKey: process.env.PAYOS_API_KEY,
+        checksumKey: process.env.PAYOS_CHECKSUM_KEY
+      });
+
+      // Generate unique order code
+      const orderCode = Date.now();
+
+      // Get renter info
+      const renter = await User.findById(renterId).populate('wallet');
+      if (!renter) {
+        throw new Error('Không tìm thấy người thuê');
+      }
+
+      // Create PayOS payment request
+      const paymentRequest = {
+        orderCode,
+        amount: Math.round(amount),
+        description: `Extension: ${extensionRequest?.extensionDays || 'N/A'} ngày`.substring(0, 25),
+        returnUrl: `${process.env.CLIENT_URL || 'http://localhost:3000'}/rental-orders?payment=success&orderCode=${orderCode}`,
+        cancelUrl: `${process.env.CLIENT_URL || 'http://localhost:3000'}/rental-orders?payment=cancel&orderCode=${orderCode}`,
+        buyerName: renter.profile?.fullName || renter.profile?.firstName || 'Renter',
+        buyerEmail: renter.email,
+        buyerPhone: renter.phone || '',
+        buyerAddress: `${renter.address?.streetAddress || 'N/A'}`
+      };
+
+      console.log('📤 Creating PayOS payment link for extension:', {
+        orderCode,
+        amount: Math.round(amount),
+        renter: renterId
+      });
+
+      // Create payment link
+      const paymentLink = await payos.paymentRequests.create(paymentRequest);
+
+      // Create transaction record
+      const transaction = new Transaction({
+        user: renterId,
+        wallet: renter.wallet?._id || null,
+        type: 'extension_payment',
+        amount: Math.round(amount),
+        status: 'pending',
+        paymentMethod: 'payos',
+        externalId: orderCode.toString(),
+        orderCode: orderCode.toString(),
+        description: `Extension payment - ${extensionRequest?.extensionDays || 'N/A'} ngày`,
+        paymentUrl: paymentLink.checkoutUrl,
+        metadata: {
+          extensionRequestId: extensionRequest?._id?.toString(),
+          masterOrderId: extensionRequest?.masterOrder?.toString(),
+          subOrderId: extensionRequest?.subOrder?.toString(),
+          extensionDays: extensionRequest?.extensionDays,
+          paymentMethod: 'payos',
+          orderType: 'extension'
+        },
+        expiredAt: new Date(Date.now() + 15 * 60 * 1000) // 15 minutes
+      });
+
+      await transaction.save();
+
+      console.log('✅ PayOS payment link created for extension:', {
+        transactionId: transaction._id,
+        orderCode,
+        checkoutUrl: paymentLink.checkoutUrl
+      });
+
+      return {
+        transactionId: transaction._id.toString(),
+        orderCode: orderCode,
+        method: 'PAYOS',
+        amount: Math.round(amount),
+        status: 'PENDING',
+        paymentUrl: paymentLink.checkoutUrl,
+        qrCode: paymentLink.qrCode || null,
+        expiresAt: transaction.expiredAt,
+        message: 'Link thanh toán PayOS đã được tạo. Vui lòng hoàn tất thanh toán trong 15 phút.'
+      };
+    } catch (error) {
+      console.error('❌ PayOS payment failed:', error.message);
+      throw new Error(`Không thể tạo link thanh toán PayOS: ${error.message}`);
     }
   }
 

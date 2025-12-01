@@ -361,15 +361,16 @@ class ShipmentController {
         return res.status(400).json({ status: 'error', message: 'At least one image is required' });
       }
 
-      // Upload all files to Cloudinary
+      // Upload all files to Cloudinary in parallel
       const imageUrls = [];
       try {
         console.log(`📤 Uploading ${files.length} image(s) to Cloudinary for shipment ${shipmentId}...`);
-        for (const file of files) {
-          const uploadResult = await CloudinaryService.uploadImage(file.buffer);
+        const uploadPromises = files.map(file => CloudinaryService.uploadImage(file.buffer));
+        const uploadResults = await Promise.all(uploadPromises);
+        uploadResults.forEach((uploadResult) => {
           imageUrls.push(uploadResult.secure_url);
           console.log(`✅ Image uploaded: ${uploadResult.secure_url}`);
-        }
+        });
       } catch (uploadErr) {
         console.error(`❌ Cloudinary upload failed:`, uploadErr.message);
         return res.status(400).json({ status: 'error', message: 'Image upload to Cloudinary failed: ' + uploadErr.message });
@@ -433,6 +434,65 @@ class ShipmentController {
       return res.json({ status: 'success', data: proof });
     } catch (err) {
       console.error('getProof error', err.message);
+      return res.status(400).json({ status: 'error', message: err.message });
+    }
+  }
+
+  async cancelShipmentPickup(req, res) {
+    try {
+      // Only SHIPPER can cancel
+      if (req.user.role !== 'SHIPPER') {
+        return res.status(403).json({ 
+          status: 'error', 
+          message: 'Only shippers can cancel shipment pickup' 
+        });
+      }
+
+      const shipmentId = req.params.id;
+      console.log(`\n📥 POST /shipments/${shipmentId}/cancel-pickup`);
+      console.log(`👤 User ID: ${req.user._id}`);
+      console.log(`👤 User Role: ${req.user.role}`);
+
+      const shipment = await ShipmentService.cancelShipmentPickup(shipmentId);
+      
+      return res.json({ 
+        status: 'success', 
+        message: 'Shipment cancellation processed',
+        data: shipment 
+      });
+    } catch (err) {
+      console.error('cancelShipmentPickup error', err.message);
+      return res.status(400).json({ status: 'error', message: err.message });
+    }
+  }
+
+  async rejectDelivery(req, res) {
+    try {
+      // Only SHIPPER can reject
+      if (req.user.role !== 'SHIPPER') {
+        return res.status(403).json({ 
+          status: 'error', 
+          message: 'Only shippers can reject delivery' 
+        });
+      }
+
+      const shipmentId = req.params.id;
+      const { reason, notes } = req.body;
+
+      console.log(`\n📥 POST /shipments/${shipmentId}/reject-delivery`);
+      console.log(`👤 User ID: ${req.user._id}`);
+      console.log(`👤 User Role: ${req.user.role}`);
+      console.log(`📝 Reason: ${reason}`);
+
+      const shipment = await ShipmentService.rejectDelivery(shipmentId, { reason, notes });
+      
+      return res.json({ 
+        status: 'success', 
+        message: 'Delivery rejection processed',
+        data: shipment 
+      });
+    } catch (err) {
+      console.error('rejectDelivery error', err.message);
       return res.status(400).json({ status: 'error', message: err.message });
     }
   }

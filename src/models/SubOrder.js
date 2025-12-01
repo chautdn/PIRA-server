@@ -324,7 +324,8 @@ const subOrderSchema = new mongoose.Schema(
         'CONTRACT_SIGNED', // Đã ký hợp đồng
 
         // Delivery / Renter confirmation
-        'DELIVERED', // Renter đã xác nhận đã nhận hàng (kích hoạt chuyển tiền)
+        'DELIVERED', // Shipper đã giao hàng
+        'ACTIVE', // Rental đang hoạt động (sau khi hàng đã giao)
 
         // Final States
         'COMPLETED', // Hoàn thành

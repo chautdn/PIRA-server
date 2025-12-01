@@ -6,7 +6,8 @@ const extensionSchema = new mongoose.Schema(
     masterOrder: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'MasterOrder',
-      required: true
+      required: true,
+      index: true
     },
 
     subOrder: {
@@ -18,17 +19,19 @@ const extensionSchema = new mongoose.Schema(
     renter: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'User',
-      required: true
+      required: true,
+      index: true
     },
 
     owner: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'User',
-      required: true
+      required: true,
+      index: true
     },
 
-    // Extension details
-    extendDays: {
+    // Extension details - linh hoạt
+    extensionDays: {
       type: Number,
       required: true,
       min: 1,
@@ -41,10 +44,7 @@ const extensionSchema = new mongoose.Schema(
       min: 0
     },
 
-    notes: {
-      type: String,
-      default: null
-    },
+    notes: String,
 
     // Dates
     currentEndDate: {
@@ -57,37 +57,46 @@ const extensionSchema = new mongoose.Schema(
       required: true
     },
 
-    // Status tracking
-    status: {
+    requestedAt: {
+      type: Date,
+      default: Date.now,
+      index: true
+    },
+
+    // Payment info (optional, linh hoạt)
+    paymentMethod: {
       type: String,
-      enum: ['PENDING', 'APPROVED', 'REJECTED', 'CANCELLED'],
+      enum: ['WALLET', 'PAYOS', 'COD'],
+      default: 'WALLET'
+    },
+
+    paymentStatus: {
+      type: String,
+      enum: ['PENDING', 'PAID', 'FAILED'],
       default: 'PENDING'
     },
 
-    approvedAt: Date,
-    approvedBy: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: 'User'
+    paymentInfo: mongoose.Schema.Types.Mixed,
+
+    // Status - đơn giản
+    status: {
+      type: String,
+      enum: ['PENDING', 'APPROVED', 'REJECTED', 'CANCELLED'],
+      default: 'PENDING',
+      index: true
     },
 
-    rejectedAt: Date,
-    rejectedBy: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: 'User'
-    },
-
+    // Owner response - tùy chọn
     rejectionReason: String,
 
+    // Timestamps
+    approvedAt: Date,
+    rejectedAt: Date,
     cancelledAt: Date,
-    cancelledBy: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: 'User'
-    }
+    deletedAt: Date
   },
   {
-    timestamps: true,
-    toJSON: { virtuals: true },
-    toObject: { virtuals: true }
+    timestamps: true
   }
 );
 
