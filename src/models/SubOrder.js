@@ -137,6 +137,7 @@ const subOrderSchema = new mongoose.Schema(
             'IN_TRANSIT', // Đang vận chuyển đến người thuê
             'DELIVERED', // Đã giao cho người thuê
             'DELIVERY_FAILED', // Giao hàng thất bại
+            'RENTER_ABSENT', // Renter không có mặt để nhận hàng
 
             // Active Rental Phase
             'ACTIVE', // Đang trong thời gian thuê

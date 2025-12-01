@@ -859,6 +859,11 @@ class ShipmentService {
   /**
    * Reject delivery - renter doesn't accept delivered goods
    * Updates shipment status to DELIVERY_FAILED
+   * If reason is NO_CONTACT (RENTER_ABSENT):
+   *   - Update product status to RENTER_ABSENT
+   *   - Deduct deposit + 1 day rental from renter
+   *   - Deduct 20 creditScore from renter
+   *   - Refund remaining amount to renter
    * Sends notification to owner and renter
    * Reason can be: PRODUCT_DAMAGED or NO_CONTACT
    */
@@ -870,8 +875,8 @@ class ShipmentService {
           { path: 'owner', select: '_id profile email' },
           {
             path: 'masterOrder',
-            select: '_id renter',
-            populate: { path: 'renter', select: '_id profile email' }
+            select: '_id renter rentalPeriod',
+            populate: { path: 'renter', select: '_id profile email creditScore loyaltyPoints' }
           }
         ]
       });
@@ -898,16 +903,88 @@ class ShipmentService {
     await shipment.save();
     console.log(`   ✅ Shipment marked as DELIVERY_FAILED`);
 
-    // 2. Send notification to owner
+    const subOrder = shipment.subOrder;
+    const renter = subOrder.masterOrder?.renter;
+
+    // 2. Handle RENTER_ABSENT (NO_CONTACT case)
+    if (reason === 'NO_CONTACT' && shipment.productIndex !== undefined) {
+      try {
+        console.log(`\n💰 Processing RENTER_ABSENT deduction...`);
+        
+        // Update product status to RENTER_ABSENT
+        subOrder.products[shipment.productIndex].productStatus = 'RENTER_ABSENT';
+        
+        const product = subOrder.products[shipment.productIndex];
+        const productRental = product.totalRental || 0;
+        const productDeposit = product.totalDeposit || 0;
+
+        // Calculate: 1 day rental (or deposit if direct payment)
+        const rentalDays = product.rentalPeriod?.duration?.value || 1;
+        const oneDayRental = Math.ceil(productRental / rentalDays);
+
+        console.log(`   Product rental period: ${rentalDays} days`);
+        console.log(`   One day rental amount: ${oneDayRental} VND`);
+        console.log(`   Product deposit: ${productDeposit} VND`);
+
+        // Determine payment method (từ subOrder.shipping.method)
+        const isDirectPayment = subOrder.shipping?.method === 'PICKUP';
+        
+        let deductAmount = productDeposit;
+        if (isDirectPayment) {
+          // Thanh toán trực tiếp: trừ vào cọc (cộng với 1 ngày thuê vào cọc)
+          deductAmount = productDeposit + oneDayRental;
+          console.log(`   Payment method: DIRECT (PICKUP) → Deduct: deposit + 1 day rental = ${deductAmount} VND`);
+        } else {
+          // Thanh toán online: trừ cọc + trừ 1 ngày thuê từ rental
+          deductAmount = productDeposit + oneDayRental;
+          console.log(`   Payment method: ONLINE (DELIVERY) → Deduct: deposit + 1 day rental = ${deductAmount} VND`);
+        }
+
+        const totalProductAmount = productRental + productDeposit;
+        const refundAmount = Math.max(0, totalProductAmount - deductAmount);
+
+        console.log(`   Total product amount (rental + deposit): ${totalProductAmount} VND`);
+        console.log(`   Total deduct: ${deductAmount} VND`);
+        console.log(`   Refund to renter: ${refundAmount} VND`);
+
+        // 3. Deduct 20 creditScore from renter
+        if (renter.creditScore === undefined) renter.creditScore = 100;
+        renter.creditScore = Math.max(0, renter.creditScore - 20);
+        await renter.save();
+        console.log(`   ✅ Renter creditScore: ${renter.creditScore + 20} → ${renter.creditScore} (-20 points)`);
+
+        // 4. Refund remaining amount to renter
+        if (refundAmount > 0) {
+          const adminId = process.env.SYSTEM_ADMIN_ID || 'SYSTEM_AUTO_TRANSFER';
+          const transferResult = await SystemWalletService.transferToUser(
+            adminId,
+            renter._id,
+            refundAmount,
+            `Refund for renter absent - shipment ${shipment.shipmentId}`
+          );
+          console.log(`   ✅ Refund ${refundAmount} VND transferred to renter:`, transferResult);
+        } else {
+          console.log(`   ℹ️  No refund (amount = 0)`);
+        }
+
+        // Update suborder products
+        await subOrder.save();
+        console.log(`   ✅ SubOrder product status updated to RENTER_ABSENT`);
+
+      } catch (err) {
+        console.error(`   ⚠️  RENTER_ABSENT processing failed: ${err.message}`);
+        throw new Error(`RENTER_ABSENT processing error: ${err.message}`);
+      }
+    }
+
+    // 5. Send notification to owner
     try {
       const NotificationService = require('./notification.service');
-      const subOrder = shipment.subOrder;
-      const reasonText = reason === 'PRODUCT_DAMAGED' ? 'Sản phẩm có lỗi' : 'Không liên lạc được với renter';
-
+      
       await NotificationService.createNotification({
         recipient: subOrder.owner._id,
         title: '⚠️ Renter không nhận hàng',
-        message: `Renter không nhận hàng từ shipment ${shipment.shipmentId}. Lý do: ${reasonText}. Ghi chú: ${notes}`,
+        message: `Renter không nhận hàng từ shipment ${shipment.shipmentId}. Lý do: ${reason === 'PRODUCT_DAMAGED' ? 'Sản phẩm có lỗi' : 'Không liên lạc được với renter'}. Ghi chú: ${notes}`,
         type: 'SHIPMENT',
         category: 'WARNING',
         data: {
@@ -922,15 +999,22 @@ class ShipmentService {
       console.error(`   ⚠️  Notification to owner failed: ${err.message}`);
     }
 
-    // 3. Send notification to renter
+    // 6. Send notification to renter
     try {
       const NotificationService = require('./notification.service');
-      const subOrder = shipment.subOrder;
+      
+      let message = `Đơn hàng ${subOrder.subOrderNumber} đã được ghi nhận là renter không nhận hàng.`;
+      if (reason === 'NO_CONTACT') {
+        const productDeposit = subOrder.products[shipment.productIndex]?.totalDeposit || 0;
+        const rentalDays = subOrder.products[shipment.productIndex]?.rentalPeriod?.duration?.value || 1;
+        const oneDayRental = Math.ceil((subOrder.products[shipment.productIndex]?.totalRental || 0) / rentalDays);
+        message += ` Tiền cọc (${productDeposit} VND) + 1 ngày thuê (${oneDayRental} VND) sẽ bị trừ. Phần còn lại sẽ được hoàn lại.`;
+      }
 
       await NotificationService.createNotification({
-        recipient: subOrder.masterOrder.renter._id,
+        recipient: renter._id,
         title: '📦 Ghi nhận renter không nhận hàng',
-        message: `Đơn hàng ${subOrder.subOrderNumber} đã được ghi nhận là renter không nhận hàng. Vui lòng liên hệ với chúng tôi nếu có bất kỳ thắc mắc nào.`,
+        message: message,
         type: 'SHIPMENT',
         category: 'INFO',
         data: {

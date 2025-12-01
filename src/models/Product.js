@@ -127,6 +127,7 @@ const productSchema = new mongoose.Schema(
     status: {
       type: String,
       enum: [
+        'RENTER_ABSENT',
         'DRAFT',
         'PENDING',
         'ACTIVE',
