@@ -22,12 +22,24 @@ const timezoneMiddleware = (req, res, next) => {
         if (visited.has(obj)) {
           return obj;
         }
-        visited.add(obj);
 
         // Handle arrays
         if (Array.isArray(obj)) {
           return obj.map((item) => addTimezoneInfo(item));
         }
+
+        // Don't process these special types, just return them as-is
+        if (
+          obj instanceof Date ||
+          obj instanceof RegExp ||
+          obj instanceof Error ||
+          obj.constructor.name === 'ObjectId' ||
+          obj.constructor.name === 'ObjectID'
+        ) {
+          return obj;
+        }
+
+        visited.add(obj);
 
         // Convert Mongoose documents to plain objects
         let plainObj = obj;
@@ -76,14 +88,16 @@ const timezoneMiddleware = (req, res, next) => {
           }
         });
 
-        // Recursively process nested objects (but skip already processed ones)
+        // Recursively process nested objects (but skip already processed ones and special types)
         Object.keys(result).forEach((key) => {
           const value = result[key];
           if (
             value &&
             typeof value === 'object' &&
             !(value instanceof Date) &&
-            !visited.has(value)
+            !visited.has(value) &&
+            value.constructor.name !== 'ObjectId' &&
+            value.constructor.name !== 'ObjectID'
           ) {
             result[key] = addTimezoneInfo(value);
           }
