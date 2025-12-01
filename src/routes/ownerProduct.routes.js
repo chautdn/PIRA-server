@@ -110,6 +110,14 @@ router.delete(
   ownerProductController.deleteImage
 );
 
+router.get(
+  '/rental-requests/:subOrderId',
+  [
+    param('subOrderId').isMongoId().withMessage('Valid subOrder ID is required')
+  ],
+  ownerProductController.getSubOrderDetail
+);
+
 router.post(
   '/rental-requests/:subOrderId/items/:itemIndex/confirm',
   [

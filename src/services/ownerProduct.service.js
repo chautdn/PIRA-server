@@ -380,6 +380,35 @@ const ownerProductService = {
   },
 
   /**
+   * Get single SubOrder detail for owner
+   */
+  getSubOrderDetail: async (ownerId, subOrderId) => {
+    try {
+      const SubOrder = require('../models/SubOrder');
+
+      const subOrder = await SubOrder.findOne({
+        _id: subOrderId,
+        owner: ownerId
+      })
+        .populate('products.product')
+        .populate('owner', 'profile email phone')
+        .populate({
+          path: 'masterOrder',
+          populate: { path: 'renter', select: 'profile email phone' }
+        })
+        .populate('contract');
+
+      if (!subOrder) {
+        throw new Error('Không tìm thấy đơn hàng');
+      }
+
+      return subOrder;
+    } catch (error) {
+      throw new Error('Error fetching SubOrder detail: ' + error.message);
+    }
+  },
+
+  /**
    * Confirm specific product item in SubOrder
    */
   confirmProductItem: async (ownerId, subOrderId, productItemIndex) => {
