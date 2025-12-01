@@ -74,11 +74,17 @@ const webhookController = {
       const isRentalOrderPayment =
         transaction.type === 'order_payment' && transaction.metadata?.orderType === 'rental_order';
 
+      // Check if this is an early return upfront shipping payment
+      const isEarlyReturnUpfrontPayment = 
+        transaction.metadata?.orderType === 'early_return_upfront_shipping';
+
       console.log('🔍 Transaction type check:', {
         type: transaction.type,
         orderType: transaction.metadata?.orderType,
         isRentalOrderPayment,
-        masterOrderId: transaction.metadata?.masterOrderId
+        isEarlyReturnUpfrontPayment,
+        masterOrderId: transaction.metadata?.masterOrderId,
+        subOrderId: transaction.metadata?.subOrderId
       });
 
       if (isSuccess) {
@@ -89,7 +95,44 @@ const webhookController = {
         });
         console.log('✅ Transaction updated to success');
 
-        if (isRentalOrderPayment) {
+        if (isEarlyReturnUpfrontPayment) {
+          // Handle early return upfront shipping payment
+          console.log('🚚 Processing early return upfront shipping payment:', {
+            subOrderId: transaction.metadata.subOrderId,
+            amount: transaction.amount
+          });
+
+          // Credit system wallet
+          const systemWallet = await Wallet.findOne({ isSystem: true });
+          if (systemWallet) {
+            systemWallet.balance.available += transaction.amount;
+            await systemWallet.save();
+
+            // Create transaction record for system wallet
+            const systemTransaction = new Transaction({
+              wallet: systemWallet._id,
+              type: 'deposit',
+              amount: transaction.amount,
+              status: 'success',
+              paymentMethod: 'payos',
+              description: `Phí ship thêm - Trả hàng sớm từ renter`,
+              metadata: {
+                subOrderId: transaction.metadata.subOrderId,
+                renterId: transaction.user._id,
+                sourceTransaction: transaction._id
+              }
+            });
+            await systemTransaction.save();
+
+            console.log(`✅ Credited ${transaction.amount}đ to system wallet from PayOS`);
+          }
+
+          return res.status(200).json({
+            message: 'Early return upfront shipping payment processed successfully',
+            orderCode,
+            amount: transaction.amount
+          });
+        } else if (isRentalOrderPayment) {
           // Handle rental order payment confirmation
           console.log('🏠 Processing rental order payment:', {
             masterOrderId: transaction.metadata.masterOrderId,
