@@ -650,12 +650,12 @@ class RentalOrderController {
         deliveryAddress
       );
 
-      return new SuccessResponse({
-        message: 'Tính phí ship thành công',
-        metadata: {
+      return new SuccessResponse(
+        {
           shipping: shippingInfo
-        }
-      }).send(res);
+        },
+        'Tính phí ship thành công'
+      ).send(res);
     } catch (error) {
       throw new BadRequest(error.message);
     }
