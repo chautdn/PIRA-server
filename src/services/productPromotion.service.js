@@ -41,7 +41,7 @@ const productPromotionService = {
   },
 
   // Create promotion with wallet payment
-  async createWithWallet(userId, productId, { tier, duration }) {
+  async createWithWallet(userId, productId, { tier, duration, scheduleMode = 'override' }) {
     try {
       // Check product ownership
       const product = await Product.findOne({
@@ -59,8 +59,22 @@ const productPromotionService = {
         isActive: true
       });
 
+      // Handle scheduling mode
+      let startDate = new Date();
+      let shouldActivateNow = true;
+
       if (existingPromo) {
-        throw new Error('Product already has an active promotion');
+        if (scheduleMode === 'override') {
+          // Deactivate existing promotion
+          existingPromo.isActive = false;
+          await existingPromo.save();
+        } else if (scheduleMode === 'after') {
+          // Schedule to start after current promotion ends
+          startDate = new Date(existingPromo.endDate);
+          shouldActivateNow = false;
+        } else {
+          throw new Error('Product already has an active promotion');
+        }
       }
 
       // Calculate cost
@@ -83,21 +97,21 @@ const productPromotionService = {
         type: 'payment',
         amount: totalAmount,
         status: 'success',
-        description: `Product Promotion Tier ${tier} - ${duration} days`,
+        description: `Product Promotion Tier ${tier} - ${duration} days${!shouldActivateNow ? ' (Scheduled)' : ''}`,
         metadata: {
           type: 'product_promotion',
           productId: productId.toString(),
           tier,
           duration,
           pricePerDay,
-          discountApplied
+          discountApplied,
+          scheduleMode
         }
       });
       await transaction.save();
 
       // Create promotion
-      const startDate = new Date();
-      const endDate = new Date(Date.now() + duration * 24 * 60 * 60 * 1000);
+      const endDate = new Date(startDate.getTime() + duration * 24 * 60 * 60 * 1000);
 
       const promotion = new ProductPromotion({
         product: productId,
@@ -112,24 +126,26 @@ const productPromotionService = {
         transaction: transaction._id,
         startDate,
         endDate,
-        isActive: true,
+        isActive: shouldActivateNow,
         isRecurring: duration >= MIN_DAYS_FOR_DISCOUNT
       });
       await promotion.save();
 
-      // Update product (ensure it's ACTIVE for wallet payment since payment is instant)
-      product.status = 'ACTIVE';
-      product.currentPromotion = promotion._id;
-      product.isPromoted = true;
-      product.promotionTier = tier;
-      await product.save();
+      // Update product only if activating now
+      if (shouldActivateNow) {
+        product.status = 'ACTIVE';
+        product.currentPromotion = promotion._id;
+        product.isPromoted = true;
+        product.promotionTier = tier;
+        await product.save();
+      }
 
       // Add amount to system wallet
       const SystemWalletService = require('./systemWallet.service');
       try {
         await SystemWalletService.addPromotionRevenue(
           totalAmount,
-          `Promotion payment from user ${userId} - Tier ${tier} for ${duration} days`,
+          `Promotion payment from user ${userId} - Tier ${tier} for ${duration} days${!shouldActivateNow ? ' (Scheduled)' : ''}`,
           userId,
           {
             promotionMethod: 'wallet',
@@ -138,7 +154,9 @@ const productPromotionService = {
             tier: tier,
             duration: duration,
             originalBalance: wallet.balance.available + totalAmount,
-            newBalance: wallet.balance.available
+            newBalance: wallet.balance.available,
+            scheduleMode,
+            scheduled: !shouldActivateNow
           }
         );
       } catch (error) {
@@ -150,12 +168,18 @@ const productPromotionService = {
       try {
         const startDateStr = startDate.toLocaleDateString('vi-VN');
         const endDateStr = endDate.toLocaleDateString('vi-VN');
-        
+
+        const notificationMessage = shouldActivateNow
+          ? `Trừ ${totalAmount.toLocaleString('vi-VN')}đ để quảng cáo sản phẩm tier ${tier} từ ngày ${startDateStr} tới ngày ${endDateStr}`
+          : `Trừ ${totalAmount.toLocaleString('vi-VN')}đ để đặt lịch quảng cáo sản phẩm tier ${tier}. Sẽ tự động kích hoạt từ ${startDateStr} tới ${endDateStr}`;
+
         await notificationService.createNotification({
           recipient: userId,
           type: 'PROMOTION_PAYMENT',
-          title: 'Thanh toán quảng cáo thành công',
-          message: `Trừ ${totalAmount.toLocaleString('vi-VN')}đ để quảng cáo sản phẩm tier ${tier} từ ngày ${startDateStr} tới ngày ${endDateStr}`,
+          title: shouldActivateNow
+            ? 'Thanh toán quảng cáo thành công'
+            : 'Đặt lịch quảng cáo thành công',
+          message: notificationMessage,
           data: {
             promotionId: promotion._id.toString(),
             productId: productId.toString(),
@@ -163,7 +187,9 @@ const productPromotionService = {
             duration: duration,
             amount: totalAmount,
             startDate: startDate.toISOString(),
-            endDate: endDate.toISOString()
+            endDate: endDate.toISOString(),
+            scheduled: !shouldActivateNow,
+            scheduleMode
           },
           status: 'SENT'
         });
@@ -181,7 +207,7 @@ const productPromotionService = {
   },
 
   // Create promotion with PayOS
-  async createWithPayOS(userId, productId, { tier, duration }) {
+  async createWithPayOS(userId, productId, { tier, duration, scheduleMode = 'override' }) {
     // Check product ownership
     const product = await Product.findOne({
       _id: productId,
@@ -198,8 +224,21 @@ const productPromotionService = {
       isActive: true
     });
 
+    // Determine start date based on schedule mode
+    let startDate = new Date();
+    let shouldActivateNow = true;
+
     if (existingPromo) {
-      throw new Error('Product already has an active promotion');
+      if (scheduleMode === 'override') {
+        // Will deactivate existing promotion after payment
+        shouldActivateNow = true;
+      } else if (scheduleMode === 'after') {
+        // Schedule to start after current promotion ends
+        startDate = new Date(existingPromo.endDate);
+        shouldActivateNow = false;
+      } else {
+        throw new Error('Product already has an active promotion');
+      }
     }
 
     // Check for existing pending promotion (don't create duplicate)
@@ -217,8 +256,7 @@ const productPromotionService = {
     const { pricePerDay, totalAmount, discountApplied } = this.calculateCost(tier, duration);
 
     // Create pending promotion
-    const startDate = new Date();
-    const endDate = new Date(Date.now() + duration * 24 * 60 * 60 * 1000);
+    const endDate = new Date(startDate.getTime() + duration * 24 * 60 * 60 * 1000);
     const orderCode = Date.now();
 
     const promotion = new ProductPromotion({
@@ -235,7 +273,12 @@ const productPromotionService = {
       startDate,
       endDate,
       isActive: false,
-      isRecurring: duration >= MIN_DAYS_FOR_DISCOUNT
+      isRecurring: duration >= MIN_DAYS_FOR_DISCOUNT,
+      metadata: {
+        scheduleMode,
+        shouldActivateNow,
+        existingPromoId: existingPromo?._id?.toString()
+      }
     });
     await promotion.save();
 
@@ -251,7 +294,7 @@ const productPromotionService = {
     const paymentData = {
       orderCode: orderCode,
       amount: totalAmount,
-      description: `Promotion T${tier} ${duration}d`,
+      description: `Promotion T${tier} ${duration}d${!shouldActivateNow ? ' (Scheduled)' : ''}`,
       returnUrl: `${process.env.CLIENT_URL}/owner/promotion-success?orderCode=${orderCode}`,
       cancelUrl: `${process.env.CLIENT_URL}/owner/promotion-cancel?orderCode=${orderCode}`,
       metadata: {
@@ -260,7 +303,9 @@ const productPromotionService = {
         productId: productId.toString(),
         userId: userId.toString(),
         tier,
-        duration
+        duration,
+        scheduleMode,
+        shouldActivateNow
       }
     };
 
@@ -356,6 +401,68 @@ const productPromotionService = {
     }
   },
 
+  // Activate scheduled promotions (cron job)
+  async activateScheduled() {
+    try {
+      const now = new Date();
+      const scheduled = await ProductPromotion.find({
+        isActive: false,
+        paymentStatus: 'paid',
+        startDate: { $lte: now },
+        endDate: { $gt: now }
+      });
+
+      let activated = 0;
+      for (const promo of scheduled) {
+        // Check if there's already an active promotion for this product
+        const activePromo = await ProductPromotion.findOne({
+          product: promo.product,
+          isActive: true,
+          _id: { $ne: promo._id }
+        });
+
+        // Only activate if no other promotion is active
+        if (!activePromo) {
+          promo.isActive = true;
+          await promo.save();
+
+          await Product.findByIdAndUpdate(promo.product, {
+            status: 'ACTIVE',
+            currentPromotion: promo._id,
+            isPromoted: true,
+            promotionTier: promo.tier
+          });
+
+          activated++;
+
+          // Notify user
+          try {
+            const notificationService = require('./notification.service');
+            await notificationService.createNotification({
+              recipient: promo.user,
+              type: 'PROMOTION_ACTIVATED',
+              title: 'Quảng cáo đã được kích hoạt',
+              message: `Quảng cáo tier ${promo.tier} của bạn đã tự động kích hoạt và sẽ chạy đến ${new Date(promo.endDate).toLocaleDateString('vi-VN')}`,
+              data: {
+                promotionId: promo._id.toString(),
+                productId: promo.product.toString(),
+                tier: promo.tier,
+                endDate: promo.endDate.toISOString()
+              },
+              status: 'SENT'
+            });
+          } catch (error) {
+            console.error('Failed to create promotion activation notification:', error);
+          }
+        }
+      }
+
+      return activated;
+    } catch (error) {
+      throw error;
+    }
+  },
+
   // Process PayOS webhook for promotion payment
   async processPayOSWebhook(orderCode, success) {
     console.log(`[Promotion Webhook] Processing orderCode: ${orderCode}, success: ${success}`);
@@ -392,28 +499,47 @@ const productPromotionService = {
       try {
         console.log('[Promotion Webhook] Processing successful payment...');
 
+        // Get schedule mode from promotion metadata
+        const scheduleMode = promotion.metadata?.scheduleMode || 'override';
+        const shouldActivateNow = promotion.metadata?.shouldActivateNow !== false;
+        const existingPromoId = promotion.metadata?.existingPromoId;
+
+        // Handle override mode: deactivate existing promotion
+        if (scheduleMode === 'override' && existingPromoId) {
+          await ProductPromotion.findByIdAndUpdate(existingPromoId, {
+            isActive: false
+          });
+          console.log('[Promotion Webhook] Deactivated existing promotion:', existingPromoId);
+        }
+
         // Update promotion
         promotion.paymentStatus = 'paid';
-        promotion.isActive = true;
+        promotion.isActive = shouldActivateNow;
         await promotion.save();
-        console.log('[Promotion Webhook] Promotion updated to paid and active');
+        console.log('[Promotion Webhook] Promotion updated to paid, isActive:', shouldActivateNow);
 
-        // Update product (activate it and set promotion)
-        const updatedProduct = await Product.findByIdAndUpdate(
-          promotion.product,
-          {
-            status: 'ACTIVE', // Publish the product
-            currentPromotion: promotion._id,
-            isPromoted: true,
-            promotionTier: promotion.tier
-          },
-          { new: true }
-        );
-        console.log('[Promotion Webhook] Product updated:', {
-          id: updatedProduct._id,
-          status: updatedProduct.status,
-          isPromoted: updatedProduct.isPromoted
-        });
+        // Update product only if activating now
+        if (shouldActivateNow) {
+          const updatedProduct = await Product.findByIdAndUpdate(
+            promotion.product,
+            {
+              status: 'ACTIVE', // Publish the product
+              currentPromotion: promotion._id,
+              isPromoted: true,
+              promotionTier: promotion.tier
+            },
+            { new: true }
+          );
+          console.log('[Promotion Webhook] Product updated:', {
+            id: updatedProduct._id,
+            status: updatedProduct.status,
+            isPromoted: updatedProduct.isPromoted
+          });
+        } else {
+          console.log(
+            '[Promotion Webhook] Promotion scheduled for later, product not activated yet'
+          );
+        }
 
         // Get user's wallet
         const Wallet = require('../models/Wallet');
@@ -471,7 +597,7 @@ const productPromotionService = {
         try {
           const startDateStr = promotion.startDate.toLocaleDateString('vi-VN');
           const endDateStr = promotion.endDate.toLocaleDateString('vi-VN');
-          
+
           await notificationService.createNotification({
             recipient: promotion.user,
             type: 'PROMOTION_PAYMENT',

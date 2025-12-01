@@ -64,6 +64,32 @@ const validateCreateReview = [
   handleValidationErrors
 ];
 
+const validateUpdateAddress = [
+  param('id').isMongoId().withMessage('Invalid request ID'),
+  body('returnAddress').notEmpty().withMessage('Return address is required').isObject(),
+  body('returnAddress.streetAddress').notEmpty().withMessage('Street address is required'),
+  body('returnAddress.coordinates').notEmpty().withMessage('Coordinates are required').isObject(),
+  body('returnAddress.coordinates.latitude').isFloat().withMessage('Valid latitude is required'),
+  body('returnAddress.coordinates.longitude').isFloat().withMessage('Valid longitude is required'),
+  body('returnAddress.contactPhone').notEmpty().withMessage('Contact phone is required'),
+  handleValidationErrors
+];
+
+const validatePayAdditionalShipping = [
+  param('id').isMongoId().withMessage('Invalid request ID'),
+  body('paymentMethod')
+    .notEmpty()
+    .withMessage('Payment method is required')
+    .isIn(['wallet', 'payos'])
+    .withMessage('Payment method must be wallet or payos'),
+  handleValidationErrors
+];
+
+const validateOrderCode = [
+  param('orderCode').notEmpty().withMessage('Order code is required'),
+  handleValidationErrors
+];
+
 const validateRequestId = [
   param('id').isMongoId().withMessage('Invalid request ID'),
   handleValidationErrors
@@ -85,9 +111,24 @@ const validateQueryParams = [
 // All routes require authentication
 router.use(authMiddleware.verifyToken);
 
+// Fee calculation and upfront payment (before creating request)
+router.post('/calculate-fee', authMiddleware.verifyToken, earlyReturnController.calculateAdditionalFee);
+router.post('/pay-upfront-shipping', authMiddleware.verifyToken, earlyReturnController.payUpfrontShippingFee);
+
 // Renter routes
 router.post('/', validateCreateRequest, earlyReturnController.createRequest);
 router.get('/renter', validateQueryParams, earlyReturnController.getRenterRequests);
+router.put('/:id/address', validateUpdateAddress, earlyReturnController.updateReturnAddress);
+router.post(
+  '/:id/pay-additional-shipping',
+  validatePayAdditionalShipping,
+  earlyReturnController.payAdditionalShipping
+);
+router.get(
+  '/verify-additional-shipping/:orderCode',
+  validateOrderCode,
+  earlyReturnController.verifyAdditionalShippingPayment
+);
 router.post('/:id/cancel', validateCancelRequest, earlyReturnController.cancelRequest);
 
 // Owner routes

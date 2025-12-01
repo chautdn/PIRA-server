@@ -161,38 +161,100 @@ class RentalOrderService {
           status: 'DRAFT'
         });
 
-        // Tính phí shipping nếu cần giao hàng
-        if (deliveryMethod === 'DELIVERY') {
-          // Use owner's address if available, otherwise use fallback/default fee
-          let ownerAddr = owner.profile?.address || {
-            streetAddress: 'Owner Address Not Set',
-            city: 'Unknown',
-            district: 'Unknown',
-            ward: 'Unknown',
-            // Use default coordinates in HCM if not available
-            latitude: 10.7769,
-            longitude: 106.6965
+        // Tính phí shipping - Always calculate for DELIVERY since PICKUP is not used
+        if (deliveryMethod === 'DELIVERY' && owner.address) {
+          const ownerLocation = {
+            latitude: owner.address?.coordinates?.latitude || owner.address?.latitude,
+            longitude: owner.address?.coordinates?.longitude || owner.address?.longitude
           };
 
-          const shippingInfo = await this.calculateShippingFee(
-            ownerAddr,
-            deliveryAddress
+          const userLocation = {
+            latitude: deliveryAddress.latitude,
+            longitude: deliveryAddress.longitude
+          };
+
+          // Kiểm tra tọa độ
+          if (!ownerLocation.latitude || !ownerLocation.longitude) {
+            throw new Error(`Chủ sản phẩm chưa có tọa độ địa chỉ`);
+          }
+
+          if (!userLocation.latitude || !userLocation.longitude) {
+            throw new Error('Địa chỉ giao hàng chưa có tọa độ');
+          }
+
+          // Tính khoảng cách và phí ship với VietMap
+          const distanceResult = await VietMapService.calculateDistance(
+            ownerLocation.longitude,
+            ownerLocation.latitude,
+            userLocation.longitude,
+            userLocation.latitude
           );
 
-          // ✅ Set totalFee from calculated fee
-          const calculatedFee = shippingInfo.fee.calculatedFee || shippingInfo.fee.breakdown?.total || 0;
-          
-          // Update shipping with distance and time info
-          subOrder.shipping.distance = shippingInfo.distance;
-          subOrder.shipping.estimatedTime = shippingInfo.estimatedTime;
-          subOrder.shipping.vietmapResponse = shippingInfo.vietmapResponse;
-          
-          // Set shipping fee properly without conflict
-          subOrder.shipping.fee.totalFee = calculatedFee;
-          subOrder.shipping.fee.baseFee = shippingInfo.fee.baseFee || 15000;
-          subOrder.shipping.fee.pricePerKm = shippingInfo.fee.pricePerKm || 0;
-          
-          subOrder.pricing.shippingFee = calculatedFee;
+          if (!distanceResult.success) {
+            throw new Error('Không thể tính khoảng cách từ VietMap API');
+          }
+
+          const distanceKm = distanceResult.distanceKm;
+
+          // Tính phí ship cho toàn SubOrder với delivery batches
+          const shippingCalculation = VietMapService.calculateProductShippingFees(
+            processedProducts,
+            distanceKm
+          );
+
+          // Cập nhật shipping cho SubOrder level
+          subOrder.shipping = {
+            method: deliveryMethod,
+            fee: {
+              baseFee: 15000,
+              pricePerKm: 5000,
+              totalFee: shippingCalculation.totalShippingFee
+            },
+            distance: distanceKm,
+            estimatedTime: distanceResult.durationMinutes,
+            vietmapResponse: {
+              distance: distanceKm,
+              distanceMeters: distanceResult.distanceMeters,
+              estimatedTime: distanceResult.durationMinutes,
+              fee: shippingCalculation.totalShippingFee,
+              shippingDetails: {
+                distanceKm,
+                baseFee: 15000,
+                distanceFee: Math.round(distanceKm) * 5000,
+                finalFee: shippingCalculation.totalShippingFee,
+                note: `Phí ship = 15.000 + ${Math.round(distanceKm)}km × 5.000 = ${shippingCalculation.totalShippingFee.toLocaleString()}đ`
+              },
+              success: true
+            }
+          };
+
+          // Cập nhật shipping cho từng product theo delivery batch
+          // IMPORTANT: Update subOrder.products directly, not processedProducts
+          shippingCalculation.productFees.forEach((productFee) => {
+            const product = subOrder.products[productFee.productIndex];
+            if (product) {
+              product.shipping = {
+                distance: distanceKm,
+                fee: {
+                  baseFee: 15000,
+                  pricePerKm: 5000,
+                  totalFee: productFee.allocatedFee
+                },
+                method: 'DELIVERY', // Always set to DELIVERY when in delivery mode
+                deliveryInfo: {
+                  deliveryDate: productFee.deliveryDate,
+                  deliveryBatch: productFee.deliveryBatch,
+                  batchSize: productFee.batchSize,
+                  batchQuantity: product.quantity,
+                  sharedDeliveryFee: productFee.batchTotalFee
+                }
+              };
+              product.totalShippingFee = productFee.allocatedFee;
+            }
+          });
+
+          subOrder.pricing.shippingFee = shippingCalculation.totalShippingFee;
+          subOrder.pricing.shippingDistance = distanceKm;
 
           // ✅ Apply system promotion discount to shipping fee
           const discountResult = await systemPromotionService.calculateShippingDiscount(subOrder);
@@ -1250,6 +1312,8 @@ class RentalOrderService {
         if (ownerGeocode.success) {
           ownerLat = ownerGeocode.latitude;
           ownerLon = ownerGeocode.longitude;
+        } else {
+          throw new Error('Không thể xác định tọa độ của chủ sản phẩm');
         }
       }
 
@@ -1260,37 +1324,12 @@ class RentalOrderService {
         if (userGeocode.success) {
           userLat = userGeocode.latitude;
           userLon = userGeocode.longitude;
+        } else {
+          throw new Error('Không thể xác định tọa độ địa chỉ giao hàng');
         }
       }
 
-      // Fallback mechanism: sử dụng tọa độ mặc định nếu geocoding thất bại
-      if (!ownerLat || !ownerLon || !userLat || !userLon) {
-        // Fallback coordinates cho các thành phố lớn
-        const fallbackCoords = {
-          'Hồ Chí Minh': { lat: 10.8231, lon: 106.6297 },
-          'Hà Nội': { lat: 21.0285, lon: 105.8542 },
-          'Đà Nẵng': { lat: 16.0471, lon: 108.2068 },
-          'Cần Thơ': { lat: 10.0452, lon: 105.7469 }
-        };
-
-        // Sử dụng fallback cho owner
-        if (!ownerLat || !ownerLon) {
-          const ownerCity = ownerAddress.city || 'Hồ Chí Minh';
-          const fallback = fallbackCoords[ownerCity] || fallbackCoords['Hồ Chí Minh'];
-          ownerLat = fallback.lat;
-          ownerLon = fallback.lon;
-        }
-
-        // Sử dụng fallback cho user
-        if (!userLat || !userLon) {
-          const userCity = deliveryAddress.city || deliveryAddress.province || 'Hồ Chí Minh';
-          const fallback = fallbackCoords[userCity] || fallbackCoords['Hồ Chí Minh'];
-          userLat = fallback.lat;
-          userLon = fallback.lon;
-        }
-      }
-
-      // Tính khoảng cách
+      // Tính khoảng cách thông qua VietMap API
       const distanceResult = await VietMapService.calculateDistance(
         ownerLon,
         ownerLat,
@@ -1298,68 +1337,24 @@ class RentalOrderService {
         userLat
       );
 
-      // ⚠️  FIX: Nếu fallback hoặc API lỗi, cập nhật distanceKm để tránh phí quá cao
-      // Nếu distance > 50km, có thể VietMap trả sai dữ liệu hoặc fallback từ thành phố khác
-      // Giới hạn về 25km (tương đương phí ~135k, hợp lý cho HCMC)
-      if ((distanceResult.fallback || !distanceResult.success) && distanceResult.distanceKm > 50) {
-        console.warn(
-          `⚠️  Distance seems too large (${distanceResult.distanceKm}km), likely fallback coordinates issue. Capping to 25km for fee calculation.`
-        );
-        distanceResult.distanceKm = 25; // Cap at 25km = (10k + 5k*25) = 135k max
+      if (!distanceResult.success) {
+        throw new Error('Không thể tính khoảng cách qua VietMap API');
       }
 
-      // Nếu VietMap API thất bại, sử dụng công thức haversine đơn giản
-      if (!distanceResult.success && !distanceResult.fallback) {
-        // Công thức Haversine đơn giản
-        const R = 6371; // Bán kính Trái đất (km)
-        const dLat = ((userLat - ownerLat) * Math.PI) / 180;
-        const dLon = ((userLon - ownerLon) * Math.PI) / 180;
-        const a =
-          Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-          Math.cos((ownerLat * Math.PI) / 180) *
-            Math.cos((userLat * Math.PI) / 180) *
-            Math.sin(dLon / 2) *
-            Math.sin(dLon / 2);
-        const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-        const fallbackDistance = R * c;
-
-        distanceResult.distanceKm = Math.round(fallbackDistance * 100) / 100;
-        distanceResult.duration = Math.round(fallbackDistance * 3); // Ước tính 3 phút/km
-        distanceResult.success = true;
-        distanceResult.fallback = true;
-      }
-
-      // Tính phí ship
+      // Tính phí ship dựa trên khoảng cách thực tế
       const shippingFee = VietMapService.calculateShippingFee(distanceResult.distanceKm);
 
       return {
         distance: distanceResult.distanceKm,
-        estimatedTime: distanceResult.duration,
-        fee: shippingFee,
-        calculatedFee: shippingFee.calculatedFee, // For backward compatibility
-        vietmapResponse: distanceResult,
+        distanceMeters: distanceResult.distanceMeters,
+        estimatedTime: distanceResult.durationMinutes,
+        fee: shippingFee.finalFee,
+        shippingDetails: shippingFee,
         success: true
       };
     } catch (error) {
       console.error('Lỗi tính phí ship:', error);
-
-      // Fallback: phí cố định
-      return {
-        distance: 0,
-        estimatedTime: 0,
-        fee: {
-          baseFee: 15000,
-          pricePerKm: 0,
-          distance: 0,
-          calculatedFee: 15000,
-          breakdown: {
-            base: 15000,
-            distance: 0,
-            total: 15000
-          }
-        },
-        error: error.message
-      };
+      throw error; // Không fallback, throw lỗi để xử lý ở tầng trên
     }
   }
 
@@ -1868,17 +1863,8 @@ class RentalOrderService {
         userLocation.latitude
       );
 
-      if (!distanceResult.success && !distanceResult.fallback) {
-        throw new Error('Không thể tính khoảng cách giao hàng');
-      }
-
-      // ⚠️  FIX: Nếu fallback hoặc API lỗi, cập nhật distanceKm để tránh phí quá cao
-      // Giới hạn về 25km để tránh phí bất hợp lý
-      if ((distanceResult.fallback || !distanceResult.success) && distanceResult.distanceKm > 50) {
-        console.warn(
-          `⚠️  Distance seems too large (${distanceResult.distanceKm}km), likely fallback coordinates issue. Capping to 25km.`
-        );
-        distanceResult.distanceKm = 25;
+      if (!distanceResult.success) {
+        throw new Error('Không thể tính khoảng cách giao hàng từ VietMap API');
       }
 
       const distanceKm = distanceResult.distanceKm;
@@ -1891,9 +1877,8 @@ class RentalOrderService {
         success: true,
         distance: {
           km: distanceKm,
-          meters: distanceResult.distance,
-          duration: distanceResult.duration,
-          fallback: distanceResult.fallback || false
+          meters: distanceResult.distanceMeters,
+          duration: distanceResult.durationMinutes
         },
         shipping: shippingCalculation,
         vietmapResponse: distanceResult.rawResponse

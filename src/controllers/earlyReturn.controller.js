@@ -181,6 +181,220 @@ class EarlyReturnController {
   }
 
   /**
+   * Calculate additional fee without creating request
+   * POST /early-returns/calculate-fee
+   */
+  async calculateAdditionalFee(req, res, next) {
+    try {
+      const renterId = req.user._id;
+      const { subOrderId, newAddress } = req.body;
+
+      console.log('[Controller] calculateAdditionalFee called:', { subOrderId, renterId, hasAddress: !!newAddress, hasCoords: !!newAddress?.coordinates });
+
+      if (!subOrderId || !newAddress || !newAddress.coordinates) {
+        throw new BadRequestError('SubOrder ID and new address with coordinates are required');
+      }
+
+      const result = await earlyReturnService.calculateAdditionalFee(subOrderId, renterId, newAddress);
+
+      new SUCCESS({
+        message: result.message,
+        metadata: result
+      }).send(res);
+    } catch (error) {
+      console.error('[Controller] calculateAdditionalFee error:', error.message);
+      console.error('[Controller] Error stack:', error.stack);
+      next(error);
+    }
+  }
+
+  /**
+   * Pay upfront shipping fee before creating request
+   * POST /early-returns/pay-upfront-shipping
+   */
+  async payUpfrontShippingFee(req, res, next) {
+    try {
+      const renterId = req.user._id;
+      const { subOrderId, amount, paymentMethod, addressInfo } = req.body;
+
+      if (!subOrderId || !amount || !paymentMethod) {
+        throw new BadRequestError('SubOrder ID, amount, and payment method are required');
+      }
+
+      if (!['wallet', 'payos'].includes(paymentMethod)) {
+        throw new BadRequestError('Payment method must be wallet or payos');
+      }
+
+      const paymentService = require('../services/payment.service');
+
+      if (paymentMethod === 'wallet') {
+        // Process wallet payment immediately
+        const walletResult = await paymentService.processWalletPaymentForOrder(
+          renterId,
+          amount,
+          {
+            orderNumber: `Shipping-${subOrderId}`,
+            orderType: 'early_return_upfront_shipping',
+            addressInfo
+          }
+        );
+
+        // Credit system wallet with the fee
+        const Wallet = require('../models/Wallet');
+        const Transaction = require('../models/Transaction');
+        
+        const systemWallet = await Wallet.findOne({ isSystem: true });
+        if (systemWallet) {
+          systemWallet.balance.available += amount;
+          await systemWallet.save();
+
+          // Create transaction record for system wallet
+          const systemTransaction = new Transaction({
+            wallet: systemWallet._id,
+            type: 'deposit',
+            amount,
+            status: 'success',
+            paymentMethod: 'wallet',
+            description: `Phí ship thêm - Trả hàng sớm từ renter`,
+            metadata: {
+              subOrderId,
+              renterId,
+              sourceTransaction: walletResult.transactionId
+            }
+          });
+          await systemTransaction.save();
+
+          console.log(`[PayUpfront] Credited ${amount}đ to system wallet`);
+        }
+
+        new SUCCESS({
+          message: 'Thanh toán phí ship thành công qua ví',
+          metadata: {
+            paymentMethod: 'wallet',
+            transactionId: walletResult.transactionId,
+            balanceAfter: walletResult.balanceAfter
+          }
+        }).send(res);
+      } else if (paymentMethod === 'payos') {
+        // Create PayOS payment session
+        const orderCode = Date.now();
+        const paymentLink = await paymentService.createPaymentLink({
+          orderCode,
+          amount,
+          description: `PIRA Ship ${Math.round(amount / 1000)}k`,
+          returnUrl: `${process.env.CLIENT_URL || 'http://localhost:3000'}/rental-orders/shipping-payment-success?orderCode=${orderCode}&subOrderId=${subOrderId}`,
+          cancelUrl: `${process.env.CLIENT_URL || 'http://localhost:3000'}/rental-orders/shipping-payment-cancel?orderCode=${orderCode}&subOrderId=${subOrderId}`
+        });
+
+        // Create transaction record
+        const Transaction = require('../models/Transaction');
+        const Wallet = require('../models/Wallet');
+        const wallet = await Wallet.findOne({ user: renterId });
+
+        const transaction = new Transaction({
+          user: renterId,
+          wallet: wallet._id,
+          type: 'payment',
+          amount,
+          status: 'pending',
+          paymentMethod: 'payos',
+          externalId: orderCode.toString(),
+          description: `Phí ship thêm - Trả hàng sớm`,
+          metadata: {
+            subOrderId,
+            orderType: 'early_return_upfront_shipping',
+            addressInfo
+          },
+          expiredAt: new Date(Date.now() + 15 * 60 * 1000)
+        });
+
+        await transaction.save();
+
+        new SUCCESS({
+          message: 'Chuyển đến trang thanh toán PayOS',
+          metadata: {
+            paymentMethod: 'payos',
+            checkoutUrl: paymentLink.checkoutUrl,
+            orderCode
+          }
+        }).send(res);
+      }
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * Update return address with distance calculation
+   * PUT /early-returns/:id/address
+   */
+  async updateReturnAddress(req, res, next) {
+    try {
+      const { id } = req.params;
+      const renterId = req.user._id;
+      const { returnAddress } = req.body;
+
+      if (!returnAddress || !returnAddress.coordinates) {
+        throw new BadRequestError('Return address with coordinates is required');
+      }
+
+      const result = await earlyReturnService.updateReturnAddress(id, renterId, returnAddress);
+
+      new SUCCESS({
+        message: result.message,
+        metadata: result
+      }).send(res);
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * Pay additional shipping fee
+   * POST /early-returns/:id/pay-additional-shipping
+   */
+  async payAdditionalShipping(req, res, next) {
+    try {
+      const { id } = req.params;
+      const renterId = req.user._id;
+      const { paymentMethod } = req.body;
+
+      if (!paymentMethod || !['wallet', 'payos'].includes(paymentMethod)) {
+        throw new BadRequestError('Valid payment method (wallet or payos) is required');
+      }
+
+      const result = await earlyReturnService.payAdditionalShipping(id, renterId, paymentMethod);
+
+      new SUCCESS({
+        message: result.message,
+        metadata: result
+      }).send(res);
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * Verify additional shipping payment
+   * GET /early-returns/verify-additional-shipping/:orderCode
+   */
+  async verifyAdditionalShippingPayment(req, res, next) {
+    try {
+      const { orderCode } = req.params;
+      const renterId = req.user._id;
+
+      const result = await earlyReturnService.verifyAdditionalShippingPayment(orderCode, renterId);
+
+      new SUCCESS({
+        message: result.message,
+        metadata: result
+      }).send(res);
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
    * Auto-complete expired returns (Admin/System only)
    * POST /early-returns/auto-complete
    */

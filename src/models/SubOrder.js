@@ -95,8 +95,8 @@ const subOrderSchema = new mongoose.Schema(
           },
           method: {
             type: String,
-            enum: ['PICKUP', 'DELIVERY'],
-            default: 'PICKUP'
+            enum: ['DELIVERY'],
+            default: 'DELIVERY'
           },
           // Delivery batch information
           deliveryInfo: {

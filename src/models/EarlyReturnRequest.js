@@ -181,6 +181,37 @@ const earlyReturnRequestSchema = new mongoose.Schema(
       default: true
     },
 
+    // Additional shipping (if address changed)
+    additionalShipping: {
+      originalDistance: {
+        km: Number,
+        meters: Number
+      },
+      newDistance: {
+        km: Number,
+        meters: Number
+      },
+      additionalFee: {
+        type: Number,
+        default: 0
+      },
+      paymentStatus: {
+        type: String,
+        enum: ['none', 'pending', 'paid'],
+        default: 'none'
+      },
+      paymentMethod: {
+        type: String,
+        enum: ['wallet', 'payos']
+      },
+      transactionId: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'Transaction'
+      },
+      payosOrderCode: String,
+      paidAt: Date
+    },
+
     // Notes
     renterNotes: String,
 
