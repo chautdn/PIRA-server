@@ -3,13 +3,10 @@ const responseUtils = require('../utils/response');
 
 class AdminController {
   // ========== DASHBOARD ==========
+  // Moved to adminDashboard.controller.js
   async getDashboard(req, res) {
-    try {
-      const dashboard = await adminService.getDashboardStats();
-      return responseUtils.success(res, dashboard, 'Lấy thống kê dashboard thành công');
-    } catch (error) {
-      return responseUtils.error(res, error.message, 500);
-    }
+    const adminDashboardController = require('./adminDashboard.controller');
+    return await adminDashboardController.getDashboard(req, res);
   }
 
   // ========== USER MANAGEMENT ==========

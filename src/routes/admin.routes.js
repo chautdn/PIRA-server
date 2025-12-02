@@ -11,7 +11,9 @@ router.use(authMiddleware.verifyToken);
 router.use(requireRole('ADMIN'));
 
 // ========== DASHBOARD ==========
-router.get('/dashboard', adminController.getDashboard);
+// Moved to adminDashboard.routes.js
+const adminDashboardRoutes = require('./adminDashboard.routes');
+router.use('/dashboard', adminDashboardRoutes);
 
 // ========== TEST ROUTES ==========
 
