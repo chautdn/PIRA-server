@@ -133,6 +133,7 @@ const subOrderSchema = new mongoose.Schema(
             'REJECTED', // Owner từ chối
 
             // Delivery Phase         // Chờ shipper nhận hàng giao
+            'OWNER_NO_SHOW', // Owner không đến giao hàng
             'SHIPPER_CONFIRMED', // Shipper đã xác nhận nhận hàng
             'IN_TRANSIT', // Đang vận chuyển đến người thuê
             'DELIVERED', // Đã giao cho người thuê
@@ -317,6 +318,8 @@ const subOrderSchema = new mongoose.Schema(
         // Confirmation Results
         'OWNER_CONFIRMED', // Owner xác nhận tất cả
         'OWNER_REJECTED', // Owner từ chối tất cả
+        'CANCELLED_BY_OWNER_NO_SHOW', // Hủy do owner không đến giao hàng
+        'PARTIALLY_CANCELLED_BY_OWNER', // Hủy một phần do owner không đến giao hàng
         'PARTIALLY_CONFIRMED', // Owner xác nhận một phần
         'RENTER_REJECTED', // Renter từ chối đơn partial
 

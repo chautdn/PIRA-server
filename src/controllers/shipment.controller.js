@@ -496,6 +496,37 @@ class ShipmentController {
       return res.status(400).json({ status: 'error', message: err.message });
     }
   }
+
+  async ownerNoShow(req, res) {
+    try {
+      // Only SHIPPER can report owner no-show
+      if (req.user.role !== 'SHIPPER') {
+        return res.status(403).json({ 
+          status: 'error', 
+          message: 'Only shippers can report owner no-show' 
+        });
+      }
+
+      const shipmentId = req.params.id;
+      const { notes } = req.body;
+
+      console.log(`\n📥 POST /shipments/${shipmentId}/owner-no-show`);
+      console.log(`👤 User ID: ${req.user._id}`);
+      console.log(`👤 User Role: ${req.user.role}`);
+      console.log(`📝 Notes: ${notes}`);
+
+      const shipment = await ShipmentService.ownerNoShow(shipmentId, { notes });
+      
+      return res.json({ 
+        status: 'success', 
+        message: 'Owner no-show processed',
+        data: shipment 
+      });
+    } catch (err) {
+      console.error('ownerNoShow error', err.message);
+      return res.status(400).json({ status: 'error', message: err.message });
+    }
+  }
 }
 
 module.exports = new ShipmentController();

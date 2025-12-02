@@ -1126,6 +1126,219 @@ class ShipmentService {
 
     return shipment;
   }
+
+  /**
+   * Owner no-show - shipper confirms owner is not available for delivery
+   * Updates:
+   *   - Product status → OWNER_NO_SHOW
+   *   - SubOrder status → CANCELLED_BY_OWNER_NO_SHOW
+   *   - Owner creditScore -= 20
+   *   - Renter loyaltyPoints += 25
+   *   - Refund (rental + deposit) to renter (no refund for shipping fee)
+   */
+  async ownerNoShow(shipmentId, payload = {}) {
+    const shipment = await Shipment.findById(shipmentId)
+      .populate({
+        path: 'subOrder',
+        populate: [
+          { path: 'owner', select: '_id profile email creditScore' },
+          {
+            path: 'masterOrder',
+            select: '_id renter rentalPeriod',
+            populate: { path: 'renter', select: '_id profile email loyaltyPoints' }
+          }
+        ]
+      });
+
+    if (!shipment) throw new Error('Shipment not found');
+
+    const { notes = '' } = payload;
+
+    console.log(`\n⚠️ Owner No-Show: ${shipment.shipmentId}`);
+    console.log(`   Notes: ${notes}`);
+
+    // Only allow if shipment is SHIPPER_CONFIRMED (shipper has accepted, waiting to pickup)
+    if (shipment.status !== 'SHIPPER_CONFIRMED') {
+      throw new Error(`Cannot report owner no-show. Shipment must be in SHIPPER_CONFIRMED status (current: ${shipment.status}).`);
+    }
+
+    const subOrder = shipment.subOrder;
+    const owner = subOrder.owner;
+    const renter = subOrder.masterOrder?.renter;
+
+    try {
+      console.log(`\n💰 Processing owner no-show penalties...`);
+
+      // 1. Update product status to OWNER_NO_SHOW
+      if (shipment.productIndex !== undefined) {
+        subOrder.products[shipment.productIndex].productStatus = 'OWNER_NO_SHOW';
+        console.log(`   ✅ Product status: OWNER_NO_SHOW`);
+      }
+
+      // 2. Analyze product statuses to determine subOrder status
+      const productStatuses = subOrder.products.map(p => p.productStatus);
+      const hasOwnerNoShow = productStatuses.includes('OWNER_NO_SHOW');
+      const hasConfirmed = productStatuses.includes('CONFIRMED');
+      const allOwnerNoShow = hasOwnerNoShow && productStatuses.every(status => status === 'OWNER_NO_SHOW');
+
+      console.log(`   Product statuses: ${productStatuses.join(', ')}`);
+      console.log(`   All OWNER_NO_SHOW: ${allOwnerNoShow}, Mixed: ${hasOwnerNoShow && hasConfirmed}`);
+
+      // Determine subOrder status
+      let subOrderStatus = 'CANCELLED_BY_OWNER_NO_SHOW'; // Default if all are no-show
+      if (hasOwnerNoShow && hasConfirmed) {
+        // Mix of CONFIRMED and OWNER_NO_SHOW
+        subOrderStatus = 'PARTIALLY_CANCELLED_BY_OWNER';
+        console.log(`   SubOrder status will be: PARTIALLY_CANCELLED_BY_OWNER (mixed products)`);
+      } else if (allOwnerNoShow) {
+        // All products are OWNER_NO_SHOW
+        subOrderStatus = 'CANCELLED_BY_OWNER_NO_SHOW';
+        console.log(`   SubOrder status will be: CANCELLED_BY_OWNER_NO_SHOW (all products)`);
+      }
+
+      subOrder.status = subOrderStatus;
+      await subOrder.save();
+      console.log(`   ✅ SubOrder status: ${subOrderStatus}`);
+
+      // 3. Update MasterOrder status if all suborders are cancelled
+      if (allOwnerNoShow) {
+        try {
+          const MasterOrder = require('../models/MasterOrder');
+          const SubOrder = require('../models/SubOrder');
+          const masterOrderId = subOrder.masterOrder;
+          
+          if (masterOrderId) {
+            const allSubOrders = await SubOrder.find({ masterOrder: masterOrderId });
+            const allCancelled = allSubOrders.every(sub => 
+              sub.status === 'CANCELLED_BY_OWNER_NO_SHOW' || sub.status === 'CANCELLED'
+            );
+            
+            if (allCancelled) {
+              const masterOrder = await MasterOrder.findById(masterOrderId);
+              if (masterOrder && masterOrder.status !== 'CANCELLED_BY_OWNER_NO_SHOW') {
+                masterOrder.status = 'CANCELLED_BY_OWNER_NO_SHOW';
+                await masterOrder.save();
+                console.log(`   ✅ MasterOrder status: CANCELLED_BY_OWNER_NO_SHOW`);
+              }
+            }
+          }
+        } catch (moErr) {
+          console.error('   ⚠️ Failed to update MasterOrder status:', moErr.message || moErr);
+        }
+      }
+
+      // 4. Deduct 20 creditScore from owner
+      if (owner && owner.creditScore !== undefined) {
+        owner.creditScore = Math.max(0, owner.creditScore - 20);
+        await owner.save();
+        console.log(`   ✅ Owner creditScore: ${owner.creditScore + 20} → ${owner.creditScore} (-20 points)`);
+      }
+
+      // 5. Increase 25 loyaltyPoints for renter
+      if (renter && renter.loyaltyPoints !== undefined) {
+        renter.loyaltyPoints += 25;
+        await renter.save();
+        console.log(`   ✅ Renter loyaltyPoints: +25 points (new total: ${renter.loyaltyPoints})`);
+      }
+
+      // 6. Refund (rental + deposit) to renter - no shipping fee refund
+      const product = shipment.productIndex !== undefined ? subOrder.products[shipment.productIndex] : null;
+      const rentalAmount = product?.totalRental || 0;
+      const depositAmount = product?.totalDeposit || 0;
+      const totalRefund = rentalAmount + depositAmount;
+
+      console.log(`   Rental: ${rentalAmount} VND`);
+      console.log(`   Deposit: ${depositAmount} VND`);
+      console.log(`   Total refund: ${totalRefund} VND (no shipping fee refund)`);
+
+      if (totalRefund > 0 && renter && renter._id) {
+        const SystemWalletService = require('./systemWallet.service');
+        const adminId = process.env.SYSTEM_ADMIN_ID || 'SYSTEM_AUTO_TRANSFER';
+        const transferResult = await SystemWalletService.transferToUser(
+          adminId,
+          renter._id,
+          totalRefund,
+          `Refund for owner no-show - shipment ${shipment.shipmentId}`
+        );
+        console.log(`   ✅ Refund ${totalRefund} VND transferred to renter:`, transferResult);
+      }
+
+      // 7. Update shipment status to CANCELLED
+      shipment.status = 'CANCELLED';
+      shipment.tracking = shipment.tracking || {};
+      shipment.tracking.cancelledAt = new Date();
+      shipment.tracking.cancelReason = 'Owner no-show - did not appear for delivery';
+      shipment.tracking.notes = notes;
+      await shipment.save();
+      console.log(`   ✅ Shipment marked as CANCELLED`);
+
+      // 8. Send notification to renter
+      try {
+        const NotificationService = require('./notification.service');
+        const notificationTitle = allOwnerNoShow 
+          ? '⚠️ Đơn hàng bị hủy do chủ không đến giao' 
+          : '⚠️ Đơn hàng bị hủy một phần do chủ không đến giao';
+        const notificationMessage = allOwnerNoShow
+          ? `Chủ thuê không có mặt để giao hàng. Đơn hàng của bạn đã bị hủy hoàn toàn. Tiền thuê (${rentalAmount} VND) + tiền cọc (${depositAmount} VND) = ${totalRefund} VND sẽ được hoàn lại vào ví của bạn.`
+          : `Chủ thuê không có mặt để giao một phần sản phẩm. Đơn hàng của bạn đã bị hủy một phần. Tiền thuê (${rentalAmount} VND) + tiền cọc (${depositAmount} VND) = ${totalRefund} VND sẽ được hoàn lại vào ví của bạn.`;
+        
+        await NotificationService.createNotification({
+          recipient: renter._id,
+          title: notificationTitle,
+          message: notificationMessage,
+          type: 'SHIPMENT',
+          category: 'WARNING',
+          data: {
+            shipmentId: shipment.shipmentId,
+            subOrderNumber: subOrder.subOrderNumber,
+            reason: 'OWNER_NO_SHOW',
+            refundAmount: totalRefund,
+            loyaltyPointsAdded: 25,
+            isPartialCancel: !allOwnerNoShow
+          }
+        });
+        console.log(`   ✅ Notification sent to renter`);
+      } catch (err) {
+        console.error(`   ⚠️  Notification to renter failed: ${err.message}`);
+      }
+
+      // 9. Send notification to owner
+      try {
+        const NotificationService = require('./notification.service');
+        const ownerNotificationTitle = allOwnerNoShow
+          ? '⚠️ Đơn hàng bị hủy - bạn không đến giao hàng'
+          : '⚠️ Đơn hàng bị hủy một phần - bạn không đến giao một số sản phẩm';
+        const ownerNotificationMessage = allOwnerNoShow
+          ? `Bạn không có mặt để giao hàng cho shipper. Đơn hàng đã bị hủy hoàn toàn. CreditScore của bạn đã bị trừ 20 điểm.`
+          : `Bạn không có mặt để giao một phần sản phẩm cho shipper. Đơn hàng bị hủy một phần. CreditScore của bạn đã bị trừ 20 điểm.`;
+        
+        await NotificationService.createNotification({
+          recipient: owner._id,
+          title: ownerNotificationTitle,
+          message: ownerNotificationMessage,
+          type: 'SHIPMENT',
+          category: 'WARNING',
+          data: {
+            shipmentId: shipment.shipmentId,
+            subOrderNumber: subOrder.subOrderNumber,
+            reason: 'OWNER_NO_SHOW',
+            creditScoreDeducted: 20,
+            isPartialCancel: !allOwnerNoShow
+          }
+        });
+        console.log(`   ✅ Notification sent to owner`);
+      } catch (err) {
+        console.error(`   ⚠️  Notification to owner failed: ${err.message}`);
+      }
+
+      console.log(`\n✅ Owner no-show processing completed successfully`);
+      return shipment;
+
+    } catch (err) {
+      console.error(`   ❌ Owner no-show processing failed: ${err.message}`);
+      throw new Error(`Owner no-show processing error: ${err.message}`);
+    }
+  }
 }
 
 module.exports = new ShipmentService();

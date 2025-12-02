@@ -56,6 +56,13 @@ router.post('/:id/reject-delivery', [
   authMiddleware.checkUserRole(['SHIPPER'])
 ], ShipmentController.rejectDelivery);
 
+// Owner no-show - shipper confirms owner is not available - ONLY SHIPPER
+router.post('/:id/owner-no-show', [
+  param('id').isMongoId().withMessage('Invalid ID'), 
+  validateRequest,
+  authMiddleware.checkUserRole(['SHIPPER'])
+], ShipmentController.ownerNoShow);
+
 // Upload delivery proof (pickup & delivered images)
 router.post('/:shipmentId/proof', [param('shipmentId').isMongoId().withMessage('Invalid Shipment ID'), validateRequest], upload.array('images', 2), ShipmentController.uploadProof);
 

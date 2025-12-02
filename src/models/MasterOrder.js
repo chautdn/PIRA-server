@@ -94,6 +94,8 @@ const masterOrderSchema = new mongoose.Schema(
         'PAYMENT_COMPLETED', // Đã thanh toán
         'PENDING_CONFIRMATION', // Chờ xác nhận từ chủ
         'CONFIRMED', // Tất cả sản phẩm đã được xác nhận
+        'CANCELLED_BY_OWNER_NO_SHOW', // Hủy tất cả do owner không đến giao hàng
+        'PARTIALLY_CANCELLED_BY_OWNER', // Hủy một phần do owner không đến giao hàng
         'PARTIALLY_CANCELLED', // Một phần sản phẩm bị hủy
         'READY_FOR_CONTRACT', // Sẵn sàng ký hợp đồng
         'CONTRACT_SIGNED', // Đã ký hợp đồng
