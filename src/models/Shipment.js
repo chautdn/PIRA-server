@@ -101,7 +101,8 @@ const shipmentSchema = new mongoose.Schema(
         'SHIPPER_CONFIRMED', // Shipper đã xác nhận
         'IN_TRANSIT', // Đang vận chuyển
         'DELIVERED', // Đã giao thành công
-        'FAILED', // Giao/trả thất bại
+        'DELIVERY_FAILED', // Giao hàng thất bại (sản phẩm có vấn đề)
+        'FAILED', // Giao/trả thất bại - không liên lạc được
         'CANCELLED' // Đã hủy
       ],
       default: 'PENDING'
