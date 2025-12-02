@@ -168,5 +168,26 @@ router.put(
   ownerProductController.updateProductSafeFields
 );
 
+// Check if pricing can be edited
+router.get(
+  '/:productId/can-edit-pricing',
+  [param('productId').isMongoId().withMessage('Valid product ID is required')],
+  ownerProductController.canEditPricing
+);
+
+// Update product pricing
+router.put(
+  '/:productId/pricing',
+  [
+    param('productId').isMongoId().withMessage('Valid product ID is required'),
+    body('dailyRate').optional().isNumeric().withMessage('Daily rate must be a number'),
+    body('weeklyRate').optional().isNumeric().withMessage('Weekly rate must be a number'),
+    body('monthlyRate').optional().isNumeric().withMessage('Monthly rate must be a number'),
+    body('depositAmount').optional().isNumeric().withMessage('Deposit amount must be a number'),
+    body('depositDescription').optional().isString()
+  ],
+  ownerProductController.updatePricing
+);
+
 registerRoute('/owner-products', router);
 module.exports = router;
