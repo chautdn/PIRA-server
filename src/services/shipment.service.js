@@ -40,10 +40,7 @@ class ShipmentService {
       .sort({ createdAt: -1 });
   }
 
-  /**
-   * List available shipments for shipper grouped by type
-   * Shows PENDING shipments ready to be picked up
-   */
+
   async listAvailableShipments(shipperId) {
     const shipments = await Shipment.find({
       status: 'PENDING'
@@ -141,10 +138,6 @@ class ShipmentService {
     return shipment;
   }
 
-  /**
-   * Mark shipment as delivered/returned (shipper completes delivery)
-   * This updates the SPECIFIC shipment, not creating a new one
-   */
   async markDelivered(shipmentId, data) {
     const shipment = await Shipment.findById(shipmentId).populate('subOrder');
     if (!shipment) throw new Error('Shipment not found');
@@ -267,8 +260,6 @@ class ShipmentService {
       console.log(`   ✓ Shipment status: DELIVERED`);
     }
 
-    // Transfer shipping fee to shipper when RETURN shipment is DELIVERED
-    // Only RETURN shipments pay the shipper, not DELIVERY shipments
     try {
       if (shipment.type === 'RETURN' && shipment.shipper && shipment.fee > 0) {
         const SystemWalletService = require('./systemWallet.service');
@@ -296,11 +287,6 @@ class ShipmentService {
     return shipment;
   }
 
-  /**
-   * Renter confirms receipt of delivered goods (DELIVERY shipment)
-   * OR Renter confirms return was received (RETURN shipment)
-   * Only DELIVERY shipment triggers payment transfer to owner
-   */
   async renterConfirmDelivered(shipmentId, renterId) {
     const shipment = await Shipment.findById(shipmentId).populate('subOrder');
     if (!shipment) throw new Error('Shipment not found');
@@ -413,12 +399,6 @@ class ShipmentService {
             continue;
           }
 
-          // NOTE: Renter MUST manually confirm delivery by clicking button
-          // Do NOT auto-confirm here - renter needs explicit action
-          console.log(`ℹ️ Shipment ${s.shipmentId}: Waiting for renter to manually confirm delivery`);
-          // Disabled auto-confirm logic - renter must click button
-          // s.subOrder.status = 'DELIVERED';
-          // await s.subOrder.save();
         }
         // mark shipment as final
         s.status = 'DELIVERED';
@@ -432,10 +412,6 @@ class ShipmentService {
     return { processed: shipments.length };
   }
 
-  /**
-   * Create both outbound (DELIVERY) and return (RETURN) shipments when contract is signed
-   * Called when all contracts for a master order are signed
-   */
   async createDeliveryAndReturnShipments(masterOrderId, shipperId) {
     try {
       const MasterOrder = require('../models/MasterOrder');
@@ -731,10 +707,6 @@ class ShipmentService {
     }
   }
 
-  /**
-   * Tìm shipper cùng khu vực với owner
-   * So sánh địa chỉ dựa trên: district, city, province
-   */
   async findShipperInSameArea(ownerAddress) {
     try {
       if (!ownerAddress) {
@@ -745,8 +717,6 @@ class ShipmentService {
       console.log('🔍 Finding shipper in same area as owner');
       console.log('   Owner address:', ownerAddress);
 
-      // Tìm shipper có địa chỉ trùng với owner
-      // Ưu tiên: district → city → province
       let shipper = null;
 
       if (ownerAddress.district) {
@@ -812,15 +782,6 @@ class ShipmentService {
     }
   }
 
-  /**
-   * Cancel shipment pickup - shipper cannot pickup from owner
-   * Updates shipment status to CANCELLED
-   * Updates suborder status to CANCELLED
-   * Penalize owner: creditScore -20
-   * Reward renter: loyaltyPoints +25
-   * Refund rental + deposit to renter (no shipping fee refund)
-   * Send notification to renter
-   */
   async cancelShipmentPickup(shipmentId) {
     const shipment = await Shipment.findById(shipmentId)
       .populate({
@@ -938,22 +899,7 @@ class ShipmentService {
     return shipment;
   }
 
-  /**
-   * Reject delivery - shipper cannot complete delivery during shipment transit
-   * Shipment must be IN_TRANSIT (not yet marked DELIVERED)
-   * 
-   * If reason is NO_CONTACT (RENTER_ABSENT):
-   *   - Update product status to RENTER_ABSENT
-   *   - Update shipment status to FAILED (not DELIVERY_FAILED)
-   *   - Deduct deposit + 1 day rental from renter
-   *   - Deduct 20 creditScore from renter
-   *   - Refund remaining amount to renter
-   *   - Renter can then send return request again after dispute resolution
-   * If reason is PRODUCT_DAMAGED:
-   *   - Update shipment status to DELIVERY_FAILED
-   * Sends notification to owner and renter
-   * Reason can be: PRODUCT_DAMAGED or NO_CONTACT
-   */
+
   async rejectDelivery(shipmentId, payload = {}) {
     const shipment = await Shipment.findById(shipmentId)
       .populate({
@@ -982,75 +928,163 @@ class ShipmentService {
     }
 
     const subOrder = shipment.subOrder;
-    const renter = subOrder.masterOrder?.renter;
+    const masterOrder = subOrder.masterOrder;
+    const renter = masterOrder?.renter;
 
-    // 1. Handle RENTER_ABSENT (NO_CONTACT case) - shipper cannot contact renter
+    // 1. Handle NO_CONTACT case - shipper cannot contact renter during delivery return
     if (reason === 'NO_CONTACT' && shipment.productIndex !== undefined) {
       try {
-        console.log(`\n💰 Processing RENTER_ABSENT deduction...`);
+        console.log(`\n💰 Processing renter no-show deduction (NO_CONTACT during return)...`);
         
-        // Update product status to RENTER_ABSENT
-        subOrder.products[shipment.productIndex].productStatus = 'RENTER_ABSENT';
-        
-        const product = subOrder.products[shipment.productIndex];
-        const productRental = product.totalRental || 0;
-        const productDeposit = product.totalDeposit || 0;
+        // Update product status to RENTER_NO_SHOW
+        subOrder.products[shipment.productIndex].productStatus = 'RENTER_NO_SHOW';
+        console.log(`   ✅ Product status: RENTER_NO_SHOW`);
 
-        // Calculate: 1 day rental
-        const rentalDays = product.rentalPeriod?.duration?.value || 1;
-        const oneDayRental = Math.ceil(productRental / rentalDays);
+        // Determine subOrder status
+        const productStatuses = subOrder.products.map(p => p.productStatus);
+        const hasRenterNoShow = productStatuses.includes('RENTER_NO_SHOW');
+        const hasReadyForContract = productStatuses.includes('READY_FOR_CONTRACT');
+        const allRenterNoShow = hasRenterNoShow && productStatuses.every(status => status === 'RENTER_NO_SHOW');
+
+        let subOrderStatus = 'CANCELLED_BY_RENTER_NO_SHOW';
+        if (hasRenterNoShow && hasReadyForContract) {
+          subOrderStatus = 'PARTIALLY_CANCELLED_BY_RENTER';
+          console.log(`   SubOrder status will be: PARTIALLY_CANCELLED_BY_RENTER (mixed products)`);
+        } else if (allRenterNoShow) {
+          subOrderStatus = 'CANCELLED_BY_RENTER_NO_SHOW';
+          console.log(`   SubOrder status will be: CANCELLED_BY_RENTER_NO_SHOW (all products)`);
+        }
+
+        subOrder.status = subOrderStatus;
+        
+        // Deduct 1 day rental from renter
+        const product = subOrder.products[shipment.productIndex];
+        const rentalAmount = product?.totalRental || 0;
+        const depositAmount = product?.totalDeposit || 0;
+        const rentalDays = product?.rentalPeriod?.duration?.value || 1;
+        const oneDayRental = Math.ceil(rentalAmount / rentalDays);
 
         console.log(`   Product rental period: ${rentalDays} days`);
-        console.log(`   One day rental amount: ${oneDayRental} VND`);
-        console.log(`   Product deposit: ${productDeposit} VND`);
+        console.log(`   Total rental: ${rentalAmount} VND`);
+        console.log(`   One day rental: ${oneDayRental} VND`);
+        console.log(`   Deposit: ${depositAmount} VND`);
 
-        // Deduct: deposit + 1 day rental
-        const deductAmount = productDeposit + oneDayRental;
+        // Determine what to deduct based on payment method
+        const deliveryMethod = masterOrder?.deliveryMethod; // PICKUP or DELIVERY
+        const paymentMethod = masterOrder?.paymentMethod; // WALLET, BANK_TRANSFER, PAYOS, COD
+        
+        let deductAmount = 0;
+        let deductSource = '';
 
-        const totalProductAmount = productRental + productDeposit;
+        // If COD/PICKUP or direct payment, deduct from deposit
+        if (deliveryMethod === 'PICKUP' || paymentMethod === 'COD') {
+          deductAmount = Math.min(oneDayRental, depositAmount);
+          deductSource = `deposit (${deductAmount} VND)`;
+          console.log(`   💳 Payment method: ${paymentMethod || 'COD/PICKUP'} → Deduct from deposit`);
+        } else {
+          // Online payment, deduct from rental
+          deductAmount = oneDayRental;
+          deductSource = `rental (${deductAmount} VND)`;
+          console.log(`   💳 Payment method: ${paymentMethod} → Deduct from rental`);
+        }
+
+        const totalProductAmount = rentalAmount + depositAmount;
         const refundAmount = Math.max(0, totalProductAmount - deductAmount);
 
-        console.log(`   Total product amount (rental + deposit): ${totalProductAmount} VND`);
-        console.log(`   Total deduct: ${deductAmount} VND`);
+        console.log(`   Total amount (rental + deposit): ${totalProductAmount} VND`);
+        console.log(`   Deduct: ${deductSource}`);
         console.log(`   Refund to renter: ${refundAmount} VND`);
 
-        // 2. Deduct 20 creditScore from renter
-        if (renter.creditScore === undefined) renter.creditScore = 100;
-        renter.creditScore = Math.max(0, renter.creditScore - 20);
-        await renter.save();
-        console.log(`   ✅ Renter creditScore: ${renter.creditScore + 20} → ${renter.creditScore} (-20 points)`);
+        // Update suborder
+        await subOrder.save();
+        console.log(`   ✅ SubOrder status: ${subOrderStatus}`);
 
-        // 3. Refund remaining amount to renter
-        if (refundAmount > 0) {
+        // Deduct 20 creditScore from renter
+        if (renter && renter.creditScore !== undefined) {
+          renter.creditScore = Math.max(0, renter.creditScore - 20);
+          await renter.save();
+          console.log(`   ✅ Renter creditScore: ${renter.creditScore + 20} → ${renter.creditScore} (-20 points)`);
+        }
+
+        // Refund remainder to renter
+        if (refundAmount > 0 && renter && renter._id) {
+          const SystemWalletService = require('./systemWallet.service');
           const adminId = process.env.SYSTEM_ADMIN_ID || 'SYSTEM_AUTO_TRANSFER';
           const transferResult = await SystemWalletService.transferToUser(
             adminId,
             renter._id,
             refundAmount,
-            `Refund for renter absent - shipment ${shipment.shipmentId}`
+            `Refund for renter no-show - shipment ${shipment.shipmentId}`
           );
           console.log(`   ✅ Refund ${refundAmount} VND transferred to renter:`, transferResult);
-        } else {
-          console.log(`   ℹ️  No refund (amount = 0)`);
         }
 
-        // Update suborder products
-        await subOrder.save();
-        console.log(`   ✅ SubOrder product status updated to RENTER_ABSENT`);
+        // Transfer 80% of 1 day rental to owner
+        try {
+          const ownerRewardAmount = Math.floor(oneDayRental * 0.8); // 80% of 1 day rental
+          if (ownerRewardAmount > 0 && subOrder.owner && subOrder.owner._id) {
+            const SystemWalletService = require('./systemWallet.service');
+            const adminId = process.env.SYSTEM_ADMIN_ID || 'SYSTEM_AUTO_TRANSFER';
+            const ownerTransferResult = await SystemWalletService.transferToUser(
+              adminId,
+              subOrder.owner._id,
+              ownerRewardAmount,
+              `Compensation for renter no-show during return - shipment ${shipment.shipmentId}`
+            );
+            console.log(`   ✅ Owner reward ${ownerRewardAmount} VND (80% of 1-day rental) transferred to owner:`, ownerTransferResult);
+          }
+        } catch (ownerErr) {
+          console.error(`   ⚠️  Owner reward transfer failed: ${ownerErr.message}`);
+        }
 
-        // 4. Update shipment status to FAILED (not DELIVERY_FAILED)
-        // This allows renter to request return again after dispute resolution
-        shipment.status = 'FAILED';
+        // Update MasterOrder status if needed
+        if (allRenterNoShow) {
+          try {
+            const MasterOrder = require('../models/MasterOrder');
+            const SubOrder = require('../models/SubOrder');
+            const masterOrderId = masterOrder._id;
+            
+            if (masterOrderId) {
+              const allSubOrders = await SubOrder.find({ masterOrder: masterOrderId });
+              const hasCancelledByRenterNoShow = allSubOrders.some(sub => 
+                sub.status === 'CANCELLED_BY_RENTER_NO_SHOW'
+              );
+              const hasReadyForContractStatus = allSubOrders.some(sub => 
+                sub.status === 'READY_FOR_CONTRACT'
+              );
+              const allCancelledByRenter = allSubOrders.every(sub => 
+                sub.status === 'CANCELLED_BY_RENTER_NO_SHOW'
+              );
+
+              if (hasCancelledByRenterNoShow && hasReadyForContractStatus) {
+                // Mix of cancelled and ready
+                masterOrder.status = 'PARTIALLY_CANCELLED_BY_RENTER';
+                await masterOrder.save();
+                console.log(`   ✅ MasterOrder status: PARTIALLY_CANCELLED_BY_RENTER (mixed suborders)`);
+              } else if (allCancelledByRenter) {
+                // All suborders cancelled
+                masterOrder.status = 'CANCELLED_BY_RENTER_NO_SHOW';
+                await masterOrder.save();
+                console.log(`   ✅ MasterOrder status: CANCELLED_BY_RENTER_NO_SHOW (all suborders)`);
+              }
+            }
+          } catch (moErr) {
+            console.error('   ⚠️ Failed to update MasterOrder status:', moErr.message || moErr);
+          }
+        }
+
+        // Update shipment status to CANCELLED
+        shipment.status = 'CANCELLED';
         shipment.tracking = shipment.tracking || {};
-        shipment.tracking.failureReason = 'Không liên lạc được với renter khi trả hàng';
+        shipment.tracking.cancelledAt = new Date();
+        shipment.tracking.cancelReason = 'Renter no-show - could not contact during return delivery';
         shipment.tracking.notes = notes;
         await shipment.save();
-        console.log(`   ✅ Shipment marked as FAILED (not DELIVERY_FAILED)`);
-        console.log(`   ℹ️  Renter can send return request again after dispute resolution`);
+        console.log(`   ✅ Shipment marked as CANCELLED`);
 
       } catch (err) {
-        console.error(`   ⚠️  RENTER_ABSENT processing failed: ${err.message}`);
-        throw new Error(`RENTER_ABSENT processing error: ${err.message}`);
+        console.error(`   ⚠️  NO_CONTACT processing failed: ${err.message}`);
+        throw new Error(`NO_CONTACT processing error: ${err.message}`);
       }
     } else {
       // 2. Handle PRODUCT_DAMAGED case
@@ -1097,20 +1131,34 @@ class ShipmentService {
       
       let renterMessage = `Đơn hàng ${subOrder.subOrderNumber} đã được ghi nhận là renter không nhận hàng.`;
       if (reason === 'NO_CONTACT') {
-        const productDeposit = subOrder.products[shipment.productIndex]?.totalDeposit || 0;
-        const rentalDays = subOrder.products[shipment.productIndex]?.rentalPeriod?.duration?.value || 1;
-        const oneDayRental = Math.ceil((subOrder.products[shipment.productIndex]?.totalRental || 0) / rentalDays);
-        renterMessage += ` Tiền cọc (${productDeposit} VND) + 1 ngày thuê (${oneDayRental} VND) sẽ bị trừ. Phần còn lại sẽ được hoàn lại. Bạn có thể gửi yêu cầu trả hàng lại sau khi tranh chấp được giải quyết.`;
+        const product = subOrder.products[shipment.productIndex];
+        const depositAmount = product?.totalDeposit || 0;
+        const rentalAmount = product?.totalRental || 0;
+        const rentalDays = product?.rentalPeriod?.duration?.value || 1;
+        const oneDayRental = Math.ceil(rentalAmount / rentalDays);
+        
+        const paymentMethod = masterOrder?.paymentMethod;
+        const deliveryMethod = masterOrder?.deliveryMethod;
+        
+        let deductInfo = '';
+        if (deliveryMethod === 'PICKUP' || paymentMethod === 'COD') {
+          const deductFromDeposit = Math.min(oneDayRental, depositAmount);
+          deductInfo = `Tiền cọc (${deductFromDeposit} VND)`;
+        } else {
+          deductInfo = `Tiền thuê 1 ngày (${oneDayRental} VND)`;
+        }
+        
+        renterMessage += ` Shipper không liên lạc được với bạn. ${deductInfo} sẽ bị trừ. CreditScore của bạn bị trừ 20 điểm. Phần còn lại sẽ được hoàn lại vào ví của bạn.`;
       } else {
         renterMessage += ` Vui lòng liên hệ với chúng tôi để giải quyết.`;
       }
 
       await NotificationService.createNotification({
         recipient: renter._id,
-        title: reason === 'NO_CONTACT' ? '📦 Ghi nhận renter không nhận hàng' : '⚠️ Sản phẩm có lỗi',
+        title: reason === 'NO_CONTACT' ? '⚠️ Renter không nhận hàng' : '⚠️ Sản phẩm có lỗi',
         message: renterMessage,
         type: 'SHIPMENT',
-        category: reason === 'NO_CONTACT' ? 'INFO' : 'WARNING',
+        category: reason === 'NO_CONTACT' ? 'WARNING' : 'WARNING',
         data: {
           shipmentId: shipment.shipmentId,
           subOrderNumber: subOrder.subOrderNumber,
@@ -1127,15 +1175,7 @@ class ShipmentService {
     return shipment;
   }
 
-  /**
-   * Owner no-show - shipper confirms owner is not available for delivery
-   * Updates:
-   *   - Product status → OWNER_NO_SHOW
-   *   - SubOrder status → CANCELLED_BY_OWNER_NO_SHOW
-   *   - Owner creditScore -= 20
-   *   - Renter loyaltyPoints += 25
-   *   - Refund (rental + deposit) to renter (no refund for shipping fee)
-   */
+
   async ownerNoShow(shipmentId, payload = {}) {
     const shipment = await Shipment.findById(shipmentId)
       .populate({
@@ -1506,7 +1546,25 @@ class ShipmentService {
         console.log(`   ✅ Refund ${refundAmount} VND transferred to renter:`, transferResult);
       }
 
-      // 7. Update shipment status to CANCELLED
+      // 7. Transfer 80% of 1 day rental to owner
+      try {
+        const ownerRewardAmount = Math.floor(oneDayRental * 0.8); // 80% of 1 day rental
+        if (ownerRewardAmount > 0 && subOrder.owner && subOrder.owner._id) {
+          const SystemWalletService = require('./systemWallet.service');
+          const adminId = process.env.SYSTEM_ADMIN_ID || 'SYSTEM_AUTO_TRANSFER';
+          const ownerTransferResult = await SystemWalletService.transferToUser(
+            adminId,
+            subOrder.owner._id,
+            ownerRewardAmount,
+            `Compensation for renter no-show - shipment ${shipment.shipmentId}`
+          );
+          console.log(`   ✅ Owner reward ${ownerRewardAmount} VND (80% of 1-day rental) transferred to owner:`, ownerTransferResult);
+        }
+      } catch (ownerErr) {
+        console.error(`   ⚠️  Owner reward transfer failed: ${ownerErr.message}`);
+      }
+
+      // 8. Update shipment status to CANCELLED
       shipment.status = 'CANCELLED';
       shipment.tracking = shipment.tracking || {};
       shipment.tracking.cancelledAt = new Date();
@@ -1515,7 +1573,7 @@ class ShipmentService {
       await shipment.save();
       console.log(`   ✅ Shipment marked as CANCELLED`);
 
-      // 8. Send notification to renter
+      // 9. Send notification to renter
       try {
         const NotificationService = require('./notification.service');
         const notificationTitle = allRenterNoShow 
@@ -1615,9 +1673,9 @@ class ShipmentService {
     console.log(`\n⚠️ Return Failed: ${shipment.shipmentId}`);
     console.log(`   Notes: ${notes}`);
 
-    // Only allow if shipment is IN_TRANSIT (shipper is delivering return)
-    if (shipment.status !== 'IN_TRANSIT') {
-      throw new Error(`Cannot report return failed. Shipment must be in IN_TRANSIT status (current: ${shipment.status}).`);
+    // Only allow if shipment is SHIPPER_CONFIRMED (before pickup) or IN_TRANSIT (during pickup)
+    if (!['SHIPPER_CONFIRMED', 'IN_TRANSIT'].includes(shipment.status)) {
+      throw new Error(`Cannot report return failed. Shipment must be in SHIPPER_CONFIRMED or IN_TRANSIT status (current: ${shipment.status}).`);
     }
 
     // Only for RETURN shipments
@@ -1644,7 +1702,38 @@ class ShipmentService {
       await subOrder.save();
       console.log(`   ✅ SubOrder status: RETURN_FAILED`);
 
-      // 3. Update shipment status to CANCELLED
+      // 3. Update MasterOrder status if needed
+      try {
+        const MasterOrder = require('../models/MasterOrder');
+        const SubOrder = require('../models/SubOrder');
+        const masterOrderId = masterOrder._id;
+        
+        if (masterOrderId) {
+          const allSubOrders = await SubOrder.find({ masterOrder: masterOrderId });
+          const hasReturnFailed = allSubOrders.some(sub => 
+            sub.status === 'RETURN_FAILED'
+          );
+          const allReturnFailed = allSubOrders.every(sub => 
+            sub.status === 'RETURN_FAILED'
+          );
+
+          if (hasReturnFailed && !allReturnFailed) {
+            // Some suborders have RETURN_FAILED, some don't
+            masterOrder.status = 'PARTIALLY_RETURN_FAILED';
+            await masterOrder.save();
+            console.log(`   ✅ MasterOrder status: PARTIALLY_RETURN_FAILED (partial return failed)`);
+          } else if (allReturnFailed) {
+            // All suborders have RETURN_FAILED
+            masterOrder.status = 'RETURN_FAILED';
+            await masterOrder.save();
+            console.log(`   ✅ MasterOrder status: RETURN_FAILED (all return failed)`);
+          }
+        }
+      } catch (moErr) {
+        console.error('   ⚠️ Failed to update MasterOrder status:', moErr.message || moErr);
+      }
+
+      // 4. Update shipment status to CANCELLED
       shipment.status = 'CANCELLED';
       shipment.tracking = shipment.tracking || {};
       shipment.tracking.cancelledAt = new Date();
@@ -1653,7 +1742,7 @@ class ShipmentService {
       await shipment.save();
       console.log(`   ✅ Shipment marked as CANCELLED`);
 
-      // 4. Send notification to owner (to open dispute)
+      // 5. Send notification to owner (to open dispute)
       try {
         const NotificationService = require('./notification.service');
         await NotificationService.createNotification({
@@ -1674,7 +1763,7 @@ class ShipmentService {
         console.error(`   ⚠️  Notification to owner failed: ${err.message}`);
       }
 
-      // 5. Send notification to renter
+      // 6. Send notification to renter
       try {
         const NotificationService = require('./notification.service');
         await NotificationService.createNotification({

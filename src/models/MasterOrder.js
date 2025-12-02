@@ -99,6 +99,8 @@ const masterOrderSchema = new mongoose.Schema(
         'CANCELLED_BY_RENTER_NO_SHOW', // Hủy tất cả do không liên lạc được với renter
         'PATIALLY_CANCELLED_BY_RENTER', // Hủy một phần do không liên lạc được với renter
         'PARTIALLY_CANCELLED', // Một phần sản phẩm bị hủy
+        'RETURN_FAILED', // Trả hàng thất bại
+        'PARTIALLY_RETURN_FAILED', // Một phần trả hàng thất bại
         'READY_FOR_CONTRACT', // Sẵn sàng ký hợp đồng
         'CONTRACT_SIGNED', // Đã ký hợp đồng
         'PROCESSING', // Đang xử lý

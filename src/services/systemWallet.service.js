@@ -1120,6 +1120,156 @@ class SystemWalletService {
       session.endSession();
     }
   }
+
+  /**
+   * Transfer to user with frozen balance (unfrozen after 24 hours)
+   * Use case: Owner compensation from shipment issues - tiền vào frozen, sau 24h chuyển sang available
+   */
+  async transferToUserFrozen(adminId, userId, amount, description = 'Frozen transfer to user', unfreezeDuration = 24 * 60 * 60 * 1000) {
+    if (amount <= 0) {
+      throw new Error('Amount must be positive');
+    }
+
+    const session = await mongoose.startSession();
+    session.startTransaction();
+
+    try {
+      // Get or create system wallet
+      let systemWallet = await SystemWallet.findOne({}).session(session);
+      if (!systemWallet) {
+        systemWallet = new SystemWallet({
+          name: 'PIRA Platform Wallet',
+          balance: { available: 0, frozen: 0, pending: 0 },
+          currency: 'VND',
+          status: 'ACTIVE'
+        });
+        await systemWallet.save({ session });
+        console.log('Created system wallet inside transferToUserFrozen transaction');
+      }
+
+      // Check sufficient balance
+      if (systemWallet.balance.available < amount) {
+        throw new Error(
+          `Insufficient system wallet balance. Available: ${systemWallet.balance.available.toLocaleString()} VND`
+        );
+      }
+
+      // Get user wallet, or create if not exists
+      let userWallet = await Wallet.findOne({ user: userId }).session(session);
+      if (!userWallet) {
+        console.log(`📝 User wallet not found for ${userId}, creating new wallet...`);
+        userWallet = new Wallet({
+          user: userId,
+          balance: { available: 0, frozen: 0, pending: 0 },
+          currency: 'VND',
+          status: 'ACTIVE'
+        });
+        await userWallet.save({ session });
+        console.log(`✅ Created user wallet for ${userId}`);
+      }
+
+      // Deduct from system wallet available
+      systemWallet.balance.available -= amount;
+      systemWallet.lastModifiedBy = adminId && adminId !== 'SYSTEM_AUTO_TRANSFER' ? adminId : null;
+      systemWallet.lastModifiedAt = new Date();
+      await systemWallet.save({ session });
+
+      // Add to user wallet FROZEN balance
+      userWallet.balance.frozen += amount;
+      await userWallet.save({ session });
+
+      // Create transaction records
+      const systemTransaction = new Transaction({
+        user: adminId && adminId !== 'SYSTEM_AUTO_TRANSFER' ? adminId : userId,
+        wallet: systemWallet._id,
+        type: 'TRANSFER_OUT',
+        amount: amount,
+        status: 'success',
+        paymentMethod: 'system_wallet',
+        description: `Frozen transfer to user ${userId}: ${description}`,
+        fromSystemWallet: true,
+        toWallet: userWallet._id,
+        systemWalletAction: 'transfer_out_frozen',
+        metadata: {
+          adminId: adminId,
+          action: 'TRANSFER_TO_USER_FROZEN',
+          recipientUserId: userId,
+          recipientWalletId: userWallet._id,
+          unfreezedAt: new Date(Date.now() + unfreezeDuration)
+        }
+      });
+
+      const userTransaction = new Transaction({
+        user: userId,
+        wallet: userWallet._id,
+        type: 'TRANSFER_IN_FROZEN',
+        amount: amount,
+        status: 'success',
+        paymentMethod: 'system_wallet',
+        description: `Received frozen from system: ${description}`,
+        fromSystemWallet: true,
+        toWallet: userWallet._id,
+        metadata: {
+          adminId: adminId,
+          action: 'RECEIVED_FROM_SYSTEM_FROZEN',
+          sourceWallet: 'SYSTEM',
+          unfreezedAt: new Date(Date.now() + unfreezeDuration)
+        }
+      });
+
+      await systemTransaction.save({ session });
+      await userTransaction.save({ session });
+
+      await session.commitTransaction();
+
+      // Schedule job to unfreeze funds after 24 hours
+      try {
+        const Bull = require('bull');
+        const unfreezeQueue = new Bull('wallet-unfreeze', process.env.REDIS_URL || 'redis://127.0.0.1:6379');
+        
+        await unfreezeQueue.add(
+          { walletId: userWallet._id, amount: amount },
+          { delay: unfreezeDuration }
+        );
+        
+        console.log(`⏰ Scheduled unfreeze job for wallet ${userWallet._id}, amount: ${amount} VND after 24h`);
+      } catch (jobErr) {
+        console.error(`⚠️  Failed to schedule unfreeze job: ${jobErr.message}`);
+      }
+
+      // Emit socket update for user wallet
+      if (global.chatGateway) {
+        global.chatGateway.emitWalletUpdate(userId.toString(), {
+          type: 'FROZEN_TRANSFER',
+          amount: amount,
+          frozen: userWallet.balance.frozen,
+          available: userWallet.balance.available
+        });
+      }
+
+      return {
+        success: true,
+        systemWallet: await this.getBalance(),
+        userWallet: {
+          walletId: userWallet._id,
+          userId: userId,
+          frozenBalance: userWallet.balance.frozen,
+          availableBalance: userWallet.balance.available
+        },
+        transactions: {
+          system: systemTransaction,
+          user: userTransaction
+        },
+        unfreezeAt: new Date(Date.now() + unfreezeDuration),
+        message: `Transferred ${amount.toLocaleString()} VND (frozen) to user ${userId}, will be available in 24h`
+      };
+    } catch (error) {
+      await session.abortTransaction();
+      throw error;
+    } finally {
+      session.endSession();
+    }
+  }
 }
 
 module.exports = new SystemWalletService();
