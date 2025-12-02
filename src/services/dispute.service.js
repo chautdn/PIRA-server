@@ -2,6 +2,9 @@ const mongoose = require('mongoose');
 const Dispute = require('../models/Dispute');
 const SubOrder = require('../models/SubOrder');
 const User = require('../models/User');
+const Wallet = require('../models/Wallet');
+const Transaction = require('../models/Transaction');
+const SystemWallet = require('../models/SystemWallet');
 const { generateDisputeId } = require('../utils/idGenerator');
 const notificationService = require('./notification.service');
 const ChatGateway = require('../socket/chat.gateway');
@@ -49,6 +52,130 @@ class DisputeService {
       return notification;
     } catch (error) {
       console.error('Error creating/emitting notification:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Helper: Refund tiền cho user
+   * @param {ObjectId} userId - ID của user nhận tiền
+   * @param {Number} amount - Số tiền refund
+   * @param {String} reason - Lý do refund
+   * @param {ObjectId} disputeId - ID của dispute
+   * @returns {Promise<Transaction>}
+   */
+  async _processRefund(userId, amount, reason, disputeId) {
+    const session = await mongoose.startSession();
+    session.startTransaction();
+
+    try {
+      // Lấy wallet của user
+      const wallet = await Wallet.findOne({ user: userId }).session(session);
+      if (!wallet) {
+        throw new Error('Wallet không tồn tại');
+      }
+
+      // Lấy system wallet
+      const systemWallet = await SystemWallet.findOne({}).session(session);
+      if (!systemWallet) {
+        throw new Error('System wallet không tồn tại');
+      }
+
+      // Kiểm tra system wallet có đủ tiền không
+      if (systemWallet.balance.available < amount) {
+        throw new Error('System wallet không đủ số dư để refund');
+      }
+
+      // Trừ tiền từ system wallet
+      systemWallet.balance.available -= amount;
+      await systemWallet.save({ session });
+
+      // Cộng tiền vào wallet user
+      wallet.balance.available += amount;
+      await wallet.save({ session });
+
+      // Tạo transaction record
+      const transaction = new Transaction({
+        user: userId,
+        type: 'REFUND',
+        amount: amount,
+        status: 'COMPLETED',
+        method: 'WALLET',
+        description: reason,
+        metadata: {
+          disputeId: disputeId,
+          refundType: 'DISPUTE_RESOLUTION',
+          previousBalance: wallet.balance.available - amount,
+          newBalance: wallet.balance.available
+        }
+      });
+      await transaction.save({ session });
+
+      await session.commitTransaction();
+      console.log(`✅ Refunded ${amount} VND to user ${userId} for dispute ${disputeId}`);
+      
+      return transaction;
+    } catch (error) {
+      await session.abortTransaction();
+      console.error('❌ Refund failed:', error);
+      throw error;
+    } finally {
+      session.endSession();
+    }
+  }
+
+  /**
+   * Helper: Update credit score
+   * @param {ObjectId} userId - ID của user
+   * @param {Number} points - Số điểm thay đổi (âm = trừ, dương = cộng)
+   * @param {String} reason - Lý do thay đổi
+   */
+  async _updateCreditScore(userId, points, reason) {
+    try {
+      const user = await User.findById(userId);
+      if (!user) {
+        throw new Error('User không tồn tại');
+      }
+
+      const oldScore = user.creditScore;
+      
+      // Cộng/trừ điểm, đảm bảo trong khoảng 0-1000
+      user.creditScore = Math.max(0, Math.min(1000, user.creditScore + points));
+      
+      await user.save();
+      
+      console.log(`✅ Updated credit score for user ${userId}: ${oldScore} → ${user.creditScore} (${points >= 0 ? '+' : ''}${points}) - ${reason}`);
+      
+      return user.creditScore;
+    } catch (error) {
+      console.error('❌ Update credit score failed:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Helper: Update loyalty points
+   * @param {ObjectId} userId - ID của user
+   * @param {Number} points - Số điểm cộng
+   * @param {String} reason - Lý do cộng điểm
+   */
+  async _updateLoyaltyPoints(userId, points, reason) {
+    try {
+      const user = await User.findById(userId);
+      if (!user) {
+        throw new Error('User không tồn tại');
+      }
+
+      const oldPoints = user.loyaltyPoints;
+      user.loyaltyPoints += points;
+      
+      await user.save();
+      
+      console.log(`✅ Updated loyalty points for user ${userId}: ${oldPoints} → ${user.loyaltyPoints} (+${points}) - ${reason}`);
+      
+      return user.loyaltyPoints;
+    } catch (error) {
+      console.error('❌ Update loyalty points failed:', error);
       throw error;
     }
   }
@@ -327,6 +454,101 @@ class DisputeService {
         details: 'Respondent đã chấp nhận dispute',
         timestamp: new Date()
       });
+
+      // XỬ LÝ REFUND + CREDIT + LOYALTY
+      // Chỉ áp dụng cho dispute DELIVERY với các type: PRODUCT_NOT_AS_DESCRIBED, MISSING_ITEMS, PRODUCT_DEFECT
+      const eligibleTypes = ['PRODUCT_NOT_AS_DESCRIBED', 'MISSING_ITEMS', 'PRODUCT_DEFECT'];
+      if (dispute.shipmentType === 'DELIVERY' && eligibleTypes.includes(dispute.type)) {
+        try {
+          // Lấy thông tin SubOrder để tính refund
+          const subOrder = await SubOrder.findById(dispute.subOrder);
+          if (!subOrder) {
+            throw new Error('SubOrder không tồn tại');
+          }
+
+          const product = subOrder.products[dispute.productIndex];
+          if (!product) {
+            throw new Error('Product không tồn tại');
+          }
+
+          // Tính số tiền refund: totalRental + totalDeposit (KHÔNG bao gồm phí ship)
+          const refundAmount = (product.totalRental || 0) + (product.totalDeposit || 0);
+          
+          if (refundAmount > 0) {
+            // 1. Refund tiền cho Renter (complainant)
+            await this._processRefund(
+              dispute.complainant,
+              refundAmount,
+              `Hoàn tiền tranh chấp ${dispute.disputeId}: Owner đồng ý với khiếu nại về sản phẩm`,
+              dispute._id
+            );
+
+            // Lưu thông tin refund vào dispute
+            dispute.resolution.refundAmount = refundAmount;
+            dispute.resolution.refundProcessedAt = new Date();
+            
+            dispute.timeline.push({
+              action: 'REFUND_PROCESSED',
+              performedBy: null, // System action
+              details: `Hoàn ${refundAmount.toLocaleString()} VND cho renter (phí thuê + cọc, không bao gồm phí ship)`,
+              timestamp: new Date()
+            });
+          }
+
+          // 2. Update Credit & Loyalty cho RENTER
+          const renterUser = await User.findById(dispute.complainant);
+          
+          // Loyalty: +5 điểm
+          await this._updateLoyaltyPoints(
+            dispute.complainant,
+            5,
+            `Dispute ${dispute.disputeId} được giải quyết (Owner đồng ý)`
+          );
+
+          // Credit: +5 điểm nếu < 100
+          if (renterUser.creditScore < 100) {
+            await this._updateCreditScore(
+              dispute.complainant,
+              5,
+              `Dispute ${dispute.disputeId} được giải quyết (Owner đồng ý)`
+            );
+          }
+
+          // 3. Update Credit & Loyalty cho OWNER
+          // Loyalty: +5 điểm
+          await this._updateLoyaltyPoints(
+            dispute.respondent,
+            5,
+            `Dispute ${dispute.disputeId}: Chấp nhận khiếu nại một cách thiện chí`
+          );
+
+          // Credit: -30 điểm
+          await this._updateCreditScore(
+            dispute.respondent,
+            -30,
+            `Dispute ${dispute.disputeId}: Sản phẩm không đạt yêu cầu`
+          );
+
+          dispute.timeline.push({
+            action: 'POINTS_UPDATED',
+            performedBy: null, // System action
+            details: 'Renter: +5 loyalty, +5 credit (nếu <100) | Owner: +5 loyalty, -30 credit',
+            timestamp: new Date()
+          });
+
+          console.log(`✅ Processed dispute resolution: Refund ${refundAmount} VND + Points updated`);
+        } catch (error) {
+          console.error('❌ Error processing dispute resolution:', error);
+          dispute.timeline.push({
+            action: 'RESOLUTION_ERROR',
+            performedBy: null,
+            details: `Lỗi xử lý refund/points: ${error.message}`,
+            timestamp: new Date()
+          });
+        }
+      }
+
+      await dispute.save();
     } else {
       // Respondent từ chối -> Chuyển admin xử lý
       dispute.status = 'RESPONDENT_REJECTED';
