@@ -3215,7 +3215,8 @@ class RentalOrderService {
     totalRental,
     totalDeposit,
     totalShipping,
-    totalAmount
+    totalAmount,
+    editableTerms = null
   ) {
     const productListHTML = confirmedProducts
       .map(
@@ -3311,6 +3312,35 @@ class RentalOrderService {
           <li>Nếu trả trễ, bên thuê phải chịu phí phạt theo quy định.</li>
           <li>Nếu sản phẩm bị hư hỏng, bên thuê phải bồi thường theo giá trị thực tế.</li>
         </ol>
+
+        ${
+          editableTerms?.additionalTerms && editableTerms.additionalTerms.length > 0
+            ? `
+        <h3>ĐIỀU KHOẢN BỔ SUNG</h3>
+        <ol start="5">
+          ${editableTerms.additionalTerms.map((term) => `<li><strong>${term.title}:</strong> ${term.content}</li>`).join('')}
+        </ol>
+        `
+            : ''
+        }
+
+        ${
+          editableTerms?.customClauses
+            ? `
+        <h3>ĐIỀU KHOẢN TỰY CHỈNH</h3>
+        <p style="white-space: pre-wrap;">${editableTerms.customClauses}</p>
+        `
+            : ''
+        }
+
+        ${
+          editableTerms?.specialConditions
+            ? `
+        <h3>ĐIỀU KIỆN ĐẶC BIỆT</h3>
+        <p style="white-space: pre-wrap;">${editableTerms.specialConditions}</p>
+        `
+            : ''
+        }
 
         <div style="margin-top: 50px; display: flex; justify-content: space-between;">
           <div style="text-align: center;">
@@ -3545,20 +3575,22 @@ class RentalOrderService {
       throw new Error('Không tìm thấy hợp đồng');
     }
 
+    console.log('📄 Contract status:', contract.status);
+    console.log('📝 Owner signed:', contract.signatures?.owner?.signed);
+    console.log('📝 Renter signed:', contract.signatures?.renter?.signed);
+
     // Check owner permission
     if (contract.owner._id.toString() !== ownerId.toString()) {
       throw new Error('Bạn không có quyền chỉnh sửa hợp đồng này');
     }
 
-    // Check if contract can be edited (only DRAFT or PENDING status, and owner hasn't signed)
-    if (contract.status !== 'DRAFT' && contract.status !== 'PENDING_SIGNATURE') {
-      throw new Error('Không thể chỉnh sửa hợp đồng đã ký hoặc đang hoạt động');
-    }
-
+    // Check if owner hasn't signed yet (main condition)
     if (contract.signatures?.owner?.signed) {
       throw new Error('Bạn đã ký hợp đồng này, không thể chỉnh sửa nữa');
     }
 
+    // Allow editing if owner hasn't signed, regardless of status
+    // The owner should be able to edit before signing
     return contract;
   }
 
@@ -3617,6 +3649,42 @@ class RentalOrderService {
       });
       contract.editableTerms.isEdited = true;
       contract.editableTerms.lastEditedAt = new Date();
+
+      // Regenerate HTML content with updated terms
+      await contract.populate('subOrder');
+      await contract.populate('owner', 'profile phone email');
+      await contract.populate('renter', 'profile phone email');
+
+      const subOrder = contract.subOrder;
+      if (subOrder) {
+        await subOrder.populate('owner', 'profile phone email');
+        await subOrder.populate('products.product', 'title name');
+
+        // Calculate totals from contract terms
+        const totalRental = contract.terms.rentalRate || 0;
+        const totalDeposit = contract.terms.deposit || 0;
+        const totalShipping = contract.terms.shippingFee || 0;
+        const totalAmount = contract.terms.totalAmount || 0;
+
+        // Get confirmed products from subOrder
+        const confirmedProducts = subOrder.products.filter((p) => p.productStatus === 'CONFIRMED');
+
+        // Regenerate HTML with editable terms
+        const updatedHTML = this.generateContractHTML(
+          contract.contractNumber,
+          subOrder,
+          contract.renter,
+          confirmedProducts,
+          totalRental,
+          totalDeposit,
+          totalShipping,
+          totalAmount,
+          contract.editableTerms
+        );
+
+        contract.content.htmlContent = updatedHTML;
+        console.log('🔄 Regenerated contract HTML with updated terms');
+      }
     }
 
     await contract.save();
