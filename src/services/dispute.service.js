@@ -346,7 +346,7 @@ class DisputeService {
       const respondent = await User.findById(respondentId);
       const decisionText = decision === 'ACCEPTED' ? 'chấp nhận' : 'từ chối';
       
-      await notificationService.createNotification({
+      await this._createAndEmitNotification({
         recipient: dispute.complainant,
         type: 'DISPUTE',
         category: decision === 'ACCEPTED' ? 'SUCCESS' : 'INFO',
@@ -440,11 +440,11 @@ class DisputeService {
       };
 
       await Promise.all([
-        notificationService.createNotification({
+        this._createAndEmitNotification({
           ...notificationData,
           recipient: dispute.complainant
         }),
-        notificationService.createNotification({
+        this._createAndEmitNotification({
           ...notificationData,
           recipient: dispute.respondent
         })
@@ -564,7 +564,7 @@ class DisputeService {
       const roleText = isComplainant ? 'Người khiếu nại' : 'Bên bị khiếu nại';
       const decisionText = accepted ? 'chấp nhận' : 'từ chối';
       
-      await notificationService.createNotification({
+      await this._createAndEmitNotification({
         recipient: otherParty,
         type: 'DISPUTE',
         category: 'INFO',
@@ -750,13 +750,13 @@ class DisputeService {
       };
 
       // Gửi cho complainant
-      await notificationService.createNotification({
+      await this._createAndEmitNotification({
         ...notificationData,
         recipient: dispute.complainant._id
       });
 
       // Gửi cho respondent
-      await notificationService.createNotification({
+      await this._createAndEmitNotification({
         ...notificationData,
         recipient: dispute.respondent._id
       });
