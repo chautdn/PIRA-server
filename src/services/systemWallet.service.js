@@ -1126,6 +1126,13 @@ class SystemWalletService {
    * Use case: Owner compensation from shipment issues - tiền vào frozen, sau 24h chuyển sang available
    */
   async transferToUserFrozen(adminId, userId, amount, description = 'Frozen transfer to user', unfreezeDuration = 24 * 60 * 60 * 1000) {
+    console.log(`\n🔵 transferToUserFrozen called:`);
+    console.log(`   Admin: ${adminId}`);
+    console.log(`   User: ${userId}`);
+    console.log(`   Amount: ${amount} VND`);
+    console.log(`   Description: ${description}`);
+    console.log(`   Unfreeze duration: ${unfreezeDuration / 1000 / 60 / 60} hours`);
+    
     if (amount <= 0) {
       throw new Error('Amount must be positive');
     }
@@ -1189,7 +1196,7 @@ class SystemWalletService {
         description: `Frozen transfer to user ${userId}: ${description}`,
         fromSystemWallet: true,
         toWallet: userWallet._id,
-        systemWalletAction: 'transfer_out_frozen',
+        systemWalletAction: 'transfer_out',
         metadata: {
           adminId: adminId,
           action: 'TRANSFER_TO_USER_FROZEN',
@@ -1202,7 +1209,7 @@ class SystemWalletService {
       const userTransaction = new Transaction({
         user: userId,
         wallet: userWallet._id,
-        type: 'TRANSFER_IN_FROZEN',
+        type: 'TRANSFER_IN',
         amount: amount,
         status: 'success',
         paymentMethod: 'system_wallet',

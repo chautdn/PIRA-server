@@ -82,7 +82,7 @@ class ExtensionController {
         subOrder: subOrderId,
         renter: renterId,
         owner: subOrder.owner._id,
-        extendDays,
+        extensionDays: extendDays,
         extensionFee,
         notes,
         currentEndDate,

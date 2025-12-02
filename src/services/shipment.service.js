@@ -139,12 +139,19 @@ class ShipmentService {
   }
 
   async markDelivered(shipmentId, data) {
-    const shipment = await Shipment.findById(shipmentId).populate('subOrder');
+    const shipment = await Shipment.findById(shipmentId)
+      .populate('subOrder')
+      .populate({
+        path: 'subOrder',
+        populate: { path: 'masterOrder' }
+      });
     if (!shipment) throw new Error('Shipment not found');
 
-    // Validate status transition
-    if (shipment.status !== 'IN_TRANSIT') {
-      throw new Error(`Cannot mark as delivered. Current status: ${shipment.status}`);
+    console.log(`\n🔍 markDelivered check: shipment status = "${shipment.status}"`);
+    
+    // Validate status transition - accept IN_TRANSIT or SHIPPER_CONFIRMED (for cases where pickup was skipped)
+    if (shipment.status !== 'IN_TRANSIT' && shipment.status !== 'SHIPPER_CONFIRMED') {
+      throw new Error(`Cannot mark as delivered. Current status: ${shipment.status}. Expected: IN_TRANSIT or SHIPPER_CONFIRMED`);
     }
 
     shipment.status = 'DELIVERED';
@@ -154,10 +161,18 @@ class ShipmentService {
     console.log(`✅ Shipment ${shipment.shipmentId} marked as DELIVERED`);
     console.log(`   Type: ${shipment.type}`);
     console.log(`   DeliveredAt: ${shipment.tracking.deliveredAt}`);
+    console.log(`   SubOrder populated: ${!!shipment.subOrder}`);
+    if (shipment.subOrder) {
+      console.log(`   SubOrder ID: ${shipment.subOrder._id}`);
+      console.log(`   SubOrder pricing:`, shipment.subOrder.pricing);
+    }
 
     // Update product status and SubOrder based on shipment type
-    if (shipment.subOrder) {
-      if (shipment.type === 'DELIVERY') {
+    if (!shipment.subOrder) {
+      throw new Error(`SubOrder not populated! Shipment: ${shipment._id}, SubOrder ref: ${shipment.subOrder}`);
+    }
+    
+    if (shipment.type === 'DELIVERY') {
         // DELIVERY: product → DELIVERED, subOrder → ACTIVE
         if (shipment.productIndex !== undefined) {
           shipment.subOrder.products[shipment.productIndex].productStatus = 'DELIVERED';
@@ -166,6 +181,40 @@ class ShipmentService {
         shipment.subOrder.status = 'ACTIVE';
         await shipment.subOrder.save();
         console.log(`   ✅ SubOrder status: ACTIVE (rental is now active for renter/owner)`);
+
+        // Transfer 80% of rental fee to owner (frozen 24h)
+        try {
+          const SystemWalletService = require('./systemWallet.service');
+          const rentalAmount = shipment.subOrder.pricing?.subtotalRental || 0;
+          const ownerCompensation = Math.floor(rentalAmount * 0.8); // 80% of rental fee
+          
+          console.log(`\n💰 Processing owner payment:`);
+          console.log(`   Rental fee (100%): ${rentalAmount} VND`);
+          console.log(`   Owner compensation (80%): ${ownerCompensation} VND (frozen 24h)`);
+          console.log(`   Owner ID: ${shipment.subOrder.owner}`);
+          
+          if (ownerCompensation > 0 && shipment.subOrder.owner) {
+            const adminId = process.env.SYSTEM_ADMIN_ID || 'SYSTEM_AUTO_TRANSFER';
+            console.log(`   Admin ID: ${adminId}`);
+            console.log(`   🚀 Calling transferToUserFrozen...`);
+            
+            // Transfer 80% of rental fee to owner's frozen wallet (24h unlock)
+            const transferResult = await SystemWalletService.transferToUserFrozen(
+              adminId,
+              shipment.subOrder.owner,
+              ownerCompensation,
+              `Rental fee (80%) for shipment ${shipment.shipmentId} - frozen 24h`,
+              24 * 60 * 60 * 1000
+            );
+            console.log(`   ✅ Transfer successful (frozen):`, transferResult);
+            console.log(`   ℹ️  Owner will receive ${ownerCompensation} VND in 24 hours`);
+          } else {
+            console.log(`   ⚠️  Skipped transfer: ownerCompensation=${ownerCompensation}, owner=${shipment.subOrder.owner}`);
+          }
+        } catch (ownerErr) {
+          console.error(`   ❌ OWNER PAYMENT ERROR:`, ownerErr);
+          throw ownerErr;
+        }
 
         // Also update MasterOrder status to ACTIVE (rental starts)
         try {
@@ -209,19 +258,31 @@ class ShipmentService {
               const SystemWalletService = require('./systemWallet.service');
               const renter = shipment.subOrder.masterOrder?.renter;
               
+              console.log(`   Renter ID: ${renter?._id}`);
+              console.log(`   Admin ID: ${process.env.SYSTEM_ADMIN_ID || 'SYSTEM_AUTO_TRANSFER'}`);
+              
               if (renter && renter._id) {
                 const adminId = process.env.SYSTEM_ADMIN_ID || 'SYSTEM_AUTO_TRANSFER';
-                const transferResult = await SystemWalletService.transferToUser(
+                console.log(`   🚀 Calling transferToUserFrozen for renter deposit...`);
+                
+                // Refund 100% deposit to renter's frozen wallet (24h unlock)
+                const transferResult = await SystemWalletService.transferToUserFrozen(
                   adminId,
                   renter._id,
                   depositAmount,
-                  `Return deposit refund - shipment ${shipment.shipmentId}`
+                  `Return deposit refund - shipment ${shipment.shipmentId}`,
+                  24 * 60 * 60 * 1000
                 );
-                console.log(`   ✅ Deposit ${depositAmount} VND refunded to renter:`, transferResult);
+                console.log(`   ✅ Deposit ${depositAmount} VND refunded to renter (frozen 24h):`, transferResult);
+              } else {
+                console.log(`   ⚠️  Skipped renter refund: renter=${renter}, renter._id=${renter?._id}`);
               }
             } catch (depositErr) {
-              console.error(`   ⚠️  Failed to refund deposit: ${depositErr.message}`);
+              console.error(`   ❌ DEPOSIT REFUND ERROR:`, depositErr);
+              throw depositErr;
             }
+          } else {
+            console.log(`   ⚠️  No deposit to refund: ${depositAmount}`);
           }
         }
 
@@ -229,6 +290,24 @@ class ShipmentService {
         shipment.subOrder.status = 'COMPLETED';
         await shipment.subOrder.save();
         console.log(`   ✅ SubOrder status: COMPLETED (rental completed, deposit refunded)`);
+
+        // Award creditScore +5 to owner if creditScore < 100
+        try {
+          const User = require('../models/User');
+          const owner = await User.findById(shipment.subOrder.owner);
+          if (owner) {
+            if (!owner.creditScore) owner.creditScore = 0;
+            if (owner.creditScore < 100) {
+              owner.creditScore = Math.min(100, owner.creditScore + 5);
+              await owner.save();
+              console.log(`   ✅ Owner creditScore +5: ${owner.creditScore} (max 100)`);
+            } else {
+              console.log(`   ℹ️ Owner creditScore already at max: ${owner.creditScore}`);
+            }
+          }
+        } catch (creditErr) {
+          console.error(`   ⚠️  Failed to update creditScore:`, creditErr.message);
+        }
 
         // Set masterOrder status to COMPLETED (all items returned)
         try {
@@ -247,7 +326,6 @@ class ShipmentService {
           console.error('   ⚠️ Failed to update MasterOrder status:', moErr.message || moErr);
         }
       }
-    }
 
     await shipment.save();
 
@@ -321,6 +399,7 @@ class ShipmentService {
     let transferError = null;
 
     // Only transfer payment for DELIVERY shipment, not for RETURN
+    // NOTE: Payment already transferred in markDelivered() when shipper confirms
     if (shipment.type === 'DELIVERY' && shipment.subOrder) {
       try {
         const ownerId = shipment.subOrder.owner;
@@ -331,32 +410,17 @@ class ShipmentService {
         console.log(`   SubOrder ID: ${shipment.subOrder._id}`);
         console.log(`   Owner ID: ${ownerId}`);
         console.log(`   SubOrder pricing:`, shipment.subOrder.pricing);
-        console.log(`   💰 Payment breakdown:`);
-        console.log(`      - Rental fee (→ owner): ${rentalAmount} VND`);
+        console.log(`   💰 Payment info:`);
+        console.log(`      - Rental fee (100%): ${rentalAmount} VND`);
+        console.log(`      - Owner compensation (80%): ${Math.floor(rentalAmount * 0.8)} VND (already transferred by shipper)`);
         console.log(`      - Deposit (→ admin holds): ${depositAmount} VND`);
         
-        // Only transfer if SubOrder is not already ACTIVE (was already set by shipper markDelivered)
+        // Only update status if SubOrder is not already ACTIVE (was already set by shipper markDelivered)
         if (shipment.subOrder.status !== 'ACTIVE') {
           console.log(`   ℹ️ SubOrder status is ${shipment.subOrder.status}, setting to ACTIVE`);
           shipment.subOrder.status = 'ACTIVE';
         } else {
-          console.log(`   ℹ️ SubOrder already ACTIVE (set when shipper confirmed delivery)`);
-        }
-
-        if (rentalAmount > 0) {
-          const adminId = process.env.SYSTEM_ADMIN_ID || 'SYSTEM_AUTO_TRANSFER';
-          console.log(`   Admin ID for transfer: ${adminId}`);
-          transferResult = await SystemWalletService.transferToUser(
-            adminId,
-            ownerId,
-            rentalAmount,
-            `Rental fee for shipment ${shipment.shipmentId}`
-          );
-          console.log(`   ✅ Transfer successful:`, transferResult);
-          console.log(`   ℹ️  Deposit ${depositAmount} VND held in admin wallet for renter refund`);
-        } else {
-          console.log(`   ⚠️  No rental fee to transfer (amount = 0)`);
-          console.log(`   Possible reasons: subtotalRental is missing or 0 in pricing`);
+          console.log(`   ℹ️ SubOrder already ACTIVE (payment already transferred by shipper)`);
         }
 
         await shipment.subOrder.save();
@@ -364,17 +428,21 @@ class ShipmentService {
 
       } catch (err) {
         transferError = err.message || String(err);
-        console.error(`   ❌ Payment error:`, err);
+        console.error(`   ❌ Error:`, err);
       }
     } else if (shipment.type === 'RETURN') {
-      // RETURN shipment - no payment needed, just confirm receipt
+      // RETURN shipment - deposit refund already transferred in markDelivered()
       console.log(`   Shipment type: RETURN (Nhận trả)`);
-      console.log(`   ℹ️  Return shipment confirmed (no payment transfer)`);
+      console.log(`   ℹ️  Return deposit already refunded by shipper (frozen 24h)`);
       
       if (shipment.subOrder) {
-        shipment.subOrder.status = 'RETURNED';
-        await shipment.subOrder.save();
-        console.log(`   ✅ SubOrder status: RETURNED`);
+        if (shipment.subOrder.status !== 'RETURNED' && shipment.subOrder.status !== 'COMPLETED') {
+          shipment.subOrder.status = 'RETURNED';
+          await shipment.subOrder.save();
+          console.log(`   ✅ SubOrder status: RETURNED`);
+        } else {
+          console.log(`   ℹ️ SubOrder already in final status: ${shipment.subOrder.status}`);
+        }
       }
     }
 
@@ -505,12 +573,12 @@ class ShipmentService {
           
           console.log(`        _id: ${product._id}, name: ${product.name}`);
 
-          // Get owner and renter addresses - từ top-level address field
+          // Get owner and renter addresses
           const ownerAddress = owner.address || {};
-          const renterAddress = renter.address || {};
+          const renterDeliveryAddress = masterOrder.deliveryAddress || {}; // Use delivery address from order, not profile
 
           console.log(`        Owner address:`, JSON.stringify(ownerAddress));
-          console.log(`        Renter address:`, JSON.stringify(renterAddress));
+          console.log(`        Renter delivery address (from order):`, JSON.stringify(renterDeliveryAddress));
 
           // OUTBOUND SHIPMENT (DELIVERY)
           try {
@@ -521,14 +589,6 @@ class ShipmentService {
               productIndex: productIndex,
               type: 'DELIVERY',
               fromAddress: {
-                streetAddress: renterAddress.streetAddress || '',
-                ward: renterAddress.ward || '',
-                district: renterAddress.district || '',
-                city: renterAddress.city || '',
-                province: renterAddress.province || '',
-                coordinates: renterAddress.coordinates || {}
-              },
-              toAddress: {
                 streetAddress: ownerAddress.streetAddress || '',
                 ward: ownerAddress.ward || '',
                 district: ownerAddress.district || '',
@@ -536,15 +596,23 @@ class ShipmentService {
                 province: ownerAddress.province || '',
                 coordinates: ownerAddress.coordinates || {}
               },
+              toAddress: {
+                streetAddress: renterDeliveryAddress.streetAddress || '',
+                ward: renterDeliveryAddress.ward || '',
+                district: renterDeliveryAddress.district || '',
+                city: renterDeliveryAddress.city || '',
+                province: renterDeliveryAddress.province || '',
+                coordinates: renterDeliveryAddress.coordinates || {}
+              },
               contactInfo: {
-                name: owner.profile?.fullName || owner.profile?.firstName || 'Owner',
-                phone: owner.phone || '',
-                notes: `Nhận hàng thuê từ ${product.name || 'sản phẩm'}`
+                name: renterDeliveryAddress.contactName || renter.profile?.fullName || renter.profile?.firstName || 'Renter',
+                phone: renterDeliveryAddress.contactPhone || renter.phone || '',
+                notes: `Giao hàng thuê đến renter cho sản phẩm ${product.name || 'sản phẩm'}`
               },
               customerInfo: {
                 userId: renter._id,
-                name: renter.profile?.fullName || renter.profile?.firstName || 'Renter',
-                phone: renter.phone || '',
+                name: renterDeliveryAddress.contactName || renter.profile?.fullName || renter.profile?.firstName || 'Renter',
+                phone: renterDeliveryAddress.contactPhone || renter.phone || '',
                 email: renter.email || ''
               },
               fee: subOrder.pricing?.shippingFee || 0,
@@ -606,22 +674,22 @@ class ShipmentService {
                 coordinates: ownerAddress.coordinates || {}
               },
               toAddress: {
-                streetAddress: renterAddress.streetAddress || '',
-                ward: renterAddress.ward || '',
-                district: renterAddress.district || '',
-                city: renterAddress.city || '',
-                province: renterAddress.province || '',
-                coordinates: renterAddress.coordinates || {}
+                streetAddress: renterDeliveryAddress.streetAddress || '',
+                ward: renterDeliveryAddress.ward || '',
+                district: renterDeliveryAddress.district || '',
+                city: renterDeliveryAddress.city || '',
+                province: renterDeliveryAddress.province || '',
+                coordinates: renterDeliveryAddress.coordinates || {}
               },
               contactInfo: {
-                name: renter.profile?.fullName || renter.profile?.firstName || 'Renter',
-                phone: renter.phone || '',
+                name: renterDeliveryAddress.contactName || renter.profile?.fullName || renter.profile?.firstName || 'Renter',
+                phone: renterDeliveryAddress.contactPhone || renter.phone || '',
                 notes: `Trả hàng thuê: ${product.name || 'sản phẩm'}`
               },
               customerInfo: {
                 userId: renter._id,
-                name: renter.profile?.fullName || renter.profile?.firstName || 'Renter',
-                phone: renter.phone || '',
+                name: renterDeliveryAddress.contactName || renter.profile?.fullName || renter.profile?.firstName || 'Renter',
+                phone: renterDeliveryAddress.contactPhone || renter.phone || '',
                 email: renter.email || ''
               },
               fee: subOrder.pricing?.shippingFee || 0,
@@ -1019,17 +1087,18 @@ class ShipmentService {
           console.log(`   ✅ Refund ${refundAmount} VND transferred to renter:`, transferResult);
         }
 
-        // Transfer 80% of 1 day rental to owner
+        // Transfer 80% of 1 day rental to owner (frozen for 24h)
         try {
           const ownerRewardAmount = Math.floor(oneDayRental * 0.8); // 80% of 1 day rental
           if (ownerRewardAmount > 0 && subOrder.owner && subOrder.owner._id) {
             const SystemWalletService = require('./systemWallet.service');
             const adminId = process.env.SYSTEM_ADMIN_ID || 'SYSTEM_AUTO_TRANSFER';
-            const ownerTransferResult = await SystemWalletService.transferToUser(
+            const ownerTransferResult = await SystemWalletService.transferToUserFrozen(
               adminId,
               subOrder.owner._id,
               ownerRewardAmount,
-              `Compensation for renter no-show during return - shipment ${shipment.shipmentId}`
+              `Compensation for renter no-show during return - shipment ${shipment.shipmentId}`,
+              24 * 60 * 60 * 1000
             );
             console.log(`   ✅ Owner reward ${ownerRewardAmount} VND (80% of 1-day rental) transferred to owner:`, ownerTransferResult);
           }
@@ -1552,11 +1621,12 @@ class ShipmentService {
         if (ownerRewardAmount > 0 && subOrder.owner && subOrder.owner._id) {
           const SystemWalletService = require('./systemWallet.service');
           const adminId = process.env.SYSTEM_ADMIN_ID || 'SYSTEM_AUTO_TRANSFER';
-          const ownerTransferResult = await SystemWalletService.transferToUser(
+          const ownerTransferResult = await SystemWalletService.transferToUserFrozen(
             adminId,
             subOrder.owner._id,
             ownerRewardAmount,
-            `Compensation for renter no-show - shipment ${shipment.shipmentId}`
+            `Compensation for renter no-show - shipment ${shipment.shipmentId}`,
+            24 * 60 * 60 * 1000
           );
           console.log(`   ✅ Owner reward ${ownerRewardAmount} VND (80% of 1-day rental) transferred to owner:`, ownerTransferResult);
         }
