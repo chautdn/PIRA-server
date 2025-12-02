@@ -72,6 +72,10 @@ router.use('/upload', uploadRoutes);
 const extensionRoutes = require('./extension.routes');
 router.use('/extensions', extensionRoutes);
 
+// OTP routes
+const otpRoutes = require('./otp.routes');
+router.use('/otp', otpRoutes);
+
 // Register all routes from the registry FIRST
 getRoutes()?.forEach(({ path, router: moduleRouter }) => {
   if (!path || typeof path !== 'string') {
