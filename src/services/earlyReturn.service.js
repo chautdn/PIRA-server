@@ -107,6 +107,12 @@ class EarlyReturnRequestService {
         throw new Error('Renter not found');
       }
 
+      // Get renter's full name
+      const renterName =
+        renter.profile?.firstName && renter.profile?.lastName
+          ? `${renter.profile.firstName} ${renter.profile.lastName}`
+          : renter.profile?.firstName || renter.profile?.lastName || 'Người thuê';
+
       let returnAddress = returnData.returnAddress;
 
       // If using original address, get from order's delivery address or user's saved addresses
@@ -122,7 +128,7 @@ class EarlyReturnRequestService {
             city: masterOrder.deliveryAddress.city,
             province: masterOrder.deliveryAddress.province,
             coordinates: masterOrder.deliveryAddress.coordinates,
-            contactName: masterOrder.deliveryAddress.contactName || renter.name,
+            contactName: masterOrder.deliveryAddress.contactName || renterName,
             contactPhone: masterOrder.deliveryAddress.contactPhone || renter.phone,
             isOriginalAddress: true
           };
@@ -138,7 +144,7 @@ class EarlyReturnRequestService {
             city: defaultAddress.city,
             province: defaultAddress.province,
             coordinates: defaultAddress.coordinates,
-            contactName: renter.name,
+            contactName: renterName,
             contactPhone: defaultAddress.phone || renter.phone,
             isOriginalAddress: true
           };
@@ -155,7 +161,7 @@ class EarlyReturnRequestService {
           throw new Error('Return address with street address is required');
         }
         returnAddress.contactPhone = returnAddress.contactPhone || renter.phone;
-        returnAddress.contactName = returnAddress.contactName || renter.name;
+        returnAddress.contactName = returnAddress.contactName || renterName;
         returnAddress.isOriginalAddress = false;
       }
 
@@ -274,7 +280,7 @@ class EarlyReturnRequestService {
         sender: renterId,
         type: 'EARLY_RETURN_REQUEST',
         title: 'Yêu cầu trả hàng sớm',
-        message: `${renter.name} sẽ trả hàng sớm vào ${new Date(returnData.requestedReturnDate).toLocaleDateString('vi-VN')}. Bạn cần có mặt tại ${returnAddress.streetAddress}, ${returnAddress.ward}, ${returnAddress.district}, ${returnAddress.city} để nhận sản phẩm.`,
+        message: `${renterName} sẽ trả hàng sớm vào ${new Date(returnData.requestedReturnDate).toLocaleDateString('vi-VN')}. Bạn cần có mặt tại ${returnAddress.streetAddress}, ${returnAddress.ward}, ${returnAddress.district}, ${returnAddress.city} để nhận sản phẩm.`,
         relatedId: earlyReturnRequest._id,
         relatedModel: 'EarlyReturnRequest',
         metadata: {
@@ -296,12 +302,12 @@ class EarlyReturnRequestService {
           type: 'early_return_requested',
           requestId: earlyReturnRequest._id,
           requestNumber: earlyReturnRequest.requestNumber,
-          renterName: renter.name,
+          renterName: renterName,
           requestedDate: returnData.requestedReturnDate,
           returnAddress: `${returnAddress.streetAddress}, ${returnAddress.ward}, ${returnAddress.district}, ${returnAddress.city}`,
           subOrderNumber: subOrder.subOrderNumber,
           deliveryMethod,
-          message: `${renter.name} sẽ trả hàng sớm vào ${new Date(returnData.requestedReturnDate).toLocaleDateString('vi-VN')}. ${deliveryMethod === 'PICKUP' ? 'Khách hàng sẽ đến địa chỉ của bạn.' : 'Bạn cần có mặt để nhận hàng.'}`
+          message: `${renterName} sẽ trả hàng sớm vào ${new Date(returnData.requestedReturnDate).toLocaleDateString('vi-VN')}. ${deliveryMethod === 'PICKUP' ? 'Khách hàng sẽ đến địa chỉ của bạn.' : 'Bạn cần có mặt để nhận hàng.'}`
         });
       }
 
