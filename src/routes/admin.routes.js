@@ -52,6 +52,8 @@ router.patch('/reports/:reportId/status', adminController.updateReportStatus);
 router.patch('/reports/:reportId/suspend-product', adminController.suspendReportedProduct);
 
 // ========== BANK ACCOUNT VERIFICATION ==========
+// Moved to /api/admin/bank-verification routes (bankVerification.routes.js)
+// Keep these routes for backward compatibility
 router.get('/bank-accounts', adminController.getAllBankAccounts);
 router.get('/bank-accounts/:userId', adminController.getBankAccountById);
 router.patch('/bank-accounts/:userId/verify', adminController.verifyBankAccount);
@@ -59,6 +61,8 @@ router.patch('/bank-accounts/:userId/reject', adminController.rejectBankAccount)
 router.patch('/bank-accounts/:userId/status', adminController.updateBankAccountStatus);
 
 // ========== TRANSACTION MANAGEMENT ==========
+// Moved to /api/admin/transactions routes (adminTransaction.routes.js)
+// Keep these routes for backward compatibility
 router.get('/transactions/stats', adminController.getTransactionStats);
 router.get('/transactions/export', adminController.exportTransactions);
 router.get('/transactions', adminController.getAllTransactions);

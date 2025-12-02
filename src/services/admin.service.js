@@ -86,12 +86,13 @@ class AdminService {
     const sixMonthsAgo = new Date();
     sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
 
-    return await Order.aggregate([
-      { 
-        $match: { 
+    // 1. Doanh thu từ SubOrder đã hoàn thành
+    const subOrderRevenue = await SubOrder.aggregate([
+      {
+        $match: {
           createdAt: { $gte: sixMonthsAgo },
           status: 'COMPLETED'
-        } 
+        }
       },
       {
         $group: {
@@ -99,11 +100,90 @@ class AdminService {
             year: { $year: '$createdAt' },
             month: { $month: '$createdAt' }
           },
-          revenue: { $sum: '$totalAmount' }
+          subOrderRevenue: { $sum: '$pricing.totalAmount' },
+          orderCount: { $sum: 1 }
+        }
+      }
+    ]);
+
+    // 2. Doanh thu từ Transaction vào System Wallet
+    const transactionRevenue = await Transaction.aggregate([
+      {
+        $match: {
+          createdAt: { $gte: sixMonthsAgo },
+          status: 'success',
+          $or: [
+            { toSystemWallet: true, systemWalletAction: 'revenue' },
+            { type: 'PROMOTION_REVENUE' },
+            { systemWalletAction: 'fee_collection' },
+            { systemWalletAction: 'penalty' }
+          ]
         }
       },
-      { $sort: { '_id.year': 1, '_id.month': 1 } }
+      {
+        $group: {
+          _id: {
+            year: { $year: '$createdAt' },
+            month: { $month: '$createdAt' }
+          },
+          transactionRevenue: { $sum: '$amount' },
+          transactionCount: { $sum: 1 }
+        }
+      }
     ]);
+
+    // 3. Lấy System Wallet balance hiện tại để hiển thị
+    const systemWallet = await SystemWallet.findOne();
+    const systemBalance = systemWallet ? systemWallet.balance : 0;
+
+    // 4. Merge dữ liệu từ cả SubOrder và Transaction theo tháng
+    const revenueMap = new Map();
+
+    // Add SubOrder revenue
+    subOrderRevenue.forEach(item => {
+      const key = `${item._id.year}-${item._id.month}`;
+      revenueMap.set(key, {
+        _id: item._id,
+        subOrderRevenue: item.subOrderRevenue || 0,
+        orderCount: item.orderCount || 0,
+        transactionRevenue: 0,
+        transactionCount: 0,
+        revenue: item.subOrderRevenue || 0
+      });
+    });
+
+    // Add Transaction revenue
+    transactionRevenue.forEach(item => {
+      const key = `${item._id.year}-${item._id.month}`;
+      if (revenueMap.has(key)) {
+        const existing = revenueMap.get(key);
+        existing.transactionRevenue = item.transactionRevenue || 0;
+        existing.transactionCount = item.transactionCount || 0;
+        existing.revenue += item.transactionRevenue || 0;
+      } else {
+        revenueMap.set(key, {
+          _id: item._id,
+          subOrderRevenue: 0,
+          orderCount: 0,
+          transactionRevenue: item.transactionRevenue || 0,
+          transactionCount: item.transactionCount || 0,
+          revenue: item.transactionRevenue || 0
+        });
+      }
+    });
+
+    // Convert map to array and sort
+    const result = Array.from(revenueMap.values()).sort((a, b) => {
+      if (a._id.year !== b._id.year) return a._id.year - b._id.year;
+      return a._id.month - b._id.month;
+    });
+
+    // Add system balance info to the latest month
+    if (result.length > 0) {
+      result[result.length - 1].systemBalance = systemBalance;
+    }
+
+    return result;
   }
 
   // ========== USER MANAGEMENT ==========
@@ -382,38 +462,7 @@ class AdminService {
     }
   }
 
-  // async updateUserCreditScore(userId, creditScore, adminId) {
-  //   // Validate ObjectId format
-  //   const mongoose = require('mongoose');
-  //   if (!mongoose.Types.ObjectId.isValid(userId)) {
-  //     throw new Error('ID người dùng không hợp lệ');
-  //   }
-
-  //   // Validate creditScore
-  //   const score = parseInt(creditScore);
-  //   if (isNaN(score) || score < 0 || score > 1000) {
-  //     throw new Error('Điểm tín dụng phải là số từ 0 đến 1000');
-  //   }
-
-  //   if (userId === adminId) {
-  //     throw new Error('Không thể thay đổi điểm tín dụng của chính mình');
-  //   }
-
-  //   const user = await User.findByIdAndUpdate(
-  //     userId,
-  //     { 
-  //       creditScore: score,
-  //       updatedAt: new Date()
-  //     },
-  //     { new: true, runValidators: true }
-  //   ).select('-password');
-
-  //   if (!user) {
-  //     throw new Error('Không tìm thấy người dùng');
-  //   }
-
-  //   return user;
-  // }
+  
 
   async bulkUpdateUsers(userIds, updateData, adminId) {
     // Validate userIds
@@ -816,48 +865,7 @@ class AdminService {
     }
   }
 
-  // async approveProduct(productId, adminId) {
-  //   const product = await Product.findByIdAndUpdate(
-  //     productId,
-  //     { 
-  //       status: 'APPROVED',
-  //       'moderation.approvedBy': adminId,
-  //       'moderation.approvedAt': new Date(),
-  //       updatedAt: new Date()
-  //     },
-  //     { new: true }
-  //   ).populate('owner', 'profile.firstName profile.lastName email');
 
-  //   if (!product) {
-  //     throw new Error('Không tìm thấy sản phẩm');
-  //   }
-
-  //   return product;
-  // }
-
-  // async rejectProduct(productId, reason, adminId) {
-  //   if (!reason) {
-  //     throw new Error('Vui lòng nhập lý do từ chối');
-  //   }
-
-  //   const product = await Product.findByIdAndUpdate(
-  //     productId,
-  //     { 
-  //       status: 'REJECTED',
-  //       'moderation.rejectedBy': adminId,
-  //       'moderation.rejectedAt': new Date(),
-  //       'moderation.rejectionReason': reason,
-  //       updatedAt: new Date()
-  //     },
-  //     { new: true }
-  //   ).populate('owner', 'profile.firstName profile.lastName email');
-
-  //   if (!product) {
-  //     throw new Error('Không tìm thấy sản phẩm');
-  //   }
-
-  //   return product;
-  // }
 
   async suspendProduct(productId, adminId, reason = '') {
     console.log('=== Admin Service suspendProduct ===');
@@ -946,52 +954,7 @@ class AdminService {
     }
   }
 
-  // // ========== CATEGORY MANAGEMENT ==========
-  // async getAllCategories() {
-  //   return await Category.find().sort({ name: 1 });
-  // }
-
-  // async createCategory(categoryData, adminId) {
-  //   const category = new Category({
-  //     ...categoryData,
-  //     createdBy: adminId
-  //   });
-
-  //   await category.save();
-  //   return category;
-  // }
-
-  // async updateCategory(categoryId, updateData, adminId) {
-  //   const category = await Category.findByIdAndUpdate(
-  //     categoryId,
-  //     { 
-  //       ...updateData,
-  //       updatedBy: adminId,
-  //       updatedAt: new Date()
-  //     },
-  //     { new: true, runValidators: true }
-  //   );
-
-  //   if (!category) {
-  //     throw new Error('Không tìm thấy danh mục');
-  //   }
-
-  //   return category;
-  // }
-
-  // async deleteCategory(categoryId, adminId) {
-  //   // Check if any products are using this category
-  //   const productCount = await Product.countDocuments({ category: categoryId });
-    
-  //   if (productCount > 0) {
-  //     throw new Error(`Không thể xóa danh mục vì có ${productCount} sản phẩm đang sử dụng`);
-  //   }
-
-  //   const category = await Category.findByIdAndDelete(categoryId);
-  //   if (!category) {
-  //     throw new Error('Không tìm thấy danh mục');
-  //   }
-  // }
+ 
 
   // ========== ORDER MANAGEMENT ==========
   async getAllOrders(filters) {
@@ -1289,258 +1252,31 @@ class AdminService {
   }
 
   // ========== BANK ACCOUNT VERIFICATION ==========
-  /**
-   * Get all bank accounts with filters
-   */
-  async getAllBankAccounts(filters = {}) {
-    try {
-      const {
-        page = 1,
-        limit = 10,
-        search,
-        status,
-        bankCode
-      } = filters;
-
-      const skip = (page - 1) * limit;
-      const query = {
-        'bankAccount.accountNumber': { $exists: true, $ne: null }
-      };
-
-      // Filter by verification status
-      if (status) {
-        query['bankAccount.status'] = status.toUpperCase();
-      }
-
-      // Filter by bank code
-      if (bankCode) {
-        query['bankAccount.bankCode'] = bankCode.toUpperCase();
-      }
-
-      // Search by account number, account holder name, or user email
-      if (search) {
-        query.$or = [
-          { 'bankAccount.accountNumber': { $regex: search, $options: 'i' } },
-          { 'bankAccount.accountHolderName': { $regex: search, $options: 'i' } },
-          { email: { $regex: search, $options: 'i' } }
-        ];
-      }
-
-      // Get bank accounts with pagination
-      const [bankAccounts, total] = await Promise.all([
-        User.find(query)
-          .select('email profile.firstName profile.lastName bankAccount role status')
-          .skip(skip)
-          .limit(parseInt(limit))
-          .sort({ 'bankAccount.addedAt': -1 })
-          .lean(),
-        User.countDocuments(query)
-      ]);
-
-      // Get statistics
-      const stats = await User.aggregate([
-        {
-          $match: {
-            'bankAccount.accountNumber': { $exists: true, $ne: null }
-          }
-        },
-        {
-          $facet: {
-            statusStats: [
-              {
-                $group: {
-                  _id: '$bankAccount.status',
-                  count: { $sum: 1 }
-                }
-              }
-            ],
-            total: [
-              {
-                $count: 'count'
-              }
-            ]
-          }
-        }
-      ]);
-
-      const statusCounts = {};
-      if (stats[0]?.statusStats) {
-        stats[0].statusStats.forEach(stat => {
-          statusCounts[stat._id?.toLowerCase() || 'pending'] = stat.count;
-        });
-      }
-
-      return {
-        bankAccounts,
-        pagination: {
-          currentPage: parseInt(page),
-          totalPages: Math.ceil(total / limit),
-          totalBankAccounts: total,
-          limit: parseInt(limit)
-        },
-        stats: {
-          total: stats[0]?.total[0]?.count || 0,
-          pending: statusCounts.pending || 0,
-          verified: statusCounts.verified || 0,
-          rejected: statusCounts.rejected || 0
-        }
-      };
-    } catch (error) {
-      throw new Error(`Lỗi khi lấy danh sách tài khoản ngân hàng: ${error.message}`);
-    }
+  // Moved to bankVerification.service.js
+  // Import and delegate to the specialized service
+  async getAllBankAccounts(filters) {
+    const bankVerificationService = require('./bankVerification.service');
+    return await bankVerificationService.getAllBankAccounts(filters);
   }
 
-  /**
-   * Get bank account detail by user ID
-   */
   async getBankAccountById(userId) {
-    try {
-      const user = await User.findById(userId)
-        .select('email profile bankAccount role status verification cccd')
-        .lean();
-
-      if (!user) {
-        throw new Error('Không tìm thấy người dùng');
-      }
-
-      if (!user.bankAccount || !user.bankAccount.accountNumber) {
-        throw new Error('Người dùng chưa có tài khoản ngân hàng');
-      }
-
-      return user;
-    } catch (error) {
-      throw new Error(`Lỗi khi lấy chi tiết tài khoản ngân hàng: ${error.message}`);
-    }
+    const bankVerificationService = require('./bankVerification.service');
+    return await bankVerificationService.getBankAccountById(userId);
   }
 
-  /**
-   * Verify bank account
-   */
-  async verifyBankAccount(userId, adminNote = '') {
-    try {
-      console.log('verifyBankAccount service called with:', { userId, adminNote });
-      
-      const user = await User.findById(userId);
-      console.log('User found:', user ? 'Yes' : 'No');
-
-      if (!user) {
-        throw new Error('Không tìm thấy người dùng');
-      }
-
-      console.log('User bankAccount:', user.bankAccount);
-
-      if (!user.bankAccount || !user.bankAccount.accountNumber) {
-        throw new Error('Người dùng chưa có tài khoản ngân hàng');
-      }
-
-      if (user.bankAccount.status === 'VERIFIED') {
-        throw new Error('Tài khoản ngân hàng đã được xác minh');
-      }
-
-      // Update bank account status
-      user.bankAccount.status = 'VERIFIED';
-      user.bankAccount.isVerified = true;
-      user.bankAccount.verifiedAt = new Date();
-      user.bankAccount.adminNote = adminNote;
-
-      // Clean invalid gender value if exists
-      if (user.profile && user.profile.gender && !['MALE', 'FEMALE', 'OTHER'].includes(user.profile.gender)) {
-        console.log('Cleaning invalid gender value:', user.profile.gender);
-        user.profile.gender = undefined;
-      }
-
-      console.log('Saving user with updated bank account...');
-      await user.save();
-      console.log('User saved successfully');
-
-      return user;
-    } catch (error) {
-      console.error('Error in verifyBankAccount service:', error);
-      throw new Error(`Lỗi khi xác minh tài khoản ngân hàng: ${error.message}`);
-    }
+  async verifyBankAccount(userId, adminNote) {
+    const bankVerificationService = require('./bankVerification.service');
+    return await bankVerificationService.verifyBankAccount(userId, adminNote);
   }
 
-  /**
-   * Reject bank account verification
-   */
   async rejectBankAccount(userId, rejectionReason) {
-    try {
-      const user = await User.findById(userId);
-
-      if (!user) {
-        throw new Error('Không tìm thấy người dùng');
-      }
-
-      if (!user.bankAccount || !user.bankAccount.accountNumber) {
-        throw new Error('Người dùng chưa có tài khoản ngân hàng');
-      }
-
-      if (user.bankAccount.status === 'REJECTED') {
-        throw new Error('Tài khoản ngân hàng đã bị từ chối');
-      }
-
-      // Update bank account status
-      user.bankAccount.status = 'REJECTED';
-      user.bankAccount.isVerified = false;
-      user.bankAccount.rejectionReason = rejectionReason;
-      user.bankAccount.rejectedAt = new Date();
-
-      // Clean invalid gender value if exists
-      if (user.profile && user.profile.gender && !['MALE', 'FEMALE', 'OTHER'].includes(user.profile.gender)) {
-        user.profile.gender = undefined;
-      }
-
-      await user.save();
-
-      return user;
-    } catch (error) {
-      throw new Error(`Lỗi khi từ chối xác minh tài khoản ngân hàng: ${error.message}`);
-    }
+    const bankVerificationService = require('./bankVerification.service');
+    return await bankVerificationService.rejectBankAccount(userId, rejectionReason);
   }
 
-  /**
-   * Update bank account status
-   */
-  async updateBankAccountStatus(userId, status, note = '') {
-    try {
-      const user = await User.findById(userId);
-
-      if (!user) {
-        throw new Error('Không tìm thấy người dùng');
-      }
-
-      if (!user.bankAccount || !user.bankAccount.accountNumber) {
-        throw new Error('Người dùng chưa có tài khoản ngân hàng');
-      }
-
-      const validStatuses = ['PENDING', 'VERIFIED', 'REJECTED'];
-      if (!validStatuses.includes(status.toUpperCase())) {
-        throw new Error('Trạng thái không hợp lệ');
-      }
-
-      // Update bank account status
-      user.bankAccount.status = status.toUpperCase();
-      user.bankAccount.isVerified = status.toUpperCase() === 'VERIFIED';
-      
-      if (status.toUpperCase() === 'VERIFIED') {
-        user.bankAccount.verifiedAt = new Date();
-        user.bankAccount.adminNote = note;
-      } else if (status.toUpperCase() === 'REJECTED') {
-        user.bankAccount.rejectedAt = new Date();
-        user.bankAccount.rejectionReason = note;
-      }
-
-      // Clean invalid gender value if exists
-      if (user.profile && user.profile.gender && !['MALE', 'FEMALE', 'OTHER'].includes(user.profile.gender)) {
-        user.profile.gender = undefined;
-      }
-
-      await user.save();
-
-      return user;
-    } catch (error) {
-      throw new Error(`Lỗi khi cập nhật trạng thái tài khoản ngân hàng: ${error.message}`);
-    }
+  async updateBankAccountStatus(userId, status, note) {
+    const bankVerificationService = require('./bankVerification.service');
+    return await bankVerificationService.updateBankAccountStatus(userId, status, note);
   }
 
   // ========== WITHDRAWAL FINANCIAL ANALYSIS ==========
@@ -2062,393 +1798,26 @@ class AdminService {
   }
 
   // ========== TRANSACTION MANAGEMENT ==========
+  // Moved to adminTransaction.service.js
+  // Import and delegate to the specialized service
   async getAllTransactions(filters) {
-    try {
-      const {
-        page = 1,
-        limit = 10,
-        search,
-        type,
-        status,
-        startDate,
-        endDate,
-        minAmount,
-        maxAmount,
-        sortBy = 'createdAt',
-        sortOrder = 'desc'
-      } = filters;
-
-      // Build query conditions
-      const query = {};
-
-      // Search by transaction ID, user email, or description
-      if (search) {
-        query.$or = [
-          { externalId: { $regex: search, $options: 'i' } },
-          { description: { $regex: search, $options: 'i' } },
-          { reference: { $regex: search, $options: 'i' } }
-        ];
-      }
-
-      // Filter by transaction type
-      if (type) {
-        query.type = type;
-      }
-
-      // Filter by transaction status
-      if (status) {
-        query.status = status;
-      }
-
-      // Filter by date range
-      if (startDate || endDate) {
-        query.createdAt = {};
-        if (startDate) {
-          query.createdAt.$gte = new Date(startDate);
-        }
-        if (endDate) {
-          query.createdAt.$lte = new Date(endDate);
-        }
-      }
-
-      // Filter by amount range
-      if (minAmount || maxAmount) {
-        query.amount = {};
-        if (minAmount) {
-          query.amount.$gte = parseFloat(minAmount);
-        }
-        if (maxAmount) {
-          query.amount.$lte = parseFloat(maxAmount);
-        }
-      }
-
-      // Pagination
-      const skip = (parseInt(page) - 1) * parseInt(limit);
-
-      // Sort options
-      const sortOptions = {};
-      sortOptions[sortBy] = sortOrder === 'desc' ? -1 : 1;
-
-      // Execute queries
-      const [transactions, total] = await Promise.all([
-        Transaction.find(query)
-          .populate('user', 'email profile.firstName profile.lastName')
-          .populate('wallet', 'balance')
-          .sort(sortOptions)
-          .skip(skip)
-          .limit(parseInt(limit))
-          .lean(),
-        Transaction.countDocuments(query)
-      ]);
-
-      // Calculate pagination info
-      const totalPages = Math.ceil(total / parseInt(limit));
-
-      // Get summary stats for current filter
-      const stats = await Transaction.aggregate([
-        { $match: query },
-        {
-          $group: {
-            _id: null,
-            totalAmount: { $sum: '$amount' },
-            totalTransactions: { $sum: 1 },
-            avgAmount: { $avg: '$amount' },
-            successfulTransactions: {
-              $sum: { $cond: [{ $eq: ['$status', 'success'] }, 1, 0] }
-            },
-            failedTransactions: {
-              $sum: { $cond: [{ $eq: ['$status', 'failed'] }, 1, 0] }
-            }
-          }
-        }
-      ]);
-
-      return {
-        transactions,
-        pagination: {
-          currentPage: parseInt(page),
-          totalPages,
-          total,
-          limit: parseInt(limit),
-          hasNext: parseInt(page) < totalPages,
-          hasPrev: parseInt(page) > 1
-        },
-        stats: stats[0] || {
-          totalAmount: 0,
-          totalTransactions: 0,
-          avgAmount: 0,
-          successfulTransactions: 0,
-          failedTransactions: 0
-        }
-      };
-    } catch (error) {
-      throw new Error(`Lỗi khi lấy danh sách giao dịch: ${error.message}`);
-    }
+    const adminTransactionService = require('./adminTransaction.service');
+    return await adminTransactionService.getAllTransactions(filters);
   }
 
   async getTransactionById(transactionId) {
-    try {
-      const transaction = await Transaction.findById(transactionId)
-        .populate({
-          path: 'user', 
-          select: 'email profile.firstName profile.lastName profile.phone profile.dateOfBirth role status createdAt bankAccount kycStatus',
-          populate: {
-            path: 'bankAccount',
-            select: 'accountNumber bankName accountHolder verificationStatus'
-          }
-        })
-        .populate('wallet', 'balance user')
-        .lean();
-
-      if (!transaction) {
-        throw new Error('Không tìm thấy giao dịch');
-      }
-
-      // Get additional user statistics if user exists
-      if (transaction.user) {
-        const userId = transaction.user._id;
-        
-        // Get user's transaction history summary
-        const [transactionStats, walletInfo, recentTransactions] = await Promise.all([
-          Transaction.aggregate([
-            { $match: { user: userId } },
-            {
-              $group: {
-                _id: null,
-                totalTransactions: { $sum: 1 },
-                totalAmount: { $sum: '$amount' },
-                successfulTransactions: {
-                  $sum: { $cond: [{ $eq: ['$status', 'success'] }, 1, 0] }
-                },
-                failedTransactions: {
-                  $sum: { $cond: [{ $eq: ['$status', 'failed'] }, 1, 0] }
-                },
-                averageAmount: { $avg: '$amount' },
-                firstTransaction: { $min: '$createdAt' },
-                lastTransaction: { $max: '$createdAt' }
-              }
-            }
-          ]),
-          
-          Wallet.findOne({ user: userId }).select('balance createdAt updatedAt').lean(),
-          
-          Transaction.find({ user: userId })
-            .sort({ createdAt: -1 })
-            .limit(5)
-            .select('type amount status createdAt description')
-            .lean()
-        ]);
-
-        // Add user statistics to transaction
-        transaction.userStats = {
-          transactionHistory: transactionStats[0] || {
-            totalTransactions: 0,
-            totalAmount: 0,
-            successfulTransactions: 0,
-            failedTransactions: 0,
-            averageAmount: 0,
-            firstTransaction: null,
-            lastTransaction: null
-          },
-          wallet: walletInfo,
-          recentTransactions: recentTransactions || []
-        };
-      }
-
-      return transaction;
-    } catch (error) {
-      throw new Error(`Lỗi khi lấy thông tin giao dịch: ${error.message}`);
-    }
+    const adminTransactionService = require('./adminTransaction.service');
+    return await adminTransactionService.getTransactionById(transactionId);
   }
 
   async getTransactionStats(filters) {
-    try {
-      const { startDate, endDate, period = 'day' } = filters;
-
-      // Build date range query
-      const dateQuery = {};
-      if (startDate || endDate) {
-        dateQuery.createdAt = {};
-        if (startDate) {
-          dateQuery.createdAt.$gte = new Date(startDate);
-        }
-        if (endDate) {
-          dateQuery.createdAt.$lte = new Date(endDate);
-        }
-      }
-
-      // Determine date grouping format based on period
-      let dateFormat;
-      switch (period) {
-        case 'hour':
-          dateFormat = { $dateToString: { format: "%Y-%m-%d %H:00", date: "$createdAt" } };
-          break;
-        case 'day':
-          dateFormat = { $dateToString: { format: "%Y-%m-%d", date: "$createdAt" } };
-          break;
-        case 'week':
-          dateFormat = { $dateToString: { format: "%Y-W%V", date: "$createdAt" } };
-          break;
-        case 'month':
-          dateFormat = { $dateToString: { format: "%Y-%m", date: "$createdAt" } };
-          break;
-        default:
-          dateFormat = { $dateToString: { format: "%Y-%m-%d", date: "$createdAt" } };
-      }
-
-      // Aggregate transaction stats
-      const [overallStats, timeSeriesStats, typeStats, statusStats] = await Promise.all([
-        // Overall statistics
-        Transaction.aggregate([
-          { $match: dateQuery },
-          {
-            $group: {
-              _id: null,
-              totalTransactions: { $sum: 1 },
-              totalAmount: { $sum: '$amount' },
-              avgAmount: { $avg: '$amount' },
-              maxAmount: { $max: '$amount' },
-              minAmount: { $min: '$amount' },
-              successfulTransactions: {
-                $sum: { $cond: [{ $eq: ['$status', 'success'] }, 1, 0] }
-              },
-              failedTransactions: {
-                $sum: { $cond: [{ $eq: ['$status', 'failed'] }, 1, 0] }
-              },
-              pendingTransactions: {
-                $sum: { $cond: [{ $eq: ['$status', 'pending'] }, 1, 0] }
-              }
-            }
-          }
-        ]),
-
-        // Time series data
-        Transaction.aggregate([
-          { $match: dateQuery },
-          {
-            $group: {
-              _id: dateFormat,
-              count: { $sum: 1 },
-              amount: { $sum: '$amount' },
-              avgAmount: { $avg: '$amount' },
-              successful: {
-                $sum: { $cond: [{ $eq: ['$status', 'success'] }, 1, 0] }
-              },
-              failed: {
-                $sum: { $cond: [{ $eq: ['$status', 'failed'] }, 1, 0] }
-              }
-            }
-          },
-          { $sort: { _id: 1 } }
-        ]),
-
-        // Transaction type breakdown
-        Transaction.aggregate([
-          { $match: dateQuery },
-          {
-            $group: {
-              _id: '$type',
-              count: { $sum: 1 },
-              amount: { $sum: '$amount' },
-              avgAmount: { $avg: '$amount' }
-            }
-          },
-          { $sort: { count: -1 } }
-        ]),
-
-        // Status breakdown
-        Transaction.aggregate([
-          { $match: dateQuery },
-          {
-            $group: {
-              _id: '$status',
-              count: { $sum: 1 },
-              amount: { $sum: '$amount' }
-            }
-          }
-        ])
-      ]);
-
-      return {
-        overall: overallStats[0] || {
-          totalTransactions: 0,
-          totalAmount: 0,
-          avgAmount: 0,
-          maxAmount: 0,
-          minAmount: 0,
-          successfulTransactions: 0,
-          failedTransactions: 0,
-          pendingTransactions: 0
-        },
-        timeSeries: timeSeriesStats,
-        byType: typeStats,
-        byStatus: statusStats,
-        period
-      };
-    } catch (error) {
-      throw new Error(`Lỗi khi lấy thống kê giao dịch: ${error.message}`);
-    }
+    const adminTransactionService = require('./adminTransaction.service');
+    return await adminTransactionService.getTransactionStats(filters);
   }
 
-  async exportTransactions(filters, format = 'csv') {
-    try {
-      const { type, status, startDate, endDate } = filters;
-
-      // Build query
-      const query = {};
-      if (type) query.type = type;
-      if (status) query.status = status;
-      if (startDate || endDate) {
-        query.createdAt = {};
-        if (startDate) query.createdAt.$gte = new Date(startDate);
-        if (endDate) query.createdAt.$lte = new Date(endDate);
-      }
-
-      // Get transactions
-      const transactions = await Transaction.find(query)
-        .populate('user', 'email profile.firstName profile.lastName')
-        .sort({ createdAt: -1 })
-        .lean();
-
-      if (format === 'csv') {
-        // Generate CSV
-        const csvHeaders = [
-          'Transaction ID',
-          'User Email',
-          'User Name',
-          'Type',
-          'Status',
-          'Amount (VND)',
-          'Description',
-          'Created At',
-          'Updated At'
-        ];
-
-        const csvRows = transactions.map(transaction => [
-          transaction.externalId || transaction._id,
-          transaction.user?.email || 'N/A',
-          `${transaction.user?.profile?.firstName || ''} ${transaction.user?.profile?.lastName || ''}`.trim() || 'N/A',
-          transaction.type,
-          transaction.status,
-          transaction.amount.toLocaleString('vi-VN'),
-          transaction.description || '',
-          new Date(transaction.createdAt).toLocaleString('vi-VN'),
-          new Date(transaction.updatedAt).toLocaleString('vi-VN')
-        ]);
-
-        const csvContent = [csvHeaders, ...csvRows]
-          .map(row => row.map(field => `"${field}"`).join(','))
-          .join('\n');
-
-        return csvContent;
-      }
-
-      // For Excel format, you would need a library like xlsx
-      // This is a simplified JSON export for now
-      return JSON.stringify(transactions, null, 2);
-    } catch (error) {
-      throw new Error(`Lỗi khi xuất dữ liệu giao dịch: ${error.message}`);
-    }
+  async exportTransactions(filters, format) {
+    const adminTransactionService = require('./adminTransaction.service');
+    return await adminTransactionService.exportTransactions(filters, format);
   }
 }
 

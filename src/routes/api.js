@@ -63,6 +63,14 @@ router.use('/vouchers', voucherRoutes);
 const disputeRoutes = require('./dispute.routes');
 router.use('/disputes', disputeRoutes);
 
+// Bank Verification routes
+const bankVerificationRoutes = require('./bankVerification.routes');
+router.use('/admin/bank-verification', bankVerificationRoutes);
+
+// Admin Transaction routes
+const adminTransactionRoutes = require('./adminTransaction.routes');
+router.use('/admin/transactions', adminTransactionRoutes);
+
 // Upload routes
 const uploadRoutes = require('./upload.routes');
 router.use('/upload', uploadRoutes);
