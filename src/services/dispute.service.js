@@ -3,6 +3,8 @@ const Dispute = require('../models/Dispute');
 const SubOrder = require('../models/SubOrder');
 const User = require('../models/User');
 const { generateDisputeId } = require('../utils/idGenerator');
+const notificationService = require('./notification.service');
+const ChatGateway = require('../socket/chat.gateway');
 
 class DisputeService {
   /**
@@ -12,6 +14,43 @@ class DisputeService {
     return mongoose.Types.ObjectId.isValid(disputeId) && disputeId.length === 24
       ? { _id: disputeId }
       : { disputeId };
+  }
+
+  /**
+   * Helper: Lấy label của dispute type
+   */
+  _getDisputeTypeLabel(type) {
+    const labels = {
+      'PRODUCT_NOT_AS_DESCRIBED': 'Sản phẩm không đúng mô tả',
+      'MISSING_ITEMS': 'Thiếu vật phẩm',
+      'DAMAGED_BY_SHIPPER': 'Hư hại do shipper',
+      'DELIVERY_FAILED_RENTER': 'Giao hàng thất bại',
+      'PRODUCT_DEFECT': 'Sản phẩm lỗi khi sử dụng',
+      'DAMAGED_ON_RETURN': 'Hư hại khi trả hàng',
+      'LATE_RETURN': 'Trả muộn',
+      'RETURN_FAILED_OWNER': 'Trả hàng thất bại'
+    };
+    return labels[type] || type;
+  }
+
+  /**
+   * Helper: Tạo và emit notification
+   */
+  async _createAndEmitNotification(notificationData) {
+    try {
+      const notification = await notificationService.createNotification(notificationData);
+      
+      // Emit notification qua socket
+      const chatGateway = ChatGateway.getInstance();
+      if (chatGateway) {
+        chatGateway.emitNotification(notificationData.recipient.toString(), notification);
+      }
+      
+      return notification;
+    } catch (error) {
+      console.error('Error creating/emitting notification:', error);
+      throw error;
+    }
   }
 
   /**
@@ -93,6 +132,10 @@ class DisputeService {
 
     // Tạo dispute
     const disputeId = generateDisputeId();
+    
+    // Kiểm tra nếu là lỗi của shipper → Auto-escalate lên Admin
+    const isShipperFault = type === 'DAMAGED_BY_SHIPPER';
+    
     const dispute = new Dispute({
       disputeId,
       subOrder: subOrderId,
@@ -106,7 +149,7 @@ class DisputeService {
       title,
       description,
       evidence: evidence || {},
-      status: 'OPEN',
+      status: isShipperFault ? 'ADMIN_REVIEW' : 'OPEN',
       timeline: [{
         action: 'DISPUTE_CREATED',
         performedBy: complainantId,
@@ -114,6 +157,19 @@ class DisputeService {
         timestamp: new Date()
       }]
     });
+
+    // Nếu là lỗi shipper, thêm timeline auto-escalate
+    if (isShipperFault) {
+      dispute.timeline.push({
+        action: 'AUTO_ESCALATED_TO_ADMIN',
+        performedBy: complainantId,
+        details: 'Tranh chấp về lỗi shipper được tự động chuyển lên Admin để xử lý với đơn vị vận chuyển',
+        timestamp: new Date()
+      });
+      
+      // Đặt response deadline cho Admin (7 ngày)
+      dispute.responseDeadline = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+    }
 
     await dispute.save();
 
@@ -127,6 +183,98 @@ class DisputeService {
     product.disputes.push(dispute._id);
     
     await subOrder.save();
+
+    // Gửi notification
+    try {
+      const complainant = await User.findById(complainantId);
+      const disputeTypeLabel = this._getDisputeTypeLabel(type);
+      
+      if (isShipperFault) {
+        // Thông báo cho cả 2 bên: tranh chấp đã được gửi lên Admin
+        const notificationData = {
+          type: 'DISPUTE',
+          category: 'INFO',
+          title: 'Tranh chấp đã chuyển lên Admin',
+          message: `Tranh chấp "${disputeTypeLabel}" đã được tự động chuyển lên Admin để xử lý với đơn vị vận chuyển. Cả 2 bên vui lòng chờ kết quả xử lý.`,
+          relatedDispute: dispute._id,
+          relatedOrder: subOrder.masterOrder,
+          actions: [{
+            label: 'Xem chi tiết',
+            url: `/disputes/${dispute._id}`,
+            action: 'VIEW_DISPUTE'
+          }],
+          data: {
+            disputeId: dispute.disputeId,
+            disputeType: type,
+            shipmentType,
+            autoEscalated: true
+          },
+          status: 'SENT'
+        };
+        
+        // Gửi cho respondent (bên còn lại)
+        await this._createAndEmitNotification({
+          ...notificationData,
+          recipient: respondentId
+        });
+        
+        // Gửi lại cho complainant (người tạo)
+        await this._createAndEmitNotification({
+          ...notificationData,
+          recipient: complainantId
+        });
+        
+        // Gửi notification cho Admin team
+        const admins = await User.find({ role: 'ADMIN' });
+        for (const admin of admins) {
+          await this._createAndEmitNotification({
+            recipient: admin._id,
+            type: 'DISPUTE',
+            category: 'URGENT',
+            title: 'Tranh chấp lỗi shipper cần xử lý',
+            message: `${complainant.profile?.fullName || 'Người dùng'} báo cáo "${disputeTypeLabel}". Cần liên hệ đơn vị vận chuyển để xử lý.`,
+            relatedDispute: dispute._id,
+            relatedOrder: subOrder.masterOrder,
+            actions: [{
+              label: 'Xử lý ngay',
+              url: `/admin/disputes/${dispute._id}`,
+              action: 'REVIEW_DISPUTE'
+            }],
+            data: {
+              disputeId: dispute.disputeId,
+              disputeType: type,
+              shipmentType,
+              urgent: true
+            },
+            status: 'SENT'
+          });
+        }
+      } else {
+        // Flow thông thường: gửi notification cho respondent
+        await this._createAndEmitNotification({
+          recipient: respondentId,
+          type: 'DISPUTE',
+          category: 'WARNING',
+          title: 'Tranh chấp mới',
+          message: `${complainant.profile?.fullName || 'Người dùng'} đã tạo tranh chấp: ${disputeTypeLabel}. Vui lòng phản hồi trong 48h.`,
+          relatedDispute: dispute._id,
+          relatedOrder: subOrder.masterOrder,
+          actions: [{
+            label: 'Xem chi tiết',
+            url: `/disputes/${dispute._id}`,
+            action: 'VIEW_DISPUTE'
+          }],
+          data: {
+            disputeId: dispute.disputeId,
+            disputeType: type,
+            shipmentType
+          },
+          status: 'SENT'
+        });
+      }
+    } catch (error) {
+      console.error('Failed to create dispute notification:', error);
+    }
 
     return dispute.populate(['complainant', 'respondent', 'subOrder']);
   }
@@ -192,6 +340,34 @@ class DisputeService {
     }
 
     await dispute.save();
+
+    // Gửi notification cho complainant
+    try {
+      const respondent = await User.findById(respondentId);
+      const decisionText = decision === 'ACCEPTED' ? 'chấp nhận' : 'từ chối';
+      
+      await this._createAndEmitNotification({
+        recipient: dispute.complainant,
+        type: 'DISPUTE',
+        category: decision === 'ACCEPTED' ? 'SUCCESS' : 'INFO',
+        title: `Tranh chấp đã có phản hồi`,
+        message: `${respondent.profile?.fullName || 'Bên bị khiếu nại'} đã ${decisionText} tranh chấp của bạn.`,
+        relatedDispute: dispute._id,
+        actions: [{
+          label: 'Xem chi tiết',
+          url: `/disputes/${dispute._id}`,
+          action: 'VIEW_DISPUTE'
+        }],
+        data: {
+          disputeId: dispute.disputeId,
+          decision
+        },
+        status: 'SENT'
+      });
+    } catch (error) {
+      console.error('Failed to create respondent response notification:', error);
+    }
+
     return dispute.populate(['complainant', 'respondent']);
   }
 
@@ -241,6 +417,42 @@ class DisputeService {
     });
 
     await dispute.save();
+
+    // Gửi notification cho cả 2 bên
+    try {
+      const admin = await User.findById(adminId);
+      const notificationData = {
+        type: 'DISPUTE',
+        category: 'INFO',
+        title: 'Admin đã xem xét tranh chấp',
+        message: `Admin ${admin.profile?.fullName || 'hệ thống'} đã đưa ra quyết định sơ bộ. Vui lòng xem xét và phản hồi.`,
+        relatedDispute: dispute._id,
+        actions: [{
+          label: 'Xem chi tiết',
+          url: `/disputes/${dispute._id}`,
+          action: 'VIEW_DISPUTE'
+        }],
+        data: {
+          disputeId: dispute.disputeId,
+          adminDecision: decisionText
+        },
+        status: 'SENT'
+      };
+
+      await Promise.all([
+        this._createAndEmitNotification({
+          ...notificationData,
+          recipient: dispute.complainant
+        }),
+        this._createAndEmitNotification({
+          ...notificationData,
+          recipient: dispute.respondent
+        })
+      ]);
+    } catch (error) {
+      console.error('Failed to create admin review notification:', error);
+    }
+
     return dispute.populate(['complainant', 'respondent', 'assignedAdmin']);
   }
 
@@ -344,6 +556,36 @@ class DisputeService {
     }
 
     await dispute.save();
+
+    // Gửi notification cho bên kia
+    try {
+      const user = await User.findById(userId);
+      const otherParty = isComplainant ? dispute.respondent : dispute.complainant;
+      const roleText = isComplainant ? 'Người khiếu nại' : 'Bên bị khiếu nại';
+      const decisionText = accepted ? 'chấp nhận' : 'từ chối';
+      
+      await this._createAndEmitNotification({
+        recipient: otherParty,
+        type: 'DISPUTE',
+        category: 'INFO',
+        title: 'Phản hồi quyết định admin',
+        message: `${roleText} ${user.profile?.fullName || ''} đã ${decisionText} quyết định của admin.`,
+        relatedDispute: dispute._id,
+        actions: [{
+          label: 'Xem chi tiết',
+          url: `/disputes/${dispute._id}`,
+          action: 'VIEW_DISPUTE'
+        }],
+        data: {
+          disputeId: dispute.disputeId,
+          accepted
+        },
+        status: 'SENT'
+      });
+    } catch (error) {
+      console.error('Failed to create admin decision response notification:', error);
+    }
+
     return dispute.populate(['complainant', 'respondent', 'assignedAdmin']);
   }
 
@@ -411,6 +653,118 @@ class DisputeService {
     }
 
     return dispute;
+  }
+
+  /**
+   * Admin xử lý tranh chấp lỗi shipper
+   * @param {String} disputeId - ID của dispute
+   * @param {String} adminId - ID của admin
+   * @param {Object} resolution - Thông tin giải quyết
+   * @returns {Promise<Dispute>}
+   */
+  async resolveShipperDamage(disputeId, adminId, resolution) {
+    const { solution, reasoning, shipperEvidence, insuranceClaim, refundAmount, compensationAmount } = resolution;
+
+    const dispute = await Dispute.findOne(this._buildDisputeQuery(disputeId))
+      .populate('complainant')
+      .populate('respondent')
+      .populate({
+        path: 'subOrder',
+        populate: [
+          { path: 'owner' },
+          { path: 'masterOrder', populate: { path: 'renter' } }
+        ]
+      });
+
+    if (!dispute) {
+      throw new Error('Dispute không tồn tại');
+    }
+
+    // Kiểm tra status và type
+    if (dispute.status !== 'ADMIN_REVIEW') {
+      throw new Error('Dispute phải ở trạng thái ADMIN_REVIEW');
+    }
+
+    if (dispute.type !== 'DAMAGED_BY_SHIPPER') {
+      throw new Error('Chỉ áp dụng cho dispute loại DAMAGED_BY_SHIPPER');
+    }
+
+    // Kiểm tra admin role
+    const admin = await User.findById(adminId);
+    if (!admin || admin.role !== 'ADMIN') {
+      throw new Error('Chỉ admin mới có quyền xử lý');
+    }
+
+    // Cập nhật admin decision
+    dispute.assignedAdmin = adminId;
+    dispute.status = 'RESOLVED';
+    dispute.adminDecision = {
+      decision: solution === 'REPLACEMENT' 
+        ? 'Gửi hàng thay thế - Shipper chịu trách nhiệm'
+        : 'Hoàn tiền + Hủy đơn - Shipper chịu trách nhiệm',
+      reasoning,
+      decidedAt: new Date(),
+      decidedBy: adminId,
+      shipperEvidence: shipperEvidence || {},
+      insuranceClaim: insuranceClaim
+    };
+
+    // Add timeline
+    dispute.timeline.push({
+      action: 'SHIPPER_DAMAGE_RESOLVED',
+      performedBy: adminId,
+      details: `Admin xác định lỗi shipper. Giải pháp: ${solution === 'REPLACEMENT' ? 'Gửi hàng thay thế' : 'Hoàn tiền + Hủy đơn'}`,
+      timestamp: new Date()
+    });
+
+    await dispute.save();
+
+    // TODO: Execute financial transactions based on solution
+    // - REPLACEMENT: No transactions for owner/renter, charge shipper
+    // - REFUND_CANCEL: Refund renter, compensate owner, charge shipper
+
+    // Gửi notification cho cả 2 bên
+    try {
+      const solutionText = solution === 'REPLACEMENT' 
+        ? 'gửi hàng thay thế' 
+        : 'hoàn tiền và hủy đơn';
+
+      const notificationData = {
+        type: 'DISPUTE',
+        category: 'SUCCESS',
+        title: 'Tranh chấp đã được giải quyết',
+        message: `Admin xác nhận lỗi do shipper. Giải pháp: ${solutionText}. Credit score của bạn không bị ảnh hưởng.`,
+        relatedDispute: dispute._id,
+        relatedOrder: dispute.subOrder.masterOrder._id,
+        actions: [{
+          label: 'Xem chi tiết',
+          url: `/disputes/${dispute._id}`,
+          action: 'VIEW_DISPUTE'
+        }],
+        data: {
+          disputeId: dispute.disputeId,
+          solution,
+          noImpact: true
+        },
+        status: 'SENT'
+      };
+
+      // Gửi cho complainant
+      await this._createAndEmitNotification({
+        ...notificationData,
+        recipient: dispute.complainant._id
+      });
+
+      // Gửi cho respondent
+      await this._createAndEmitNotification({
+        ...notificationData,
+        recipient: dispute.respondent._id
+      });
+    } catch (error) {
+      console.error('Failed to send resolution notifications:', error);
+    }
+
+    return dispute.populate(['complainant', 'respondent', 'assignedAdmin']);
   }
 }
 

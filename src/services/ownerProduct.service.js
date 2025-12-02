@@ -380,11 +380,46 @@ const ownerProductService = {
   },
 
   /**
+   * Get single SubOrder detail for owner
+   */
+  getSubOrderDetail: async (ownerId, subOrderId) => {
+    try {
+      const SubOrder = require('../models/SubOrder');
+
+      console.log('🔍 [getSubOrderDetail] Fetching subOrder:', subOrderId, 'for owner:', ownerId);
+
+      const subOrder = await SubOrder.findOne({
+        _id: subOrderId,
+        owner: ownerId
+      })
+        .populate('products.product')
+        .populate('owner', 'profile email phone')
+        .populate({
+          path: 'masterOrder',
+          populate: { path: 'renter', select: 'profile email phone' }
+        })
+        .populate('contract');
+
+      if (!subOrder) {
+        console.log('❌ [getSubOrderDetail] SubOrder not found');
+        throw new Error('Không tìm thấy đơn hàng');
+      }
+
+      console.log('✅ [getSubOrderDetail] SubOrder found:', subOrder.subOrderNumber);
+      return subOrder;
+    } catch (error) {
+      throw new Error('Error fetching SubOrder detail: ' + error.message);
+    }
+  },
+
+  /**
    * Confirm specific product item in SubOrder
    */
   confirmProductItem: async (ownerId, subOrderId, productItemIndex) => {
     try {
       const SubOrder = require('../models/SubOrder');
+
+      console.log('🔍 [confirmProductItem] Confirming product:', productItemIndex, 'in subOrder:', subOrderId);
 
       const subOrder = await SubOrder.findOne({
         _id: subOrderId,
@@ -392,15 +427,18 @@ const ownerProductService = {
       }).populate('products.product');
 
       if (!subOrder) {
+        console.log('❌ [confirmProductItem] SubOrder not found');
         throw new Error('Không tìm thấy đơn hàng');
       }
 
       if (!subOrder.products[productItemIndex]) {
+        console.log('❌ [confirmProductItem] Product not found at index:', productItemIndex);
         throw new Error('Không tìm thấy sản phẩm trong đơn hàng');
       }
 
       const productItem = subOrder.products[productItemIndex];
       if (productItem.productStatus !== 'PENDING') {
+        console.log('❌ [confirmProductItem] Product already processed:', productItem.productStatus);
         throw new Error('Sản phẩm này đã được xử lý rồi');
       }
 
@@ -409,6 +447,7 @@ const ownerProductService = {
       productItem.confirmedAt = new Date();
 
       await subOrder.save();
+      console.log('✅ [confirmProductItem] Product confirmed successfully');
 
       // TODO: Trigger payment processing for confirmed items
       // await processPaymentForConfirmedItems(subOrder);
@@ -441,8 +480,11 @@ const ownerProductService = {
 
       const productItem = subOrder.products[productItemIndex];
       if (productItem.productStatus !== 'PENDING') {
+        console.log('❌ [rejectProductItem] Product already processed:', productItem.productStatus);
         throw new Error('Sản phẩm này đã được xử lý rồi');
       }
+
+      console.log('📝 [rejectProductItem] Rejection reason:', reason);
 
       // Update confirmation status
       productItem.productStatus = 'REJECTED';
@@ -450,6 +492,7 @@ const ownerProductService = {
       productItem.rejectionReason = reason;
 
       await subOrder.save();
+      console.log('✅ [rejectProductItem] Product rejected successfully');
 
       // TODO: Trigger refund processing for rejected items
       // await processRefundForRejectedItems(subOrder, productItemIndex);

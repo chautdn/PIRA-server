@@ -438,6 +438,27 @@ const ownerProductController = {
     }
   },
 
+  // GET /api/owner-products/rental-requests/:subOrderId - Get single rental request detail
+  getSubOrderDetail: async (req, res) => {
+    try {
+      const ownerId = req.user._id;
+      const { subOrderId } = req.params;
+
+      const subOrder = await ownerProductService.getSubOrderDetail(ownerId, subOrderId);
+
+      return res.status(200).json({
+        success: true,
+        message: 'Success',
+        data: subOrder
+      });
+    } catch (error) {
+      return res.status(400).json({
+        success: false,
+        message: error.message
+      });
+    }
+  },
+
   // POST /api/owner/rental-requests/:subOrderId/items/:itemIndex/confirm
   confirmProductItem: async (req, res) => {
     try {

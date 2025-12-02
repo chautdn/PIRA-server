@@ -326,6 +326,35 @@ class AdminDisputeController {
       return responseUtils.error(res, error.message, 400);
     }
   }
+
+  /**
+   * Admin xử lý tranh chấp lỗi shipper
+   * POST /api/admin/disputes/:disputeId/resolve-shipper-damage
+   */
+  async resolveShipperDamage(req, res) {
+    try {
+      const { disputeId } = req.params;
+      const adminId = req.user._id;
+      const { solution, reasoning, shipperEvidence, insuranceClaim, refundAmount, compensationAmount } = req.body;
+
+      const dispute = await disputeService.resolveShipperDamage(disputeId, adminId, {
+        solution,
+        reasoning,
+        shipperEvidence,
+        insuranceClaim,
+        refundAmount,
+        compensationAmount
+      });
+
+      return responseUtils.success(res, {
+        dispute,
+        message: 'Đã xử lý tranh chấp lỗi shipper thành công'
+      });
+    } catch (error) {
+      console.error('Resolve shipper damage error:', error);
+      return responseUtils.error(res, error.message, 400);
+    }
+  }
 }
 
 module.exports = new AdminDisputeController();
