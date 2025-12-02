@@ -4,6 +4,7 @@ const SubOrder = require('../models/SubOrder');
 const User = require('../models/User');
 const { generateDisputeId } = require('../utils/idGenerator');
 const notificationService = require('./notification.service');
+const ChatGateway = require('../socket/chat.gateway');
 
 class DisputeService {
   /**
@@ -30,6 +31,26 @@ class DisputeService {
       'RETURN_FAILED_OWNER': 'Trả hàng thất bại'
     };
     return labels[type] || type;
+  }
+
+  /**
+   * Helper: Tạo và emit notification
+   */
+  async _createAndEmitNotification(notificationData) {
+    try {
+      const notification = await notificationService.createNotification(notificationData);
+      
+      // Emit notification qua socket
+      const chatGateway = ChatGateway.getInstance();
+      if (chatGateway) {
+        chatGateway.emitNotification(notificationData.recipient.toString(), notification);
+      }
+      
+      return notification;
+    } catch (error) {
+      console.error('Error creating/emitting notification:', error);
+      throw error;
+    }
   }
 
   /**
@@ -192,21 +213,21 @@ class DisputeService {
         };
         
         // Gửi cho respondent (bên còn lại)
-        await notificationService.createNotification({
+        await this._createAndEmitNotification({
           ...notificationData,
           recipient: respondentId
         });
         
         // Gửi lại cho complainant (người tạo)
-        await notificationService.createNotification({
+        await this._createAndEmitNotification({
           ...notificationData,
           recipient: complainantId
         });
         
-        // TODO: Gửi notification cho Admin team
+        // Gửi notification cho Admin team
         const admins = await User.find({ role: 'ADMIN' });
         for (const admin of admins) {
-          await notificationService.createNotification({
+          await this._createAndEmitNotification({
             recipient: admin._id,
             type: 'DISPUTE',
             category: 'URGENT',
@@ -230,7 +251,7 @@ class DisputeService {
         }
       } else {
         // Flow thông thường: gửi notification cho respondent
-        await notificationService.createNotification({
+        await this._createAndEmitNotification({
           recipient: respondentId,
           type: 'DISPUTE',
           category: 'WARNING',
