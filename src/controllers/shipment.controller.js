@@ -527,6 +527,68 @@ class ShipmentController {
       return res.status(400).json({ status: 'error', message: err.message });
     }
   }
+
+  async renterNoShow(req, res) {
+    try {
+      // Only SHIPPER can report renter no-show
+      if (req.user.role !== 'SHIPPER') {
+        return res.status(403).json({ 
+          status: 'error', 
+          message: 'Only shippers can report renter no-show' 
+        });
+      }
+
+      const shipmentId = req.params.id;
+      const { notes } = req.body;
+
+      console.log(`\n📥 POST /shipments/${shipmentId}/renter-no-show`);
+      console.log(`👤 User ID: ${req.user._id}`);
+      console.log(`👤 User Role: ${req.user.role}`);
+      console.log(`📝 Notes: ${notes}`);
+
+      const shipment = await ShipmentService.renterNoShow(shipmentId, { notes });
+      
+      return res.json({ 
+        status: 'success', 
+        message: 'Renter no-show processed',
+        data: shipment 
+      });
+    } catch (err) {
+      console.error('renterNoShow error', err.message);
+      return res.status(400).json({ status: 'error', message: err.message });
+    }
+  }
+
+  async returnFailed(req, res) {
+    try {
+      // Only SHIPPER can report return failed
+      if (req.user.role !== 'SHIPPER') {
+        return res.status(403).json({ 
+          status: 'error', 
+          message: 'Only shippers can report return failed' 
+        });
+      }
+
+      const shipmentId = req.params.id;
+      const { notes } = req.body;
+
+      console.log(`\n📥 POST /shipments/${shipmentId}/return-failed`);
+      console.log(`👤 User ID: ${req.user._id}`);
+      console.log(`👤 User Role: ${req.user.role}`);
+      console.log(`📝 Notes: ${notes}`);
+
+      const shipment = await ShipmentService.returnFailed(shipmentId, { notes });
+      
+      return res.json({ 
+        status: 'success', 
+        message: 'Return failed processed',
+        data: shipment 
+      });
+    } catch (err) {
+      console.error('returnFailed error', err.message);
+      return res.status(400).json({ status: 'error', message: err.message });
+    }
+  }
 }
 
 module.exports = new ShipmentController();

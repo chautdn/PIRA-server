@@ -96,6 +96,8 @@ const masterOrderSchema = new mongoose.Schema(
         'CONFIRMED', // Tất cả sản phẩm đã được xác nhận
         'CANCELLED_BY_OWNER_NO_SHOW', // Hủy tất cả do owner không đến giao hàng
         'PARTIALLY_CANCELLED_BY_OWNER', // Hủy một phần do owner không đến giao hàng
+        'CANCELLED_BY_RENTER_NO_SHOW', // Hủy tất cả do không liên lạc được với renter
+        'PATIALLY_CANCELLED_BY_RENTER', // Hủy một phần do không liên lạc được với renter
         'PARTIALLY_CANCELLED', // Một phần sản phẩm bị hủy
         'READY_FOR_CONTRACT', // Sẵn sàng ký hợp đồng
         'CONTRACT_SIGNED', // Đã ký hợp đồng

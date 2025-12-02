@@ -138,8 +138,7 @@ const subOrderSchema = new mongoose.Schema(
             'IN_TRANSIT', // Đang vận chuyển đến người thuê
             'DELIVERED', // Đã giao cho người thuê
             'DELIVERY_FAILED', // Giao hàng thất bại
-            'RENTER_ABSENT', // Renter không có mặt để nhận hàng
-
+            'RENTER_NO_SHOW', // Người thuê không nhận hàng
             // Active Rental Phase
             'ACTIVE', // Đang trong thời gian thuê
             'DISPUTED', // Có tranh chấp
@@ -149,6 +148,7 @@ const subOrderSchema = new mongoose.Schema(
             'EARLY_RETURN_REQUESTED', // Yêu cầu trả sớm (cần approval)
             'RETURN_SHIPPER_CONFIRMED', // Shipper xác nhận nhận hàng trả
             'RETURNING', // Đang trả hàng về owner
+            'RETURN_FAILED', // Trả hàng thất bại - không liên lạc được renter
             'RETURNED', // Đã trả về cho owner
             'RETURN_FAILED', // Trả hàng thất bại
 
@@ -320,8 +320,10 @@ const subOrderSchema = new mongoose.Schema(
         'OWNER_REJECTED', // Owner từ chối tất cả
         'CANCELLED_BY_OWNER_NO_SHOW', // Hủy do owner không đến giao hàng
         'PARTIALLY_CANCELLED_BY_OWNER', // Hủy một phần do owner không đến giao hàng
+        'CANCELLED_BY_RENTER_NO_SHOW', // Hủy do không liên lạc được với renter
         'PARTIALLY_CONFIRMED', // Owner xác nhận một phần
         'RENTER_REJECTED', // Renter từ chối đơn partial
+        'RETURN_FAILED', // Trả hàng thất bại
 
         // Contract & Payment
         'READY_FOR_CONTRACT', // Sẵn sàng ký hợp đồng
