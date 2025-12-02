@@ -99,10 +99,15 @@ const notificationService = {
 
   // Get unread count
   getUnreadCount: async (userId) => {
+    console.log('🔢 [Notification Service] Counting unread notifications for user:', userId);
+    
     const count = await Notification.countDocuments({
       recipient: userId,
       status: { $in: ['PENDING', 'SENT', 'DELIVERED'] }
     });
+
+    console.log('🔢 [Notification Service] Found', count, 'unread notifications');
+    console.log('🔢 [Notification Service] Query:', { recipient: userId, status: { $in: ['PENDING', 'SENT', 'DELIVERED'] } });
 
     return count;
   }
