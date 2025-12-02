@@ -44,16 +44,25 @@ class RentalOrderService {
       let itemsToProcess = cart.items;
       if (selectedItems && Array.isArray(selectedItems) && selectedItems.length > 0) {
         console.log(`📋 Received selectedItems from frontend: ${selectedItems.length} items`);
-        console.log('DEBUG selectedItems:', JSON.stringify(selectedItems.map(item => ({ _id: item._id, product: item.product?._id }))));
-        
-        const selectedItemIds = new Set(selectedItems.map(item => item._id?.toString() || item._id));
-        itemsToProcess = cart.items.filter(item => selectedItemIds.has(item._id.toString()));
-        
+        console.log(
+          'DEBUG selectedItems:',
+          JSON.stringify(
+            selectedItems.map((item) => ({ _id: item._id, product: item.product?._id }))
+          )
+        );
+
+        const selectedItemIds = new Set(
+          selectedItems.map((item) => item._id?.toString() || item._id)
+        );
+        itemsToProcess = cart.items.filter((item) => selectedItemIds.has(item._id.toString()));
+
         if (itemsToProcess.length === 0) {
           throw new Error('Không tìm thấy các sản phẩm được chọn trong giỏ hàng');
         }
-        
-        console.log(`✅ Processing ${itemsToProcess.length} selected items out of ${cart.items.length} in cart`);
+
+        console.log(
+          `✅ Processing ${itemsToProcess.length} selected items out of ${cart.items.length} in cart`
+        );
       } else {
         console.log('⚠️ No selectedItems provided, using all cart items');
       }
@@ -426,7 +435,9 @@ class RentalOrderService {
 
       // Remove selected items from cart (only selected items, not entire cart)
       if (selectedItems && Array.isArray(selectedItems) && selectedItems.length > 0) {
-        const selectedItemIds = new Set(selectedItems.map(item => item._id?.toString() || item._id));
+        const selectedItemIds = new Set(
+          selectedItems.map((item) => item._id?.toString() || item._id)
+        );
         await Cart.findOneAndUpdate(
           { user: renterId },
           { $pull: { items: { _id: { $in: Array.from(selectedItemIds) } } } }
@@ -434,10 +445,7 @@ class RentalOrderService {
         console.log(`✅ Removed ${selectedItemIds.size} selected items from cart`);
       } else {
         // If no selectedItems specified, remove all items (backward compatibility)
-        await Cart.findOneAndUpdate(
-          { user: renterId },
-          { $set: { items: [] } }
-        );
+        await Cart.findOneAndUpdate({ user: renterId }, { $set: { items: [] } });
         console.log('✅ Cleared entire cart');
       }
 
@@ -1387,8 +1395,13 @@ class RentalOrderService {
         return;
       }
 
-      const subOrders = await SubOrder.find({ masterOrder: masterOrderId }).populate('owner', 'address profile');
-      console.log(`📋 checkAllContractsSigned: Found ${subOrders.length} subOrders for master order ${masterOrderId}`);
+      const subOrders = await SubOrder.find({ masterOrder: masterOrderId }).populate(
+        'owner',
+        'address profile'
+      );
+      console.log(
+        `📋 checkAllContractsSigned: Found ${subOrders.length} subOrders for master order ${masterOrderId}`
+      );
 
       if (subOrders.length === 0) {
         console.warn('⚠️ No subOrders found for master order');
@@ -1396,27 +1409,29 @@ class RentalOrderService {
       }
 
       const allSigned = subOrders.every((so) => so.status === 'CONTRACT_SIGNED');
-      console.log(`   Status breakdown: ${subOrders.map(so => so.status).join(', ')}`);
+      console.log(`   Status breakdown: ${subOrders.map((so) => so.status).join(', ')}`);
       console.log(`   All signed? ${allSigned}`);
 
       if (allSigned) {
         // Update master order status
-        const masterOrder = await MasterOrder.findByIdAndUpdate(masterOrderId, {
-          status: 'CONTRACT_SIGNED'
-        }, { new: true });
+        const masterOrder = await MasterOrder.findByIdAndUpdate(
+          masterOrderId,
+          {
+            status: 'CONTRACT_SIGNED'
+          },
+          { new: true }
+        );
         console.log(`✅ Master Order status updated to CONTRACT_SIGNED`);
 
         // 🚀 Tự động tạo shipments cho tất cả subOrders
         console.log(`\n🚀 Auto-creating shipments for master order ${masterOrderId}...`);
-        
+
         try {
           const ShipmentService = require('./shipment.service');
-          
+
           // Lấy owner từ subOrders (ưu tiên subOrder đầu tiên để tìm shipper)
           // Nếu có multiple owners, sẽ tìm shipper cho từng owner nhưng chỉ assign 1 shipper cho tất cả
-          const owners = subOrders
-            .filter(so => so.owner)
-            .map(so => so.owner);
+          const owners = subOrders.filter((so) => so.owner).map((so) => so.owner);
 
           if (owners.length === 0) {
             throw new Error('No owners found for shipment creation');
@@ -1426,11 +1441,11 @@ class RentalOrderService {
 
           // Tìm shipper dựa trên owner đầu tiên (hoặc có thể implement logic khác)
           let shipperId = null;
-          
+
           for (const owner of owners) {
             console.log(`   📦 Trying owner ${owner._id} with address:`, owner.address);
             const shipper = await ShipmentService.findShipperInSameArea(owner.address);
-            
+
             if (shipper) {
               console.log(`   ✅ Found shipper in same area: ${shipper._id}`);
               shipperId = shipper._id;
@@ -1439,12 +1454,17 @@ class RentalOrderService {
           }
 
           if (!shipperId) {
-            console.warn('   ⚠️ Could not find shipper in same area for any owner. Creating shipments without shipper assignment...');
+            console.warn(
+              '   ⚠️ Could not find shipper in same area for any owner. Creating shipments without shipper assignment...'
+            );
           }
 
           // Tạo shipments cho toàn bộ masterOrder (nó sẽ tạo cho tất cả subOrders)
-          const result = await ShipmentService.createDeliveryAndReturnShipments(masterOrderId, shipperId);
-          
+          const result = await ShipmentService.createDeliveryAndReturnShipments(
+            masterOrderId,
+            shipperId
+          );
+
           console.log(`✅ Shipments created automatically:`, result);
           console.log(`   Total shipments: ${result.count}`);
           console.log(`   Shipment pairs: ${result.pairs}`);
@@ -2536,11 +2556,18 @@ class RentalOrderService {
         try {
           const creditAmount = Number(payosPaymentInfo.amount) || transaction?.amount || 0;
           if (creditAmount > 0) {
-            await SystemWalletService.addFunds(process.env.SYSTEM_ADMIN_ID || null, creditAmount, `PayOS payment for order ${masterOrder.masterOrderNumber}`);
+            await SystemWalletService.addFunds(
+              process.env.SYSTEM_ADMIN_ID || null,
+              creditAmount,
+              `PayOS payment for order ${masterOrder.masterOrderNumber}`
+            );
             console.log('✅ Credited system wallet with PayOS amount:', creditAmount);
           }
         } catch (err) {
-          console.error('Failed to credit system wallet after PayOS payment:', err.message || String(err));
+          console.error(
+            'Failed to credit system wallet after PayOS payment:',
+            err.message || String(err)
+          );
         }
       } else if (isCODDeposit) {
         // Deposit payment for COD
@@ -2552,11 +2579,18 @@ class RentalOrderService {
         try {
           const depositAmount = transaction?.amount || Number(payosPaymentInfo.amount) || 0;
           if (depositAmount > 0) {
-            await SystemWalletService.addFunds(process.env.SYSTEM_ADMIN_ID || null, depositAmount, `PayOS deposit for order ${masterOrder.masterOrderNumber}`);
+            await SystemWalletService.addFunds(
+              process.env.SYSTEM_ADMIN_ID || null,
+              depositAmount,
+              `PayOS deposit for order ${masterOrder.masterOrderNumber}`
+            );
             console.log('✅ Credited system wallet with deposit amount:', depositAmount);
           }
         } catch (err) {
-          console.error('Failed to credit system wallet for deposit after PayOS:', err.message || String(err));
+          console.error(
+            'Failed to credit system wallet for deposit after PayOS:',
+            err.message || String(err)
+          );
         }
       }
 
@@ -2779,11 +2813,19 @@ class RentalOrderService {
 
       // 4. Cập nhật trạng thái SubOrder
       if (totalConfirmed > 0 && totalRejected > 0) {
+        // TRƯỜNG HỢP C: XÁC NHẬN MỘT PHẦN
         subOrder.status = 'PARTIALLY_CONFIRMED';
+        console.log(
+          `📊 Partial confirmation: ${totalConfirmed} confirmed, ${totalRejected} rejected`
+        );
       } else if (totalConfirmed === subOrder.products.length) {
+        // TRƯỜNG HỢP A: XÁC NHẬN ĐỦ/TẤT CẢ
         subOrder.status = 'OWNER_CONFIRMED';
+        console.log('✅ All products confirmed by owner');
       } else if (totalRejected === subOrder.products.length) {
+        // TRƯỜNG HỢP B: TỪ CHỐI TOÀN BỘ → TỰ ĐỘNG HỦY ĐƠN VÀ HOÀN TIỀN 100%
         subOrder.status = 'OWNER_REJECTED';
+        console.log('❌ All products rejected by owner → Auto-cancelling order');
       }
 
       subOrder.ownerConfirmation = {
@@ -2794,8 +2836,33 @@ class RentalOrderService {
 
       await subOrder.save({ session });
 
-      // 5. Hoàn tiền cho các sản phẩm bị rejected
-      if (rejectedAmount > 0) {
+      // 5. Xử lý theo từng trường hợp
+      if (totalRejected === subOrder.products.length) {
+        // TRƯỜNG HỢP B: TỪ CHỐI TOÀN BỘ
+        // → Hoàn tiền 100% và tự động hủy đơn
+        console.log('🔄 Processing full rejection - refunding 100% and cancelling order');
+
+        await this.refundRejectedProducts(
+          masterOrder,
+          subOrder,
+          rejectedAmount,
+          'Chủ đồ từ chối toàn bộ sản phẩm - Hủy đơn tự động',
+          session
+        );
+
+        // Đánh dấu SubOrder là CANCELLED
+        subOrder.status = 'CANCELLED';
+        subOrder.cancelledAt = now;
+        subOrder.cancelReason = 'Chủ đồ từ chối toàn bộ sản phẩm';
+        await subOrder.save({ session });
+
+        // Kiểm tra nếu tất cả SubOrders đều bị reject/cancel → Hủy MasterOrder
+        await this.checkAndCancelMasterOrderIfAllRejected(masterOrder._id, session);
+      } else if (rejectedAmount > 0) {
+        // TRƯỜNG HỢP C: XÁC NHẬN MỘT PHẦN
+        // → Hoàn tiền phần bị rejected ngay lập tức
+        console.log('💰 Processing partial rejection - refunding rejected products');
+
         await this.refundRejectedProducts(
           masterOrder,
           subOrder,
@@ -3355,10 +3422,14 @@ class RentalOrderService {
   }
 
   /**
-   * Renter từ chối SubOrder đã được partial confirm
+   * Renter từ chối SubOrder đã được partial confirm (TRƯỜNG HỢP C)
+   * - Người thuê có quyền KHÔNG chấp nhận khi bị thiếu hàng
    * - Hủy toàn bộ SubOrder
-   * - Hoàn tiền 100% (cả sản phẩm đã confirm)
+   * - Hoàn tiền 100% (kể cả phần sản phẩm đã confirm)
    * - Cập nhật MasterOrder status
+   *
+   * QUY TẮC: Người thuê có quyền từ chối nếu không đồng ý với số lượng partial confirm
+   * → Hoàn 100% toàn bộ tiền cọc, không bị ép buộc phải thuê
    */
   async renterRejectSubOrder(subOrderId, renterId, reason) {
     const session = await mongoose.startSession();
@@ -3446,6 +3517,228 @@ class RentalOrderService {
       await session.abortTransaction();
       session.endSession();
       console.error('❌ Error in renterRejectSubOrder:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * ============================================================================
+   * CONTRACT EDITING METHODS (Owner can edit terms before signing)
+   * ============================================================================
+   */
+
+  /**
+   * Get contract for editing (owner only, before signing)
+   * @param {string} contractId - Contract ID
+   * @param {string} ownerId - Owner ID
+   * @returns {Promise<Object>} Contract with editable fields
+   */
+  async getContractForEditing(contractId, ownerId) {
+    const contract = await Contract.findById(contractId)
+      .populate('owner', 'fullName email phone')
+      .populate('renter', 'fullName email phone')
+      .populate('product', 'title description images')
+      .populate('subOrder')
+      .populate('masterOrder', 'orderNumber');
+
+    if (!contract) {
+      throw new Error('Không tìm thấy hợp đồng');
+    }
+
+    // Check owner permission
+    if (contract.owner._id.toString() !== ownerId.toString()) {
+      throw new Error('Bạn không có quyền chỉnh sửa hợp đồng này');
+    }
+
+    // Check if contract can be edited (only DRAFT or PENDING status, and owner hasn't signed)
+    if (contract.status !== 'DRAFT' && contract.status !== 'PENDING_SIGNATURE') {
+      throw new Error('Không thể chỉnh sửa hợp đồng đã ký hoặc đang hoạt động');
+    }
+
+    if (contract.signatures?.owner?.signed) {
+      throw new Error('Bạn đã ký hợp đồng này, không thể chỉnh sửa nữa');
+    }
+
+    return contract;
+  }
+
+  /**
+   * Update contract editable terms (owner only, before signing)
+   * @param {string} contractId - Contract ID
+   * @param {string} ownerId - Owner ID
+   * @param {Object} editData - { additionalTerms, customClauses, specialConditions }
+   * @returns {Promise<Object>} Updated contract
+   */
+  async updateContractTerms(contractId, ownerId, editData) {
+    const contract = await this.getContractForEditing(contractId, ownerId);
+
+    const { additionalTerms, customClauses, specialConditions } = editData;
+
+    // Update editable terms
+    if (!contract.editableTerms) {
+      contract.editableTerms = {
+        additionalTerms: [],
+        editHistory: [],
+        isEdited: false
+      };
+    }
+
+    let changesMade = [];
+
+    // Update additional terms (array of terms with title and content)
+    if (additionalTerms && Array.isArray(additionalTerms)) {
+      contract.editableTerms.additionalTerms = additionalTerms.map((term) => ({
+        title: term.title,
+        content: term.content,
+        addedBy: ownerId,
+        addedAt: new Date()
+      }));
+      changesMade.push('Cập nhật điều khoản bổ sung');
+    }
+
+    // Update custom clauses (rich text)
+    if (customClauses !== undefined) {
+      contract.editableTerms.customClauses = customClauses;
+      changesMade.push('Cập nhật điều khoản tùy chỉnh');
+    }
+
+    // Update special conditions
+    if (specialConditions !== undefined) {
+      contract.editableTerms.specialConditions = specialConditions;
+      changesMade.push('Cập nhật điều kiện đặc biệt');
+    }
+
+    // Add to edit history
+    if (changesMade.length > 0) {
+      contract.editableTerms.editHistory.push({
+        editedBy: ownerId,
+        editedAt: new Date(),
+        changes: changesMade.join(', ')
+      });
+      contract.editableTerms.isEdited = true;
+      contract.editableTerms.lastEditedAt = new Date();
+    }
+
+    await contract.save();
+
+    console.log(`✅ Contract ${contractId} updated by owner ${ownerId}`);
+    return contract;
+  }
+
+  /**
+   * Add a single additional term to contract
+   * @param {string} contractId - Contract ID
+   * @param {string} ownerId - Owner ID
+   * @param {Object} term - { title, content }
+   * @returns {Promise<Object>} Updated contract
+   */
+  async addContractTerm(contractId, ownerId, term) {
+    const contract = await this.getContractForEditing(contractId, ownerId);
+
+    if (!contract.editableTerms) {
+      contract.editableTerms = {
+        additionalTerms: [],
+        editHistory: [],
+        isEdited: false
+      };
+    }
+
+    // Add new term
+    contract.editableTerms.additionalTerms.push({
+      title: term.title,
+      content: term.content,
+      addedBy: ownerId,
+      addedAt: new Date()
+    });
+
+    // Add to edit history
+    contract.editableTerms.editHistory.push({
+      editedBy: ownerId,
+      editedAt: new Date(),
+      changes: `Thêm điều khoản: ${term.title}`
+    });
+    contract.editableTerms.isEdited = true;
+    contract.editableTerms.lastEditedAt = new Date();
+
+    await contract.save();
+
+    console.log(`✅ Added term "${term.title}" to contract ${contractId}`);
+    return contract;
+  }
+
+  /**
+   * Remove an additional term from contract
+   * @param {string} contractId - Contract ID
+   * @param {string} ownerId - Owner ID
+   * @param {string} termId - Term ID to remove
+   * @returns {Promise<Object>} Updated contract
+   */
+  async removeContractTerm(contractId, ownerId, termId) {
+    const contract = await this.getContractForEditing(contractId, ownerId);
+
+    if (!contract.editableTerms || !contract.editableTerms.additionalTerms) {
+      throw new Error('Không có điều khoản nào để xóa');
+    }
+
+    const termIndex = contract.editableTerms.additionalTerms.findIndex(
+      (t) => t._id.toString() === termId
+    );
+
+    if (termIndex === -1) {
+      throw new Error('Không tìm thấy điều khoản');
+    }
+
+    const removedTerm = contract.editableTerms.additionalTerms[termIndex];
+    contract.editableTerms.additionalTerms.splice(termIndex, 1);
+
+    // Add to edit history
+    contract.editableTerms.editHistory.push({
+      editedBy: ownerId,
+      editedAt: new Date(),
+      changes: `Xóa điều khoản: ${removedTerm.title}`
+    });
+    contract.editableTerms.lastEditedAt = new Date();
+
+    await contract.save();
+
+    console.log(`✅ Removed term "${removedTerm.title}" from contract ${contractId}`);
+    return contract;
+  }
+
+  /**
+   * Check if all SubOrders are rejected/cancelled, then cancel MasterOrder
+   * @param {string} masterOrderId - MasterOrder ID
+   * @param {Session} session - Mongoose session
+   */
+  async checkAndCancelMasterOrderIfAllRejected(masterOrderId, session) {
+    try {
+      const masterOrder = await MasterOrder.findById(masterOrderId)
+        .populate('subOrders')
+        .session(session);
+
+      if (!masterOrder) {
+        throw new Error('Không tìm thấy MasterOrder');
+      }
+
+      const subOrders = masterOrder.subOrders;
+      const allRejectedOrCancelled = subOrders.every(
+        (so) =>
+          so.status === 'OWNER_REJECTED' ||
+          so.status === 'CANCELLED' ||
+          so.status === 'RENTER_REJECTED'
+      );
+
+      if (allRejectedOrCancelled) {
+        console.log('🔴 All SubOrders rejected/cancelled → Cancelling MasterOrder');
+        masterOrder.status = 'CANCELLED';
+        masterOrder.cancelledAt = new Date();
+        masterOrder.cancelReason = 'Tất cả SubOrders đã bị từ chối hoặc hủy';
+        await masterOrder.save({ session });
+
+        console.log(`✅ MasterOrder ${masterOrderId} has been cancelled`);
+      }
+    } catch (error) {
+      console.error('❌ Error in checkAndCancelMasterOrderIfAllRejected:', error);
       throw error;
     }
   }

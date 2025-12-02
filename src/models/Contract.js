@@ -114,6 +114,35 @@ const contractSchema = new mongoose.Schema(
       templateVersion: String
     },
 
+    // Editable Terms (Owner can edit before signing)
+    editableTerms: {
+      additionalTerms: [
+        {
+          title: { type: String, trim: true },
+          content: { type: String, trim: true },
+          addedBy: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: 'User'
+          },
+          addedAt: { type: Date, default: Date.now }
+        }
+      ],
+      customClauses: String, // Rich text content for custom clauses
+      specialConditions: String, // Special conditions added by owner
+      editHistory: [
+        {
+          editedBy: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: 'User'
+          },
+          editedAt: { type: Date, default: Date.now },
+          changes: String // Description of changes made
+        }
+      ],
+      isEdited: { type: Boolean, default: false },
+      lastEditedAt: Date
+    },
+
     // Legal Information
     legal: {
       governingLaw: {
