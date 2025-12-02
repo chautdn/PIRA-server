@@ -13,8 +13,23 @@ class EarlyReturnController {
   async createRequest(req, res, next) {
     try {
       const renterId = req.user._id;
-      const { subOrderId, requestedReturnDate, returnAddress, useOriginalAddress, notes } =
-        req.body;
+      const {
+        subOrderId,
+        requestedReturnDate,
+        returnAddress,
+        useOriginalAddress,
+        notes,
+        addressInfo
+      } = req.body;
+
+      console.log('[CreateRequest] Request body:', {
+        subOrderId,
+        requestedReturnDate,
+        useOriginalAddress,
+        hasReturnAddress: !!returnAddress,
+        returnAddress,
+        addressInfo
+      });
 
       if (!subOrderId || !requestedReturnDate) {
         throw new BadRequestError('SubOrder ID and requested return date are required');
@@ -24,7 +39,8 @@ class EarlyReturnController {
         requestedReturnDate,
         returnAddress,
         useOriginalAddress,
-        notes
+        notes,
+        addressInfo
       });
 
       new CREATED({
@@ -32,6 +48,22 @@ class EarlyReturnController {
         metadata: result
       }).send(res);
     } catch (error) {
+      console.error('[CreateRequest] Error:', error.message);
+      console.error('[CreateRequest] Error stack:', error.stack);
+
+      if (error.name === 'ValidationError') {
+        console.error('[CreateRequest] Validation errors:', error.errors);
+        const errors = Object.keys(error.errors).map((key) => ({
+          field: key,
+          message: error.errors[key].message
+        }));
+        return res.status(400).json({
+          success: false,
+          message: 'Validation failed',
+          errors
+        });
+      }
+
       next(error);
     }
   }
@@ -189,13 +221,22 @@ class EarlyReturnController {
       const renterId = req.user._id;
       const { subOrderId, newAddress } = req.body;
 
-      console.log('[Controller] calculateAdditionalFee called:', { subOrderId, renterId, hasAddress: !!newAddress, hasCoords: !!newAddress?.coordinates });
+      console.log('[Controller] calculateAdditionalFee called:', {
+        subOrderId,
+        renterId,
+        hasAddress: !!newAddress,
+        hasCoords: !!newAddress?.coordinates
+      });
 
       if (!subOrderId || !newAddress || !newAddress.coordinates) {
         throw new BadRequestError('SubOrder ID and new address with coordinates are required');
       }
 
-      const result = await earlyReturnService.calculateAdditionalFee(subOrderId, renterId, newAddress);
+      const result = await earlyReturnService.calculateAdditionalFee(
+        subOrderId,
+        renterId,
+        newAddress
+      );
 
       new SUCCESS({
         message: result.message,
@@ -229,38 +270,44 @@ class EarlyReturnController {
 
       if (paymentMethod === 'wallet') {
         // Process wallet payment immediately
-        const walletResult = await paymentService.processWalletPaymentForOrder(
-          renterId,
-          amount,
-          {
-            orderNumber: `Shipping-${subOrderId}`,
-            orderType: 'early_return_upfront_shipping',
-            addressInfo
-          }
-        );
+        const walletResult = await paymentService.processWalletPaymentForOrder(renterId, amount, {
+          orderNumber: `Shipping-${subOrderId}`,
+          orderType: 'early_return_upfront_shipping',
+          addressInfo
+        });
 
         // Credit system wallet with the fee
-        const Wallet = require('../models/Wallet');
+        const SystemWallet = require('../models/SystemWallet');
         const Transaction = require('../models/Transaction');
-        
-        const systemWallet = await Wallet.findOne({ isSystem: true });
+        const User = require('../models/User');
+
+        const systemWallet = await SystemWallet.findOne({});
         if (systemWallet) {
           systemWallet.balance.available += amount;
+          systemWallet.lastModifiedBy = renterId;
+          systemWallet.lastModifiedAt = new Date();
           await systemWallet.save();
 
-          // Create transaction record for system wallet
+          // Create transaction record for system wallet - use first admin as user
+          const adminUser = await User.findOne({ role: 'admin' });
           const systemTransaction = new Transaction({
+            user: adminUser?._id || renterId,
             wallet: systemWallet._id,
-            type: 'deposit',
+            type: 'TRANSFER_IN',
             amount,
             status: 'success',
             paymentMethod: 'wallet',
             description: `Phí ship thêm - Trả hàng sớm từ renter`,
+            toSystemWallet: true,
+            systemWalletAction: 'fee_collection',
             metadata: {
               subOrderId,
               renterId,
-              sourceTransaction: walletResult.transactionId
-            }
+              sourceTransaction: walletResult.transactionId,
+              orderType: 'early_return_upfront_shipping',
+              addressInfo
+            },
+            processedAt: new Date()
           });
           await systemTransaction.save();
 
@@ -409,6 +456,51 @@ class EarlyReturnController {
 
       new SUCCESS({
         message: 'Auto-completion completed',
+        metadata: result
+      }).send(res);
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * Update early return request (Renter only)
+   * PUT /early-returns/:id
+   */
+  async updateRequest(req, res, next) {
+    try {
+      const { id } = req.params;
+      const renterId = req.user._id;
+      const { requestedReturnDate, returnAddress, notes } = req.body;
+
+      const result = await earlyReturnService.updateEarlyReturnRequest(id, renterId, {
+        requestedReturnDate,
+        returnAddress,
+        notes
+      });
+
+      new SUCCESS({
+        message: 'Early return request updated successfully',
+        metadata: result
+      }).send(res);
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * Delete early return request (Renter only)
+   * DELETE /early-returns/:id
+   */
+  async deleteRequest(req, res, next) {
+    try {
+      const { id } = req.params;
+      const renterId = req.user._id;
+
+      const result = await earlyReturnService.deleteEarlyReturnRequest(id, renterId);
+
+      new SUCCESS({
+        message: 'Early return request deleted successfully',
         metadata: result
       }).send(res);
     } catch (error) {

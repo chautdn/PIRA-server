@@ -6,11 +6,11 @@ const Transaction = require('../models/Transaction');
 const paymentService = require('./payment.service');
 
 const TIER_PRICES = {
-  1: 150000,
-  2: 120000,
-  3: 90000,
-  4: 60000,
-  5: 30000
+  1: 25000,
+  2: 20000,
+  3: 15000,
+  4: 10000,
+  5: 5000
 };
 
 const RECURRING_DISCOUNT = 0.1; // 10%

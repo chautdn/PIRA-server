@@ -20,10 +20,10 @@ class VietMapService {
     const params = new URLSearchParams();
     params.append('api-version', '1.1');
     params.append('apikey', this.apiKey);
-    params.append('point', `${latOwner},${lonOwner}`);     // LAT,LON
-    params.append('point', `${latUser},${lonUser}`);       // LAT,LON
+    params.append('point', `${latOwner},${lonOwner}`); // LAT,LON
+    params.append('point', `${latUser},${lonUser}`); // LAT,LON
     params.append('points_encoded', 'true');
-    params.append('vehicle', 'bike');        // hoặc 'motorcycle' nếu muốn chính xác hơn
+    params.append('vehicle', 'bike'); // hoặc 'motorcycle' nếu muốn chính xác hơn
     params.append('optimize', 'true');
 
     try {
@@ -47,7 +47,6 @@ class VietMapService {
 
       // Nếu VietMap trả lỗi hoặc không tìm được đường
       throw new Error(response.data?.messages || 'No route found');
-
     } catch (error) {
       // BỎ FALLBACK HAVERSINE HOÀN TOÀN (nếu bạn muốn tính phí chính xác)
       // Chỉ log lỗi, trả về thất bại rõ ràng
@@ -60,10 +59,10 @@ class VietMapService {
    * Tính phí ship theo khoảng cách thực tế (dùng trong controller)
    */
   calculateShippingFee(distanceKm, options = {}) {
-    const baseFee = options.baseFee || 15000;           // 15k cố định
-    const pricePerKm = options.pricePerKm || 5000;      // 5k/km
-    const minFee = options.minFee || 20000;             // tối thiểu 20k
-    const maxFee = options.maxFee || 150000;            // tối đa 150k
+    const baseFee = options.baseFee || 15000; // 15k cố định
+    const pricePerKm = options.pricePerKm || 3000; // 1k/km (reduced from 5k/km)
+    const minFee = options.minFee || 20000; // tối thiểu 20k
+    const maxFee = options.maxFee || 150000; // tối đa 150k
 
     let fee = baseFee + Math.round(distanceKm) * pricePerKm;
 
@@ -160,9 +159,8 @@ class VietMapService {
         },
         shippingFee: shipping.totalShippingFee,
         shippingDetails: shipping,
-        message: "Tính phí ship theo khoảng cách thực tế bằng VietMap"
+        message: 'Tính phí ship theo khoảng cách thực tế bằng VietMap'
       };
-
     } catch (error) {
       return {
         success: false,

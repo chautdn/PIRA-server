@@ -37,6 +37,9 @@ const notificationSchema = new mongoose.Schema(
         'EXTENSION_REQUEST',
         'EXTENSION_APPROVED',
         'EXTENSION_REJECTED',
+        'EARLY_RETURN_REQUEST',
+        'EARLY_RETURN_UPDATED',
+        'EARLY_RETURN_DELETED',
         'SYSTEM',
         'REMINDER',
         'WITHDRAWAL'
