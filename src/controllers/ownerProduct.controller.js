@@ -744,6 +744,80 @@ const ownerProductController = {
         message: error.message
       });
     }
+  },
+
+  // GET /api/owner/products/:productId/can-edit-pricing
+  canEditPricing: async (req, res) => {
+    try {
+      const { productId } = req.params;
+      const ownerId = req.user._id;
+
+      // Verify ownership
+      const Product = require('../models/Product');
+      const product = await Product.findOne({
+        _id: productId,
+        owner: ownerId,
+        deletedAt: { $exists: false }
+      });
+
+      if (!product) {
+        return res.status(404).json({
+          success: false,
+          message: 'Product not found or access denied'
+        });
+      }
+
+      const canEdit = await ownerProductService.canEditPricing(productId);
+
+      return res.status(200).json({
+        success: true,
+        data: {
+          canEditPricing: canEdit,
+          reason: canEdit 
+            ? 'No active rental requests or rentals' 
+            : 'Product has active rental requests or is currently rented'
+        }
+      });
+    } catch (error) {
+      return res.status(500).json({
+        success: false,
+        message: error.message
+      });
+    }
+  },
+
+  // PUT /api/owner/products/:productId/pricing
+  updatePricing: async (req, res) => {
+    try {
+      const { productId } = req.params;
+      const ownerId = req.user._id;
+      const pricingData = req.body;
+
+      // Validate pricing data
+      if (pricingData.dailyRate !== undefined && pricingData.dailyRate < 0) {
+        return res.status(400).json({
+          success: false,
+          message: 'Daily rate must be non-negative'
+        });
+      }
+
+      const updatedProduct = await ownerProductService.updateProductPricing(
+        ownerId,
+        productId,
+        pricingData
+      );
+
+      return res.status(200).json({
+        success: true,
+        message: 'Pricing updated successfully',
+        data: updatedProduct
+      });
+    } catch (error) {
+      return res.status(400).json({
+        success: false,
+        message: error.message
+      });
+    }
   }
 };
 

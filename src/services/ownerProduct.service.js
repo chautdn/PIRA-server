@@ -749,6 +749,90 @@ const ownerProductService = {
   },
 
   /**
+   * Check if product pricing can be edited
+   * Returns true if there are no active/pending rental requests or active rentals
+   */
+  canEditPricing: async (productId) => {
+    try {
+      const SubOrder = require('../models/SubOrder');
+      
+      // Check for any sub-orders with this product that are in states where pricing shouldn't change
+      const activeOrders = await SubOrder.find({
+        'products.product': productId,
+        'products.productStatus': {
+          $in: [
+            'PENDING',           // Pending confirmation
+            'CONFIRMED',         // Confirmed by owner
+            'SHIPPER_CONFIRMED', // Shipper confirmed
+            'IN_TRANSIT',        // In transit
+            'DELIVERED',         // Delivered
+            'ACTIVE',            // Currently rented
+            'DISPUTED',          // Has dispute
+            'RETURN_REQUESTED',  // Return requested
+            'EARLY_RETURN_REQUESTED',
+            'RETURN_SHIPPER_CONFIRMED',
+            'RETURNING'          // Returning to owner
+          ]
+        }
+      }).limit(1);
+
+      return activeOrders.length === 0;
+    } catch (error) {
+      throw new Error('Error checking pricing edit permission: ' + error.message);
+    }
+  },
+
+  /**
+   * Update product pricing (only if allowed)
+   */
+  updateProductPricing: async (ownerId, productId, pricingData) => {
+    try {
+      const product = await Product.findOne({
+        _id: productId,
+        owner: ownerId,
+        deletedAt: { $exists: false },
+        status: { $nin: ['OWNER_DELETED'] }
+      });
+
+      if (!product) {
+        throw new Error('Product not found or access denied');
+      }
+
+      // Check if pricing can be edited
+      const canEdit = await ownerProductService.canEditPricing(productId);
+      if (!canEdit) {
+        throw new Error('Cannot edit pricing while product has active rental requests or is currently rented');
+      }
+
+      // Update pricing fields
+      if (pricingData.dailyRate !== undefined) {
+        product.pricing.dailyRate = pricingData.dailyRate;
+      }
+      if (pricingData.weeklyRate !== undefined) {
+        product.pricing.weeklyRate = pricingData.weeklyRate;
+      }
+      if (pricingData.monthlyRate !== undefined) {
+        product.pricing.monthlyRate = pricingData.monthlyRate;
+      }
+      if (pricingData.depositAmount !== undefined) {
+        product.pricing.deposit.amount = pricingData.depositAmount;
+      }
+      if (pricingData.depositDescription !== undefined) {
+        product.pricing.deposit.description = pricingData.depositDescription;
+      }
+
+      const updatedProduct = await product.save();
+
+      return await Product.findById(updatedProduct._id)
+        .populate('category', 'name slug')
+        .populate('subCategory', 'name slug')
+        .populate('owner', 'profile.firstName profile.lastName email');
+    } catch (error) {
+      throw new Error(error.message);
+    }
+  },
+
+  /**
    * Legacy method - kept for backwards compatibility
    */
   extractPublicIdFromUrl: CloudinaryService.extractPublicIdFromUrl
