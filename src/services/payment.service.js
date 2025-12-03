@@ -612,31 +612,87 @@ const processWalletPaymentForOrder = async (userId, amount, orderInfo) => {
       );
     }
 
-    // Deduct from wallet
+    // Deduct from user wallet
     wallet.balance.available -= validAmount;
     await wallet.save({ session });
 
-    // Create transaction record
-    const transaction = new Transaction({
+    // Add to system wallet
+    const SystemWallet = require('../models/SystemWallet');
+    let systemWallet = await SystemWallet.findOne({}).session(session);
+
+    if (!systemWallet) {
+      systemWallet = new SystemWallet({
+        name: 'PIRA Platform Wallet',
+        balance: {
+          available: 0,
+          frozen: 0,
+          pending: 0
+        },
+        currency: 'VND',
+        status: 'ACTIVE'
+      });
+    }
+
+    systemWallet.balance.available += validAmount;
+    await systemWallet.save({ session });
+
+    // Calculate fee breakdown from orderInfo if available
+    const feeBreakdown = {
+      deposit: orderInfo.totalDeposit || 0,
+      rental: orderInfo.totalRental || 0,
+      shipping: orderInfo.totalShipping || 0
+    };
+
+    // Create transaction record for user (payment out)
+    const userTransaction = new Transaction({
       user: userId,
       wallet: wallet._id,
       type: 'payment',
       amount: validAmount,
       status: 'success',
       paymentMethod: 'wallet',
+      toSystemWallet: true,
+      systemWalletAction: 'revenue',
       description: `Thanh toán đơn thuê #${orderInfo.orderNumber || 'N/A'}`,
       metadata: {
         orderInfo,
-        balanceAfter: wallet.balance.available
-      }
+        balanceAfter: wallet.balance.available,
+        feeBreakdown: feeBreakdown
+      },
+      processedAt: new Date()
     });
 
-    await transaction.save({ session });
+    await userTransaction.save({ session });
+
+    // Create transaction record for system wallet (payment in)
+    const systemTransaction = new Transaction({
+      user: new mongoose.Types.ObjectId('000000000000000000000000'), // System user placeholder
+      wallet: null,
+      type: 'TRANSFER_IN',
+      amount: validAmount,
+      status: 'success',
+      paymentMethod: 'wallet',
+      fromSystemWallet: false,
+      toSystemWallet: true,
+      systemWalletAction: 'revenue',
+      description: `Nhận thanh toán đơn thuê #${orderInfo.orderNumber || 'N/A'}`,
+      metadata: {
+        orderInfo,
+        fromUser: userId,
+        fromWallet: wallet._id,
+        feeBreakdown: feeBreakdown,
+        isSystemTransaction: true
+      },
+      processedAt: new Date()
+    });
+
+    await systemTransaction.save({ session });
 
     await session.commitTransaction();
 
     return {
-      transactionId: transaction._id,
+      transactionId: userTransaction._id,
+      systemTransactionId: systemTransaction._id,
       balanceAfter: wallet.balance.available,
       amount: validAmount,
       status: 'success'

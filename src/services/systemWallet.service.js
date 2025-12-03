@@ -84,7 +84,9 @@ class SystemWalletService {
       } else {
         // If no valid admin, skip transaction creation (system operation)
         // Or you could create a placeholder system user in your DB
-        console.warn('⚠️ addFunds: No valid admin ObjectId provided, skipping transaction creation');
+        console.warn(
+          '⚠️ addFunds: No valid admin ObjectId provided, skipping transaction creation'
+        );
       }
 
       if (transactionUser) {
@@ -160,7 +162,9 @@ class SystemWalletService {
         transactionUser = adminId;
       } else {
         // If no valid admin, skip transaction creation (system operation)
-        console.warn('⚠️ deductFunds: No valid admin ObjectId provided, skipping transaction creation');
+        console.warn(
+          '⚠️ deductFunds: No valid admin ObjectId provided, skipping transaction creation'
+        );
       }
 
       if (transactionUser) {
@@ -337,7 +341,12 @@ class SystemWalletService {
    * Add funds to system wallet from promotion payments (system operation)
    * Use case: Revenue from product promotions
    */
-  async addPromotionRevenue(amount, description = 'Promotion payment revenue', userId = null, metadata = {}) {
+  async addPromotionRevenue(
+    amount,
+    description = 'Promotion payment revenue',
+    userId = null,
+    metadata = {}
+  ) {
     if (amount <= 0) {
       throw new Error('Amount must be positive');
     }
@@ -398,7 +407,13 @@ class SystemWalletService {
    * Admin: Transfer from user wallet to system wallet
    * Use case: Collect fees, penalties, etc.
    */
-  async transferFromUser(adminId, userId, amount, description = 'Admin transfer from user') {
+  async transferFromUser(
+    adminId,
+    userId,
+    amount,
+    description = 'Admin transfer from user',
+    options = {}
+  ) {
     if (amount <= 0) {
       throw new Error('Amount must be positive');
     }
@@ -436,14 +451,22 @@ class SystemWalletService {
       systemWallet.lastModifiedAt = new Date();
       await systemWallet.save({ session });
 
+      // Determine transaction type based on context
+      // If this is order payment (not admin action), use 'payment' type
+      const isOrderPayment =
+        options.isOrderPayment ||
+        description.includes('Payment for order') ||
+        description.includes('Thanh toán đơn');
+      const transactionType = isOrderPayment ? 'payment' : 'withdrawal';
+
       // Create transaction record
       // Only create system transaction if we have a valid admin ObjectId
       let systemTransaction = null;
       if (adminId && mongoose.Types.ObjectId.isValid(adminId)) {
         systemTransaction = new Transaction({
-          user: adminId,  // Admin user for audit trail
+          user: adminId, // Admin user for audit trail
           wallet: systemWallet._id,
-          type: 'withdrawal',
+          type: 'TRANSFER_IN',
           amount: amount,
           status: 'success',
           paymentMethod: 'wallet',
@@ -452,7 +475,8 @@ class SystemWalletService {
             adminId: adminId,
             action: 'TRANSFER_FROM_USER',
             sourceUserId: userId,
-            sourceWalletId: userWallet._id
+            sourceWalletId: userWallet._id,
+            ...(options.metadata || {})
           }
         });
         await systemTransaction.save({ session });
@@ -461,7 +485,7 @@ class SystemWalletService {
       const userTransaction = new Transaction({
         user: userId,
         wallet: userWallet._id,
-        type: 'withdrawal',
+        type: transactionType, // 'payment' for order payments, 'withdrawal' for admin transfers
         amount: amount,
         status: 'success',
         paymentMethod: 'wallet',
@@ -469,7 +493,8 @@ class SystemWalletService {
         metadata: {
           adminId: adminId,
           action: 'TRANSFERRED_TO_SYSTEM',
-          destinationWallet: 'SYSTEM'
+          destinationWallet: 'SYSTEM',
+          ...(options.metadata || {})
         }
       });
       await userTransaction.save({ session });
@@ -558,11 +583,12 @@ class SystemWalletService {
     const total = await Transaction.countDocuments(query);
 
     // Add transaction type labels for admin UI
-    const processedTransactions = transactions.map(transaction => ({
+    const processedTransactions = transactions.map((transaction) => ({
       ...transaction,
       typeLabel: this.getTransactionTypeLabel(transaction),
-      isSystemTransaction: transaction.metadata?.isSystemTransaction || 
-                          transaction.user?.toString() === '000000000000000000000000'
+      isSystemTransaction:
+        transaction.metadata?.isSystemTransaction ||
+        transaction.user?.toString() === '000000000000000000000000'
     }));
 
     return {
@@ -581,7 +607,7 @@ class SystemWalletService {
    */
   getTransactionTypeLabel(transaction) {
     const { type, metadata } = transaction;
-    
+
     switch (type) {
       case 'PROMOTION_REVENUE':
         return 'Revenue from Product Promotion';
@@ -722,24 +748,21 @@ class SystemWalletService {
     try {
       // Get basic balance info
       const balance = await this.getBalance();
-      
+
       // Get transaction flow analytics
       const periodMap = { '7d': 7, '30d': 30, '90d': 90, '1y': 365 };
       const days = periodMap[period] || 30;
       const startDate = new Date();
       startDate.setDate(startDate.getDate() - days);
-      
+
       const flowAnalytics = await this.getTransactionFlowAnalytics({ startDate });
       const recentActivity = await this.getRecentActivity(24);
-      
+
       // Get transaction breakdown by type
       const typeBreakdown = await Transaction.aggregate([
         {
           $match: {
-            $or: [
-              { fromSystemWallet: true },
-              { toSystemWallet: true }
-            ],
+            $or: [{ fromSystemWallet: true }, { toSystemWallet: true }],
             createdAt: { $gte: startDate }
           }
         },
@@ -779,8 +802,8 @@ class SystemWalletService {
       throw new Error('Rental amount must be positive');
     }
 
-    const platformFeePercentage = 0.20; // 20% fee
-    const ownerSharePercentage = 0.80;  // 80% to owner
+    const platformFeePercentage = 0.2; // 20% fee
+    const ownerSharePercentage = 0.8; // 80% to owner
     const platformFeeAmount = Math.round(totalRentalAmount * platformFeePercentage);
     const ownerShareAmount = Math.round(totalRentalAmount * ownerSharePercentage);
 
@@ -830,7 +853,7 @@ class SystemWalletService {
       // Add owner share to owner wallet as FROZEN (will be unfrozen after 24h)
       ownerWallet.balance.frozen += ownerShareAmount;
       await ownerWallet.save({ session });
-      
+
       // Create frozen record for automatic unlock in 24h
       const FrozenBalance = require('../models/FrozenBalance');
       const frozenRecord = new FrozenBalance({
@@ -845,7 +868,7 @@ class SystemWalletService {
       await frozenRecord.save({ session });
 
       // Create transaction records with platform fee tracking
-      
+
       // System transaction: Total amount transferred out (80% to owner + 20% platform fee retained)
       const systemTransaction = new Transaction({
         user: adminId && adminId !== 'SYSTEM_AUTO_TRANSFER' ? adminId : ownerId,
