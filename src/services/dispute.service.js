@@ -314,56 +314,28 @@ class DisputeService {
     };
 
     if (decision === 'ACCEPTED') {
-      // Respondent đồng ý -> Kiểm tra xem có cần thanh toán ngoài không
+      // Respondent đồng ý -> Xử lý tự động
       const subOrder = await SubOrder.findById(dispute.subOrder);
       const product = subOrder.products[dispute.productIndex];
       const depositAmount = product.totalDeposit || 0;
       const repairCost = dispute.repairCost || 0;
       
-      if (repairCost > depositAmount) {
-        // Chi phí > tiền cọc → Cần thanh toán ngoài
-        dispute.status = 'WAITING_EXTERNAL_PAYMENT';
-        
-        const additionalPayment = repairCost - depositAmount;
-        
-        dispute.externalPayment = {
-          required: true,
-          amount: additionalPayment,
-          depositUsed: depositAmount,
-          receiptUploadDeadline: new Date(Date.now() + 3 * 24 * 60 * 60 * 1000), // 3 ngày
-          receipt: {},
-          ownerConfirmation: {},
-          adminReview: {}
-        };
-        
-        dispute.timeline.push({
-          action: 'RESPONDENT_ACCEPTED_EXTERNAL_PAYMENT',
-          performedBy: respondentId,
-          details: `Respondent chấp nhận. Tiền cọc ${depositAmount.toLocaleString()}đ đã trừ. Cần thanh toán thêm ${additionalPayment.toLocaleString()}đ ngoài hệ thống.`,
-          timestamp: new Date()
-        });
-        
-        // TODO: Xử lý chuyển tiền cọc cho owner
-        
-      } else {
-        // Chi phí <= tiền cọc → Tự động xử lý
-        dispute.status = 'RESPONDENT_ACCEPTED';
-        dispute.resolution = {
-          resolvedBy: respondentId,
-          resolvedAt: new Date(),
-          resolutionText: reason || `Respondent đã chấp nhận. Trừ ${repairCost.toLocaleString()}đ từ tiền cọc.`,
-          resolutionSource: 'RESPONDENT_ACCEPTED'
-        };
-        
-        dispute.timeline.push({
-          action: 'RESPONDENT_ACCEPTED',
-          performedBy: respondentId,
-          details: `Respondent đã chấp nhận. Xử lý tài chính: Trừ ${repairCost.toLocaleString()}đ từ tiền cọc, hoàn lại ${(depositAmount - repairCost).toLocaleString()}đ.`,
-          timestamp: new Date()
-        });
-        
-        // TODO: Xử lý tài chính tự động
-      }
+      dispute.status = 'RESPONDENT_ACCEPTED';
+      dispute.resolution = {
+        resolvedBy: respondentId,
+        resolvedAt: new Date(),
+        resolutionText: reason || `Respondent đã chấp nhận. Chi phí sửa: ${repairCost.toLocaleString()}đ.`,
+        resolutionSource: 'RESPONDENT_ACCEPTED'
+      };
+      
+      dispute.timeline.push({
+        action: 'RESPONDENT_ACCEPTED',
+        performedBy: respondentId,
+        details: `Respondent đã chấp nhận. Chi phí sửa: ${repairCost.toLocaleString()}đ, Tiền cọc: ${depositAmount.toLocaleString()}đ. ${repairCost > depositAmount ? 'Cần nạp thêm vào ví để admin xử lý.' : 'Sẽ trừ từ tiền cọc.'}`,
+        timestamp: new Date()
+      });
+      
+      // TODO: Xử lý tài chính tự động
     } else {
       // Respondent từ chối -> Chuyển admin xử lý
       dispute.status = 'RESPONDENT_REJECTED';
@@ -670,8 +642,16 @@ class DisputeService {
    */
   async getDisputeDetail(disputeId) {
     const dispute = await Dispute.findOne(this._buildDisputeQuery(disputeId))
-      .populate('complainant', 'profile email phone bankAccount')
-      .populate('respondent', 'profile email phone bankAccount')
+      .populate({
+        path: 'complainant',
+        select: 'profile email phone bankAccount wallet',
+        populate: { path: 'wallet' }
+      })
+      .populate({
+        path: 'respondent',
+        select: 'profile email phone bankAccount wallet',
+        populate: { path: 'wallet' }
+      })
       .populate('assignedAdmin', 'profile email')
       .populate({
         path: 'subOrder',
@@ -805,284 +785,171 @@ class DisputeService {
   }
 
   /**
-   * Renter upload biên lai thanh toán ngoài
+   * Admin xử lý thanh toán từ ví + tiền cọc
+   * @param {String} disputeId - ID của dispute
+   * @param {String} adminId - ID của admin
+   * @param {Object} paymentData - { repairCost, depositAmount, additionalRequired }
+   * @returns {Promise<Dispute>}
    */
-  async uploadPaymentReceipt(disputeId, userId, images) {
-    const dispute = await Dispute.findOne(this._buildDisputeQuery(disputeId));
-    
+  async adminProcessPayment(disputeId, adminId, paymentData) {
+    const dispute = await Dispute.findOne(this._buildDisputeQuery(disputeId))
+      .populate('complainant')
+      .populate('respondent')
+      .populate('subOrder')
+      .populate('assignedAdmin');
+
     if (!dispute) {
       throw new Error('Dispute không tồn tại');
     }
 
-    if (dispute.status !== 'WAITING_EXTERNAL_PAYMENT') {
-      throw new Error('Dispute không ở trạng thái chờ thanh toán ngoài');
+    // Chỉ xử lý khi status là RESPONDENT_ACCEPTED
+    if (dispute.status !== 'RESPONDENT_ACCEPTED') {
+      throw new Error(`Không thể xử lý thanh toán ở trạng thái ${dispute.status}`);
     }
 
-    // Kiểm tra quyền (phải là respondent/renter)
-    if (dispute.respondent.toString() !== userId.toString()) {
-      throw new Error('Chỉ người thanh toán mới có thể upload biên lai');
+    const { repairCost, depositAmount, additionalRequired } = paymentData;
+
+    // Lấy thông tin renter (respondent) và owner (complainant)
+    const renter = await User.findById(dispute.respondent._id).populate('wallet');
+    const owner = await User.findById(dispute.complainant._id).populate('wallet');
+
+    if (!renter || !owner) {
+      throw new Error('Không tìm thấy thông tin người dùng');
     }
 
-    // Kiểm tra đã quá hạn chưa
-    if (new Date() > new Date(dispute.externalPayment.receiptUploadDeadline)) {
-      throw new Error('Đã quá hạn upload biên lai (3 ngày)');
+    // Kiểm tra số dư ví + tiền cọc
+    const renterAvailableBalance = renter.wallet?.balance?.available || 0;
+    const totalAvailable = renterAvailableBalance + depositAmount;
+    if (totalAvailable < repairCost) {
+      throw new Error(`Renter chưa đủ tiền. Cần: ${repairCost.toLocaleString('vi-VN')}đ, Có: ${totalAvailable.toLocaleString('vi-VN')}đ (Ví: ${renterAvailableBalance.toLocaleString('vi-VN')}đ + Cọc: ${depositAmount.toLocaleString('vi-VN')}đ)`);
     }
 
-    // Upload biên lai
-    dispute.externalPayment.receipt = {
-      images,
-      uploadedAt: new Date(),
-      uploadedBy: userId
-    };
+    const Wallet = require('../models/Wallet');
+    const session = await mongoose.startSession();
+    session.startTransaction();
 
-    // Set deadline cho owner xác nhận (3 ngày)
-    dispute.externalPayment.confirmationDeadline = new Date(Date.now() + 3 * 24 * 60 * 60 * 1000);
-
-    dispute.timeline.push({
-      action: 'PAYMENT_RECEIPT_UPLOADED',
-      performedBy: userId,
-      details: `Renter đã upload biên lai thanh toán ${dispute.externalPayment.amount.toLocaleString()}đ`,
-      timestamp: new Date()
-    });
-
-    await dispute.save();
-
-    // Gửi notification cho owner
     try {
-      const renter = await User.findById(userId);
-      await this._createAndEmitNotification({
-        recipient: dispute.complainant, // Owner
-        type: 'DISPUTE',
-        category: 'INFO',
-        title: 'Renter đã upload biên lai thanh toán',
-        message: `${renter.profile?.fullName || 'Renter'} đã upload biên lai thanh toán ${dispute.externalPayment.amount.toLocaleString()}đ. Vui lòng kiểm tra và xác nhận.`,
-        relatedDispute: dispute._id,
-        actions: [{
-          label: 'Xem chi tiết',
-          url: `/disputes/${dispute._id}`,
-          action: 'VIEW_DISPUTE'
-        }]
-      });
-    } catch (error) {
-      console.error('Failed to send receipt upload notification:', error);
-    }
+      // 1. Trừ tiền cọc trước (nếu có)
+      let remainingCost = repairCost;
+      const depositUsed = Math.min(depositAmount, repairCost);
+      remainingCost -= depositUsed;
 
-    return dispute.populate(['complainant', 'respondent']);
-  }
+      // 2. Nếu còn thiếu, trừ từ ví renter
+      if (remainingCost > 0) {
+        const renterWallet = await Wallet.findById(renter.wallet._id);
+        
+        if (!renterWallet) {
+          throw new Error('Không tìm thấy ví của renter');
+        }
 
-  /**
-   * Owner xác nhận đã nhận thanh toán ngoài
-   */
-  async confirmExternalPayment(disputeId, userId, confirmed, note) {
-    const dispute = await Dispute.findOne(this._buildDisputeQuery(disputeId));
-    
-    if (!dispute) {
-      throw new Error('Dispute không tồn tại');
-    }
+        const availableBalance = renterWallet.balance?.available || 0;
+        
+        if (availableBalance < remainingCost) {
+          throw new Error(`Ví không đủ tiền. Cần: ${remainingCost.toLocaleString('vi-VN')}đ, Có: ${availableBalance.toLocaleString('vi-VN')}đ`);
+        }
 
-    if (dispute.status !== 'WAITING_EXTERNAL_PAYMENT') {
-      throw new Error('Dispute không ở trạng thái chờ xác nhận thanh toán');
-    }
+        // Deduct from available balance
+        renterWallet.balance.available -= remainingCost;
+        renterWallet.balance.display = (renterWallet.balance.available || 0) + (renterWallet.balance.frozen || 0) + (renterWallet.balance.pending || 0);
+        await renterWallet.save({ session });
+      }
 
-    // Kiểm tra quyền (phải là complainant/owner)
-    if (dispute.complainant.toString() !== userId.toString()) {
-      throw new Error('Chỉ người nhận tiền mới có thể xác nhận');
-    }
-
-    // Kiểm tra renter đã upload biên lai chưa
-    if (!dispute.externalPayment.receipt?.uploadedAt) {
-      throw new Error('Renter chưa upload biên lai');
-    }
-
-    dispute.externalPayment.ownerConfirmation = {
-      confirmed,
-      confirmedAt: new Date(),
-      confirmedBy: userId,
-      note: note || ''
-    };
-
-    if (confirmed) {
-      // Owner xác nhận đã nhận tiền → RESOLVED
-      dispute.status = 'RESOLVED';
-      dispute.resolution = {
-        resolvedBy: userId,
-        resolvedAt: new Date(),
-        resolutionText: `Tranh chấp đã giải quyết. Tổng bồi thường: ${dispute.repairCost.toLocaleString()}đ (${dispute.externalPayment.depositUsed.toLocaleString()}đ từ cọc + ${dispute.externalPayment.amount.toLocaleString()}đ thanh toán ngoài).`,
-        resolutionSource: 'RESPONDENT_ACCEPTED'
-      };
-
-      dispute.timeline.push({
-        action: 'EXTERNAL_PAYMENT_CONFIRMED',
-        performedBy: userId,
-        details: `Owner xác nhận đã nhận ${dispute.externalPayment.amount.toLocaleString()}đ. Dispute đã giải quyết.`,
-        timestamp: new Date()
-      });
-
-      // TODO: Xử lý hoàn tất tài chính
-
-    } else {
-      // Owner từ chối → Chuyển admin xử lý
-      dispute.status = 'ADMIN_REVIEW';
+      // 3. Chuyển tiền cho owner
+      let ownerWallet = await Wallet.findById(owner.wallet._id);
       
-      dispute.timeline.push({
-        action: 'EXTERNAL_PAYMENT_DISPUTED',
-        performedBy: userId,
-        details: `Owner báo cáo chưa nhận được tiền. Lý do: ${note}. Admin sẽ xem xét.`,
-        timestamp: new Date()
-      });
-    }
-
-    await dispute.save();
-
-    // Gửi notification
-    try {
-      const owner = await User.findById(userId);
-      const notifMessage = confirmed 
-        ? `${owner.profile?.fullName || 'Owner'} đã xác nhận nhận được tiền. Tranh chấp đã giải quyết.`
-        : `${owner.profile?.fullName || 'Owner'} báo cáo chưa nhận được tiền. Admin sẽ xem xét.`;
-
-      await this._createAndEmitNotification({
-        recipient: dispute.respondent, // Renter
-        type: 'DISPUTE',
-        category: confirmed ? 'SUCCESS' : 'WARNING',
-        title: confirmed ? 'Thanh toán đã được xác nhận' : 'Thanh toán bị từ chối',
-        message: notifMessage,
-        relatedDispute: dispute._id,
-        actions: [{
-          label: 'Xem chi tiết',
-          url: `/disputes/${dispute._id}`,
-          action: 'VIEW_DISPUTE'
-        }]
-      });
-    } catch (error) {
-      console.error('Failed to send confirmation notification:', error);
-    }
-
-    return dispute.populate(['complainant', 'respondent']);
-  }
-
-  /**
-   * Admin xem xét external payment khi owner báo chưa nhận tiền
-   */
-  async adminReviewExternalPayment(disputeId, adminId, decision) {
-    const { approved, reasoning } = decision;
-
-    const dispute = await Dispute.findOne(this._buildDisputeQuery(disputeId));
-    if (!dispute) {
-      throw new Error('Dispute không tồn tại');
-    }
-
-    if (dispute.status !== 'ADMIN_REVIEW') {
-      throw new Error('Dispute không ở trạng thái ADMIN_REVIEW');
-    }
-
-    if (!dispute.externalPayment?.ownerConfirmation?.confirmedAt) {
-      throw new Error('Owner chưa báo cáo về thanh toán');
-    }
-
-    // Kiểm tra admin role
-    const admin = await User.findById(adminId);
-    if (!admin || admin.role !== 'ADMIN') {
-      throw new Error('Chỉ admin mới có quyền xử lý');
-    }
-
-    dispute.externalPayment.adminReview = {
-      reviewed: true,
-      reviewedBy: adminId,
-      reviewedAt: new Date(),
-      decision: approved ? 'APPROVED' : 'REJECTED',
-      reasoning
-    };
-
-    if (approved) {
-      // Admin xác nhận renter đã thanh toán → RESOLVED
-      dispute.status = 'RESOLVED';
-      dispute.resolution = {
-        resolvedBy: adminId,
-        resolvedAt: new Date(),
-        resolutionText: `Admin xác nhận thanh toán hợp lệ. Tổng bồi thường: ${dispute.repairCost.toLocaleString()}đ (${dispute.externalPayment.depositUsed.toLocaleString()}đ từ cọc + ${dispute.externalPayment.amount.toLocaleString()}đ thanh toán ngoài).`,
-        resolutionSource: 'ADMIN_DECISION'
-      };
-
-      dispute.timeline.push({
-        action: 'ADMIN_APPROVED_EXTERNAL_PAYMENT',
-        performedBy: adminId,
-        details: `Admin xác nhận biên lai hợp lệ, renter đã thanh toán đủ. Lý do: ${reasoning}`,
-        timestamp: new Date()
-      });
-    } else {
-      // Admin từ chối biên lai → Yêu cầu renter thanh toán lại
-      dispute.status = 'WAITING_EXTERNAL_PAYMENT';
-      dispute.externalPayment.receipt = null; // Xóa biên lai cũ
-      dispute.externalPayment.ownerConfirmation = null;
-      dispute.externalPayment.receiptUploadDeadline = new Date(Date.now() + 3 * 24 * 60 * 60 * 1000); // +3 ngày
-
-      dispute.timeline.push({
-        action: 'ADMIN_REJECTED_EXTERNAL_PAYMENT',
-        performedBy: adminId,
-        details: `Admin từ chối biên lai, yêu cầu thanh toán lại. Lý do: ${reasoning}`,
-        timestamp: new Date()
-      });
-    }
-
-    await dispute.save();
-
-    // Gửi notification
-    try {
-      const adminUser = await User.findById(adminId);
-      
-      if (approved) {
-        // Thông báo cho cả 2 bên
-        await Promise.all([
-          this._createAndEmitNotification({
-            recipient: dispute.complainant, // Owner
-            type: 'DISPUTE',
-            category: 'SUCCESS',
-            title: 'Admin đã xác nhận thanh toán',
-            message: `Admin ${adminUser.profile?.fullName || 'hệ thống'} xác nhận biên lai hợp lệ. Tranh chấp đã giải quyết.`,
-            relatedDispute: dispute._id,
-            actions: [{
-              label: 'Xem chi tiết',
-              url: `/disputes/${dispute._id}`,
-              action: 'VIEW_DISPUTE'
-            }]
-          }),
-          this._createAndEmitNotification({
-            recipient: dispute.respondent, // Renter
-            type: 'DISPUTE',
-            category: 'SUCCESS',
-            title: 'Thanh toán đã được xác nhận',
-            message: `Admin xác nhận bạn đã thanh toán đúng. Tranh chấp đã giải quyết.`,
-            relatedDispute: dispute._id,
-            actions: [{
-              label: 'Xem chi tiết',
-              url: `/disputes/${dispute._id}`,
-              action: 'VIEW_DISPUTE'
-            }]
-          })
-        ]);
-      } else {
-        // Thông báo cho renter upload lại
-        await this._createAndEmitNotification({
-          recipient: dispute.respondent, // Renter
-          type: 'DISPUTE',
-          category: 'WARNING',
-          title: 'Biên lai bị từ chối',
-          message: `Admin ${adminUser.profile?.fullName || 'hệ thống'} từ chối biên lai. Lý do: ${reasoning}. Vui lòng upload lại.`,
-          relatedDispute: dispute._id,
-          actions: [{
-            label: 'Upload lại',
-            url: `/disputes/${dispute._id}`,
-            action: 'VIEW_DISPUTE'
-          }]
+      if (!ownerWallet) {
+        // Create wallet if not exists
+        ownerWallet = new Wallet({
+          user: owner._id,
+          balance: { available: 0, frozen: 0, pending: 0, display: 0 },
+          currency: 'VND',
+          status: 'ACTIVE'
         });
       }
-    } catch (error) {
-      console.error('Failed to send admin review notification:', error);
-    }
+      
+      ownerWallet.balance.available += repairCost;
+      ownerWallet.balance.display = (ownerWallet.balance.available || 0) + (ownerWallet.balance.frozen || 0) + (ownerWallet.balance.pending || 0);
+      await ownerWallet.save({ session });
 
-    return dispute.populate(['complainant', 'respondent', 'assignedAdmin']);
+      // 4. Cập nhật dispute
+      dispute.status = 'RESOLVED';
+      dispute.resolution = {
+        decision: 'ACCEPT_REPAIR_COST',
+        resolutionSource: 'ADMIN_PROCESSED_PAYMENT',
+        resolvedBy: adminId,
+        resolvedAt: new Date(),
+        notes: `Admin đã xử lý thanh toán:\n` +
+               `- Chi phí sửa chữa: ${repairCost.toLocaleString('vi-VN')}đ\n` +
+               `- Trừ từ tiền cọc: ${depositUsed.toLocaleString('vi-VN')}đ\n` +
+               (remainingCost > 0 ? `- Trừ từ ví: ${remainingCost.toLocaleString('vi-VN')}đ\n` : '') +
+               `- Đã chuyển ${repairCost.toLocaleString('vi-VN')}đ cho owner`
+      };
+
+      dispute.timeline.push({
+        action: 'ADMIN_PROCESSED_PAYMENT',
+        actor: adminId,
+        details: `Admin xử lý thanh toán thành công. Trừ ${depositUsed.toLocaleString('vi-VN')}đ từ cọc${remainingCost > 0 ? ` + ${remainingCost.toLocaleString('vi-VN')}đ từ ví` : ''}. Chuyển ${repairCost.toLocaleString('vi-VN')}đ cho owner.`,
+        timestamp: new Date()
+      });
+
+      await dispute.save({ session });
+
+      await session.commitTransaction();
+      session.endSession();
+
+      // Reload dispute with populated fields
+      const updatedDispute = await Dispute.findById(dispute._id)
+        .populate('complainant', 'profile email')
+        .populate('respondent', 'profile email')
+        .populate('assignedAdmin', 'profile email');
+
+      // Gửi notification
+      try {
+        // Notification cho renter
+        await this._createAndEmitNotification({
+          recipient: renter._id,
+          type: 'DISPUTE_RESOLVED',
+          title: 'Dispute đã được giải quyết',
+          message: `Admin đã xử lý thanh toán cho dispute ${dispute.disputeId}. Đã trừ ${depositUsed.toLocaleString('vi-VN')}đ từ cọc${remainingCost > 0 ? ` và ${remainingCost.toLocaleString('vi-VN')}đ từ ví` : ''}.`,
+          relatedModel: 'Dispute',
+          relatedId: dispute._id,
+          actionButtons: [{
+            label: 'Xem chi tiết',
+            url: `/disputes/${dispute._id}`,
+            action: 'VIEW_DISPUTE'
+          }],
+          status: 'SENT'
+        });
+
+        // Notification cho owner
+        await this._createAndEmitNotification({
+          recipient: owner._id,
+          type: 'DISPUTE_RESOLVED',
+          title: 'Dispute đã được giải quyết',
+          message: `Admin đã xử lý thanh toán cho dispute ${dispute.disputeId}. Bạn đã nhận ${repairCost.toLocaleString('vi-VN')}đ tiền sửa chữa.`,
+          relatedModel: 'Dispute',
+          relatedId: dispute._id,
+          actionButtons: [{
+            label: 'Xem chi tiết',
+            url: `/disputes/${dispute._id}`,
+            action: 'VIEW_DISPUTE'
+          }],
+          status: 'SENT'
+        });
+      } catch (notifError) {
+        console.error('Failed to send payment notifications:', notifError);
+      }
+
+      return updatedDispute;
+
+    } catch (error) {
+      await session.abortTransaction();
+      session.endSession();
+      throw error;
+    }
   }
+
+
 }
 
 module.exports = new DisputeService();

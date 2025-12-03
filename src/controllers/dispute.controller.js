@@ -362,73 +362,41 @@ class DisputeController {
   }
 
   /**
-   * Renter upload biên lai thanh toán ngoài
-   * POST /api/disputes/:disputeId/upload-payment-receipt
+   * Admin xử lý thanh toán từ ví + tiền cọc
+   * POST /api/disputes/:disputeId/admin-process-payment
    */
-  async uploadPaymentReceipt(req, res) {
+  async adminProcessPayment(req, res) {
     try {
       const { disputeId } = req.params;
-      const { images } = req.body;
-      const userId = req.user._id;
-
-      const dispute = await disputeService.uploadPaymentReceipt(disputeId, userId, images);
-
-      return responseUtils.success(res, {
-        dispute,
-        message: 'Upload biên lai thành công'
-      });
-    } catch (error) {
-      console.error('Upload payment receipt error:', error);
-      return responseUtils.error(res, error.message, 400);
-    }
-  }
-
-  /**
-   * Owner xác nhận đã nhận thanh toán ngoài
-   * POST /api/disputes/:disputeId/confirm-external-payment
-   */
-  async confirmExternalPayment(req, res) {
-    try {
-      const { disputeId } = req.params;
-      const { confirmed, note } = req.body;
-      const userId = req.user._id;
-
-      const dispute = await disputeService.confirmExternalPayment(disputeId, userId, confirmed, note);
-
-      return responseUtils.success(res, {
-        dispute,
-        message: confirmed ? 'Xác nhận đã nhận tiền' : 'Đã báo cáo chưa nhận tiền'
-      });
-    } catch (error) {
-      console.error('Confirm external payment error:', error);
-      return responseUtils.error(res, error.message, 400);
-    }
-  }
-
-  /**
-   * Admin xem xét external payment
-   * POST /api/disputes/:disputeId/admin-review-external-payment
-   */
-  async adminReviewExternalPayment(req, res) {
-    try {
-      const { disputeId } = req.params;
-      const { approved, reasoning } = req.body;
       const adminId = req.user._id;
+      const { repairCost, depositAmount, additionalRequired } = req.body;
 
-      const dispute = await disputeService.adminReviewExternalPayment(disputeId, adminId, {
-        approved,
-        reasoning
+      // Validate input
+      if (!repairCost || repairCost <= 0) {
+        return responseUtils.error(res, 'Chi phí sửa chữa không hợp lệ', 400);
+      }
+
+      if (depositAmount < 0) {
+        return responseUtils.error(res, 'Tiền cọc không hợp lệ', 400);
+      }
+
+      const dispute = await disputeService.adminProcessPayment(disputeId, adminId, {
+        repairCost,
+        depositAmount,
+        additionalRequired
       });
 
       return responseUtils.success(res, {
         dispute,
-        message: approved ? 'Đã xác nhận thanh toán hợp lệ' : 'Đã từ chối biên lai'
+        message: 'Xử lý thanh toán thành công'
       });
     } catch (error) {
-      console.error('Admin review external payment error:', error);
+      console.error('Admin process payment error:', error);
       return responseUtils.error(res, error.message, 400);
     }
   }
+
+
 }
 
 module.exports = new DisputeController();

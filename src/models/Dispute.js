@@ -110,7 +110,6 @@ const disputeSchema = new mongoose.Schema(
         'OPEN', // Mới tạo, chờ respondent phản hồi
         'RESPONDENT_ACCEPTED', // Respondent đồng ý -> Done
         'RESPONDENT_REJECTED', // Respondent từ chối -> Chuyển admin
-        'WAITING_EXTERNAL_PAYMENT', // Chờ thanh toán ngoài hệ thống (khi chi phí > cọc)
         'ADMIN_REVIEW', // Auto-escalated lên admin (cho shipper damage)
         'ADMIN_REVIEWING', // Admin đang xem xét bằng chứng
         'ADMIN_DECISION_MADE', // Admin đưa ra quyết định sơ bộ
@@ -147,50 +146,6 @@ const disputeSchema = new mongoose.Schema(
         documents: [String],
         notes: String
       }
-    },
-    
-    // External Payment (khi chi phí bồi thường > tiền cọc)
-    externalPayment: {
-      required: Boolean,
-      amount: Number, // Số tiền cần trả thêm ngoài hệ thống
-      depositUsed: Number, // Số tiền cọc đã trừ
-      
-      // Renter upload biên lai chuyển khoản
-      receipt: {
-        images: [String],
-        uploadedAt: Date,
-        uploadedBy: {
-          type: mongoose.Schema.Types.ObjectId,
-          ref: 'User'
-        }
-      },
-      
-      // Owner xác nhận đã nhận tiền
-      ownerConfirmation: {
-        confirmed: Boolean,
-        confirmedAt: Date,
-        confirmedBy: {
-          type: mongoose.Schema.Types.ObjectId,
-          ref: 'User'
-        },
-        note: String // Lý do nếu từ chối
-      },
-      
-      // Admin review (nếu có tranh chấp về thanh toán)
-      adminReview: {
-        reviewed: Boolean,
-        reviewedAt: Date,
-        reviewedBy: {
-          type: mongoose.Schema.Types.ObjectId,
-          ref: 'User'
-        },
-        decision: String, // 'CONFIRMED' hoặc 'REJECTED'
-        reasoning: String
-      },
-      
-      // Deadlines
-      receiptUploadDeadline: Date, // Hạn upload biên lai (3 ngày)
-      confirmationDeadline: Date // Hạn owner xác nhận (3 ngày sau khi upload)
     },
     
     // Admin decision
@@ -318,7 +273,7 @@ const disputeSchema = new mongoose.Schema(
       resolutionText: String,
       resolutionSource: {
         type: String,
-        enum: ['RESPONDENT_ACCEPTED', 'ADMIN_DECISION', 'NEGOTIATION', 'THIRD_PARTY']
+        enum: ['RESPONDENT_ACCEPTED', 'ADMIN_DECISION', 'NEGOTIATION', 'THIRD_PARTY', 'ADMIN_PROCESSED_PAYMENT']
       },
       // Financial Impact
       financialImpact: {
