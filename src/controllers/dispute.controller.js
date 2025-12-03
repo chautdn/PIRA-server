@@ -396,6 +396,44 @@ class DisputeController {
     }
   }
 
+  /**
+   * Admin quyết định cuối cùng cho owner dispute từ kết quả bên thứ 3
+   * POST /api/disputes/:disputeId/admin-final-decision-owner-dispute
+   */
+  async adminFinalDecisionOwnerDispute(req, res) {
+    try {
+      const { disputeId } = req.params;
+      const adminId = req.user._id;
+      const { decision, compensationAmount, reasoning } = req.body;
+
+      // Validate
+      if (!decision || !['COMPLAINANT_RIGHT', 'RESPONDENT_RIGHT'].includes(decision)) {
+        return responseUtils.error(res, 'Quyết định không hợp lệ', 400);
+      }
+
+      if (decision === 'COMPLAINANT_RIGHT' && (!compensationAmount || compensationAmount <= 0)) {
+        return responseUtils.error(res, 'Số tiền bồi thường không hợp lệ', 400);
+      }
+
+      if (!reasoning || !reasoning.trim()) {
+        return responseUtils.error(res, 'Vui lòng nhập lý do quyết định', 400);
+      }
+
+      const dispute = await disputeService.adminFinalDecisionOwnerDispute(disputeId, adminId, {
+        decision,
+        compensationAmount: decision === 'COMPLAINANT_RIGHT' ? parseFloat(compensationAmount) : 0,
+        reasoning
+      });
+
+      return responseUtils.success(res, {
+        dispute,
+        message: 'Đã đưa ra quyết định cuối cùng'
+      });
+    } catch (error) {
+      console.error('Admin final decision owner dispute error:', error);
+      return responseUtils.error(res, error.message, 400);
+    }
+  }
 
 }
 

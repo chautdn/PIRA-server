@@ -2,6 +2,7 @@ const mongoose = require('mongoose');
 const Dispute = require('../models/Dispute');
 const SubOrder = require('../models/SubOrder');
 const User = require('../models/User');
+const Wallet = require('../models/Wallet');
 const { generateDisputeId } = require('../utils/idGenerator');
 const notificationService = require('./notification.service');
 const ChatGateway = require('../socket/chat.gateway');
@@ -337,15 +338,38 @@ class DisputeService {
       
       // TODO: Xử lý tài chính tự động
     } else {
-      // Respondent từ chối -> Chuyển admin xử lý
-      dispute.status = 'RESPONDENT_REJECTED';
-      
-      dispute.timeline.push({
-        action: 'RESPONDENT_REJECTED',
-        performedBy: respondentId,
-        details: `Respondent từ chối: ${reason}`,
-        timestamp: new Date()
-      });
+      // Respondent từ chối
+      // Nếu là RETURN (owner khiếu nại) -> Đàm phán
+      // Nếu là DELIVERY (renter khiếu nại) -> Admin review
+      if (dispute.shipmentType === 'RETURN') {
+        // Owner khiếu nại, renter từ chối -> Đàm phán trực tiếp
+        dispute.status = 'IN_NEGOTIATION';
+        
+        // Khởi tạo phòng đàm phán
+        dispute.negotiationRoom = {
+          startedAt: new Date(),
+          deadline: new Date(Date.now() + 3 * 24 * 60 * 60 * 1000), // 3 ngày
+          messages: [],
+          finalAgreement: null
+        };
+        
+        dispute.timeline.push({
+          action: 'RESPONDENT_REJECTED',
+          performedBy: respondentId,
+          details: `Respondent từ chối: ${reason}. Bắt đầu đàm phán.`,
+          timestamp: new Date()
+        });
+      } else {
+        // Renter khiếu nại, owner từ chối -> Admin xem xét
+        dispute.status = 'RESPONDENT_REJECTED';
+        
+        dispute.timeline.push({
+          action: 'RESPONDENT_REJECTED',
+          performedBy: respondentId,
+          details: `Respondent từ chối: ${reason}. Chờ Admin xem xét.`,
+          timestamp: new Date()
+        });
+      }
     }
 
     await dispute.save();
@@ -355,24 +379,88 @@ class DisputeService {
       const respondent = await User.findById(respondentId);
       const decisionText = decision === 'ACCEPTED' ? 'chấp nhận' : 'từ chối';
       
-      await this._createAndEmitNotification({
-        recipient: dispute.complainant,
-        type: 'DISPUTE',
-        category: decision === 'ACCEPTED' ? 'SUCCESS' : 'INFO',
-        title: `Tranh chấp đã có phản hồi`,
-        message: `${respondent.profile?.fullName || 'Bên bị khiếu nại'} đã ${decisionText} tranh chấp của bạn.`,
-        relatedDispute: dispute._id,
-        actions: [{
-          label: 'Xem chi tiết',
-          url: `/disputes/${dispute._id}`,
-          action: 'VIEW_DISPUTE'
-        }],
-        data: {
-          disputeId: dispute.disputeId,
-          decision
-        },
-        status: 'SENT'
-      });
+      if (decision === 'ACCEPTED') {
+        await this._createAndEmitNotification({
+          recipient: dispute.complainant,
+          type: 'DISPUTE',
+          category: 'SUCCESS',
+          title: `Tranh chấp đã có phản hồi`,
+          message: `${respondent.profile?.fullName || 'Bên bị khiếu nại'} đã ${decisionText} tranh chấp của bạn.`,
+          relatedDispute: dispute._id,
+          actions: [{
+            label: 'Xem chi tiết',
+            url: `/disputes/${dispute._id}`,
+            action: 'VIEW_DISPUTE'
+          }],
+          data: {
+            disputeId: dispute.disputeId,
+            decision
+          },
+          status: 'SENT'
+        });
+      } else {
+        // Từ chối
+        if (dispute.shipmentType === 'RETURN') {
+          // Owner khiếu nại, renter từ chối -> Đàm phán
+          await this._createAndEmitNotification({
+            recipient: dispute.complainant,
+            type: 'DISPUTE',
+            category: 'INFO',
+            title: `Cần đàm phán tranh chấp`,
+            message: `${respondent.profile?.fullName || 'Bên bị khiếu nại'} đã từ chối. Vui lòng đàm phán để tìm ra giải pháp chung.`,
+            relatedDispute: dispute._id,
+            actions: [{
+              label: 'Tham gia đàm phán',
+              url: `/disputes/${dispute._id}`,
+              action: 'NEGOTIATE'
+            }],
+            data: {
+              disputeId: dispute.disputeId,
+              decision
+            },
+            status: 'SENT'
+          });
+          
+          await this._createAndEmitNotification({
+            recipient: respondentId,
+            type: 'DISPUTE',
+            category: 'INFO',
+            title: `Bắt đầu đàm phán`,
+            message: `Bạn đã từ chối tranh chấp. Vui lòng đàm phán với ${(await User.findById(dispute.complainant)).profile?.fullName || 'bên khiếu nại'} để tìm giải pháp.`,
+            relatedDispute: dispute._id,
+            actions: [{
+              label: 'Tham gia đàm phán',
+              url: `/disputes/${dispute._id}`,
+              action: 'NEGOTIATE'
+            }],
+            data: {
+              disputeId: dispute.disputeId,
+              decision
+            },
+            status: 'SENT'
+          });
+        } else {
+          // Renter khiếu nại, owner từ chối -> Admin xem xét
+          await this._createAndEmitNotification({
+            recipient: dispute.complainant,
+            type: 'DISPUTE',
+            category: 'INFO',
+            title: `Tranh chấp đã có phản hồi`,
+            message: `${respondent.profile?.fullName || 'Bên bị khiếu nại'} đã từ chối. Admin sẽ xem xét và đưa ra quyết định.`,
+            relatedDispute: dispute._id,
+            actions: [{
+              label: 'Xem chi tiết',
+              url: `/disputes/${dispute._id}`,
+              action: 'VIEW_DISPUTE'
+            }],
+            data: {
+              disputeId: dispute.disputeId,
+              decision
+            },
+            status: 'SENT'
+          });
+        }
+      }
     } catch (error) {
       console.error('Failed to create respondent response notification:', error);
     }
@@ -825,18 +913,35 @@ class DisputeService {
     }
 
     const Wallet = require('../models/Wallet');
+    const SystemWallet = require('../models/SystemWallet');
     const session = await mongoose.startSession();
     session.startTransaction();
 
     try {
-      // 1. Trừ tiền cọc trước (nếu có)
+      // 1. Trừ tiền cọc từ system wallet (available balance)
       let remainingCost = repairCost;
       const depositUsed = Math.min(depositAmount, repairCost);
+      
+      if (depositUsed > 0) {
+        const systemWallet = await SystemWallet.findOne({}).session(session);
+        if (!systemWallet) {
+          throw new Error('Không tìm thấy system wallet');
+        }
+
+        if (systemWallet.balance.available < depositUsed) {
+          throw new Error(`System wallet không đủ tiền cọc. Available: ${systemWallet.balance.available.toLocaleString('vi-VN')}đ, Cần: ${depositUsed.toLocaleString('vi-VN')}đ`);
+        }
+
+        // Trừ từ available balance của system wallet
+        systemWallet.balance.available -= depositUsed;
+        await systemWallet.save({ session });
+      }
+      
       remainingCost -= depositUsed;
 
       // 2. Nếu còn thiếu, trừ từ ví renter
       if (remainingCost > 0) {
-        const renterWallet = await Wallet.findById(renter.wallet._id);
+        const renterWallet = await Wallet.findById(renter.wallet._id).session(session);
         
         if (!renterWallet) {
           throw new Error('Không tìm thấy ví của renter');
@@ -949,6 +1054,234 @@ class DisputeService {
     }
   }
 
+  /**
+   * Admin quyết định cuối cùng cho owner dispute dựa trên kết quả bên thứ 3
+   * @param {String} disputeId - ID của dispute
+   * @param {String} adminId - ID của admin
+   * @param {Object} decisionData - { decision, compensationAmount, reasoning }
+   * @returns {Promise<Dispute>}
+   */
+  async adminFinalDecisionOwnerDispute(disputeId, adminId, decisionData) {
+    const dispute = await Dispute.findOne(this._buildDisputeQuery(disputeId))
+      .populate('complainant')
+      .populate('respondent')
+      .populate('subOrder');
+
+    if (!dispute) {
+      throw new Error('Dispute không tồn tại');
+    }
+
+    if (dispute.status !== 'THIRD_PARTY_EVIDENCE_UPLOADED') {
+      throw new Error('Dispute phải có kết quả từ bên thứ 3');
+    }
+
+    if (dispute.shipmentType !== 'RETURN') {
+      throw new Error('Chức năng này chỉ dành cho owner dispute');
+    }
+
+    const { decision, compensationAmount, reasoning } = decisionData;
+
+    const session = await mongoose.startSession();
+    session.startTransaction();
+
+    try {
+      if (decision === 'COMPLAINANT_RIGHT') {
+        // Owner đúng (renter có lỗi) -> Renter phải bồi thường
+        const product = dispute.subOrder.products[dispute.productIndex];
+        const depositAmount = product.totalDeposit || 0;
+        const amount = parseFloat(compensationAmount);
+
+        if (!amount || amount <= 0) {
+          throw new Error('Số tiền bồi thường không hợp lệ');
+        }
+
+        const renterWallet = await Wallet.findById(dispute.respondent.wallet).session(session);
+        const ownerWallet = await Wallet.findById(dispute.complainant.wallet).session(session);
+
+        if (!renterWallet) {
+          throw new Error('Không tìm thấy ví của renter');
+        }
+
+        if (!ownerWallet) {
+          // Tạo ví cho owner nếu chưa có
+          const newWallet = new Wallet({
+            user: dispute.complainant._id,
+            balance: { available: 0, frozen: 0, pending: 0, display: 0 },
+            currency: 'VND',
+            status: 'ACTIVE'
+          });
+          await newWallet.save({ session });
+          ownerWallet = newWallet;
+        }
+
+        // Kiểm tra renter có đủ tiền không (ví + deposit)
+        if (renterWallet.balance.available + depositAmount < amount) {
+          throw new Error(`Renter không đủ số dư. Hiện có: ${(renterWallet.balance.available + depositAmount).toLocaleString('vi-VN')}đ, cần: ${amount.toLocaleString('vi-VN')}đ`);
+        }
+
+        // 1. Trừ tiền cọc từ system wallet trước
+        const depositUsed = Math.min(depositAmount, amount);
+        
+        if (depositUsed > 0) {
+          const systemWallet = await SystemWallet.findOne({}).session(session);
+          if (!systemWallet) {
+            throw new Error('Không tìm thấy system wallet');
+          }
+
+          if (systemWallet.balance.available < depositUsed) {
+            throw new Error(`System wallet không đủ tiền cọc. Available: ${systemWallet.balance.available.toLocaleString('vi-VN')}đ, Cần: ${depositUsed.toLocaleString('vi-VN')}đ`);
+          }
+
+          // Trừ từ available balance của system wallet
+          systemWallet.balance.available -= depositUsed;
+          await systemWallet.save({ session });
+        }
+
+        const remainingCost = Math.max(0, amount - depositAmount);
+
+        // 2. Nếu còn thiếu thì trừ từ ví renter
+        if (remainingCost > 0) {
+          if (renterWallet.balance.available < remainingCost) {
+            throw new Error('Số dư ví không đủ');
+          }
+          renterWallet.balance.available -= remainingCost;
+          renterWallet.balance.display = (renterWallet.balance.available || 0) + (renterWallet.balance.frozen || 0) + (renterWallet.balance.pending || 0);
+          await renterWallet.save({ session });
+        }
+
+        // 3. Chuyển tiền cho owner
+        ownerWallet.balance.available += amount;
+        ownerWallet.balance.display = (ownerWallet.balance.available || 0) + (ownerWallet.balance.frozen || 0) + (ownerWallet.balance.pending || 0);
+        await ownerWallet.save({ session });
+
+        dispute.status = 'RESOLVED';
+        dispute.resolution = {
+          decision: 'COMPLAINANT_RIGHT',
+          resolutionSource: 'THIRD_PARTY',
+          resolvedBy: adminId,
+          resolvedAt: new Date(),
+          notes: `Admin xác định owner đúng, renter có lỗi.\n` +
+                 `Renter phải bồi thường: ${amount.toLocaleString('vi-VN')}đ\n` +
+                 `- Trừ từ tiền cọc: ${depositUsed.toLocaleString('vi-VN')}đ\n` +
+                 (remainingCost > 0 ? `- Trừ từ ví: ${remainingCost.toLocaleString('vi-VN')}đ\n` : '') +
+                 `Lý do: ${reasoning}`
+        };
+
+        dispute.timeline.push({
+          action: 'ADMIN_FINAL_DECISION',
+          actor: adminId,
+          details: `Admin quyết định: Owner đúng. Renter bồi thường ${amount.toLocaleString('vi-VN')}đ cho owner.`,
+          timestamp: new Date()
+        });
+
+      } else if (decision === 'RESPONDENT_RIGHT') {
+        // Renter đúng (owner không có lý do chính đáng) -> Hoàn tiền cho renter
+        const product = dispute.subOrder.products[dispute.productIndex];
+        const depositAmount = product.totalDeposit || 0;
+        const rentalAmount = product.totalRental || 0;
+        const totalRefund = depositAmount + rentalAmount;
+
+        const renterWallet = await Wallet.findById(dispute.respondent.wallet).session(session);
+        if (!renterWallet) {
+          throw new Error('Không tìm thấy ví của renter');
+        }
+
+        // Hoàn tiền cho renter
+        renterWallet.balance.available += totalRefund;
+        renterWallet.balance.display = (renterWallet.balance.available || 0) + (renterWallet.balance.frozen || 0) + (renterWallet.balance.pending || 0);
+        await renterWallet.save({ session });
+
+        dispute.status = 'RESOLVED';
+        dispute.resolution = {
+          decision: 'RESPONDENT_RIGHT',
+          resolutionSource: 'THIRD_PARTY',
+          resolvedBy: adminId,
+          resolvedAt: new Date(),
+          notes: `Admin xác định renter đúng, owner không có lý do chính đáng.\n` +
+                 `Renter được hoàn:\n` +
+                 `- Tiền cọc: ${depositAmount.toLocaleString('vi-VN')}đ\n` +
+                 `- Tiền thuê: ${rentalAmount.toLocaleString('vi-VN')}đ\n` +
+                 `Tổng: ${totalRefund.toLocaleString('vi-VN')}đ\n` +
+                 `Lý do: ${reasoning}`
+        };
+
+        dispute.timeline.push({
+          action: 'ADMIN_FINAL_DECISION',
+          actor: adminId,
+          details: `Admin quyết định: Renter đúng. Hoàn ${totalRefund.toLocaleString('vi-VN')}đ cho renter.`,
+          timestamp: new Date()
+        });
+      }
+
+      await dispute.save({ session });
+      await session.commitTransaction();
+      session.endSession();
+
+      // Reload dispute
+      const updatedDispute = await Dispute.findById(dispute._id)
+        .populate('complainant', 'profile email')
+        .populate('respondent', 'profile email')
+        .populate('assignedAdmin', 'profile email');
+
+      // Gửi notification
+      try {
+        const product = dispute.subOrder.products[dispute.productIndex];
+        
+        if (decision === 'COMPLAINANT_RIGHT') {
+          await this._createAndEmitNotification({
+            recipient: dispute.respondent._id,
+            type: 'DISPUTE_RESOLVED',
+            title: 'Dispute đã được giải quyết',
+            message: `Admin xác định bạn có lỗi. Đã trừ ${compensationAmount.toLocaleString('vi-VN')}đ để bồi thường cho owner.`,
+            relatedModel: 'Dispute',
+            relatedId: dispute._id,
+            status: 'SENT'
+          });
+
+          await this._createAndEmitNotification({
+            recipient: dispute.complainant._id,
+            type: 'DISPUTE_RESOLVED',
+            title: 'Dispute đã được giải quyết',
+            message: `Admin xác định renter có lỗi. Bạn đã nhận ${compensationAmount.toLocaleString('vi-VN')}đ tiền bồi thường.`,
+            relatedModel: 'Dispute',
+            relatedId: dispute._id,
+            status: 'SENT'
+          });
+        } else {
+          const totalRefund = (product.totalDeposit + product.totalRental);
+          
+          await this._createAndEmitNotification({
+            recipient: dispute.respondent._id,
+            type: 'DISPUTE_RESOLVED',
+            title: 'Dispute đã được giải quyết',
+            message: `Admin xác định bạn không có lỗi. Bạn được hoàn ${totalRefund.toLocaleString('vi-VN')}đ.`,
+            relatedModel: 'Dispute',
+            relatedId: dispute._id,
+            status: 'SENT'
+          });
+
+          await this._createAndEmitNotification({
+            recipient: dispute.complainant._id,
+            type: 'DISPUTE_RESOLVED',
+            title: 'Dispute đã được giải quyết',
+            message: `Admin xác định renter không có lỗi. Dispute đã được đóng.`,
+            relatedModel: 'Dispute',
+            relatedId: dispute._id,
+            status: 'SENT'
+          });
+        }
+      } catch (notifError) {
+        console.error('Failed to send decision notifications:', notifError);
+      }
+
+      return updatedDispute;
+
+    } catch (error) {
+      await session.abortTransaction();
+      session.endSession();
+      throw error;
+    }
+  }
 
 }
 
