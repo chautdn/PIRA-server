@@ -317,7 +317,9 @@ const subOrderSchema = new mongoose.Schema(
         'OWNER_CONFIRMED', // Owner xác nhận tất cả
         'OWNER_REJECTED', // Owner từ chối tất cả
         'PARTIALLY_CONFIRMED', // Owner xác nhận một phần
-        'RENTER_REJECTED', // Renter từ chối đơn partial
+        'PENDING_RENTER_DECISION', // Chờ người thuê quyết định (hủy hoặc tiếp tục) khi xác nhận một phần
+        'RENTER_REJECTED', // Renter từ chối đơn partial (chọn hủy)
+        'RENTER_ACCEPTED_PARTIAL', // Renter chấp nhận đơn partial (chọn tiếp tục)
 
         // Contract & Payment
         'READY_FOR_CONTRACT', // Sẵn sàng ký hợp đồng
@@ -350,6 +352,32 @@ const subOrderSchema = new mongoose.Schema(
     renterRejection: {
       rejectedAt: Date,
       reason: String
+    },
+
+    // Thông tin quyết định của người thuê khi owner xác nhận một phần
+    renterDecision: {
+      status: {
+        type: String,
+        enum: ['PENDING', 'ACCEPTED', 'REJECTED'],
+        default: 'PENDING'
+      },
+      decidedAt: Date,
+      choice: {
+        type: String,
+        enum: ['CANCEL_ALL', 'CONTINUE_PARTIAL'], // Hủy toàn bộ hoặc tiếp tục với phần được xác nhận
+        default: null
+      },
+      refundProcessed: {
+        type: Boolean,
+        default: false
+      },
+      refundDetails: {
+        depositRefund: { type: Number, default: 0 },
+        rentalRefund: { type: Number, default: 0 },
+        shippingRefund: { type: Number, default: 0 },
+        totalRefund: { type: Number, default: 0 },
+        processedAt: Date
+      }
     },
 
     // Hợp đồng
