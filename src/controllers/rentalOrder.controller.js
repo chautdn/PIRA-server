@@ -500,7 +500,10 @@ class RentalOrderController {
           path: 'subOrders',
           populate: [
             { path: 'owner', select: 'profile email phone' },
-            { path: 'products.product' },
+            { 
+              path: 'products.product',
+              select: 'name thumbnail sku category description condition rentalPrice'
+            },
             { path: 'contract' }
           ]
         }

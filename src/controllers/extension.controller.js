@@ -3,6 +3,8 @@ const MasterOrder = require('../models/MasterOrder');
 const SubOrder = require('../models/SubOrder');
 const Extension = require('../models/Extension');
 const User = require('../models/User');
+const Product = require('../models/Product');
+const Shipment = require('../models/Shipment');
 const { NotFoundError, BadRequest, ForbiddenError } = require('../core/error');
 const SystemWalletService = require('../services/systemWallet.service');
 const { sendNotification } = require('../services/notification.service');
@@ -13,16 +15,12 @@ class ExtensionController {
    */
   static async requestExtension(req, res) {
     try {
-      const { subOrderId, extendDays, extensionFee, notes } = req.body;
+      const { subOrderId, selectedProducts, notes } = req.body;
       const renterId = req.user.id;
 
       // Validate input
-      if (!subOrderId || !extendDays || extensionFee === undefined) {
-        throw new BadRequest('Missing required fields: subOrderId, extendDays, extensionFee');
-      }
-
-      if (extendDays < 1 || extendDays > 365) {
-        throw new BadRequest('Extend days must be between 1 and 365');
+      if (!subOrderId || !selectedProducts || selectedProducts.length === 0) {
+        throw new BadRequest('Missing required fields: subOrderId, selectedProducts');
       }
 
       // Get suborder with master order info
@@ -31,76 +29,96 @@ class ExtensionController {
         throw new NotFoundError('SubOrder not found');
       }
 
-      console.log('📋 SubOrder data:', {
-        subOrderId,
-        productCount: subOrder.products?.length,
-        productStatuses: subOrder.products?.map(p => p.productStatus),
-        rentalPeriods: subOrder.products?.map(p => ({
-          startDate: p.rentalPeriod?.startDate,
-          endDate: p.rentalPeriod?.endDate
-        }))
-      });
-
       // Verify the renter owns this masterOrder
       const masterOrder = await MasterOrder.findById(subOrder.masterOrder._id);
       if (!masterOrder || masterOrder.renter.toString() !== renterId) {
         throw new ForbiddenError('You do not have permission to extend this order');
       }
 
-      // Check if order has products with valid rental periods
-      // Accept CONFIRMED, ACTIVE, DELIVERED, or COMPLETED status as they can be extended
-      const validProducts = subOrder.products.filter(p => 
-        (p.productStatus === 'CONFIRMED' || p.productStatus === 'ACTIVE' || p.productStatus === 'DELIVERED' || p.productStatus === 'COMPLETED') &&
-        p.rentalPeriod?.endDate
-      );
+      // Build products list with per-product details
+      const productsList = [];
+      let totalExtensionFee = 0;
 
-      if (validProducts.length === 0) {
-        console.error('❌ No valid products for extension:', {
-          products: subOrder.products.map(p => ({
-            status: p.productStatus,
-            hasRentalPeriod: !!p.rentalPeriod,
-            endDate: p.rentalPeriod?.endDate
-          }))
+      for (const selectedProduct of selectedProducts) {
+        const product = subOrder.products.find(p => p._id.toString() === selectedProduct.productId);
+        
+        if (!product) {
+          console.warn(`⚠️ Product ${selectedProduct.productId} not found in suborder`);
+          continue;
+        }
+
+        // Use data from frontend (frontend already calculated newEndDate and extensionDays)
+        const currentEndDate = new Date(product.rentalPeriod.endDate);
+        const newEndDate = new Date(selectedProduct.newEndDate);
+        const extensionDays = selectedProduct.extensionDays;
+        const dailyRentalPrice = product.rentalRate || 0;
+        const extensionFee = Math.ceil(dailyRentalPrice * extensionDays);
+
+        const productData = {
+          productId: product._id,
+          owner: subOrder.owner._id,
+          productName: product.name,
+          currentEndDate,
+          newEndDate,
+          extensionDays,
+          dailyRentalPrice,
+          extensionFee,
+          status: 'PENDING'
+        };
+
+        console.log('📋 Product extension details:', {
+          productId: product._id,
+          productName: product.name,
+          currentEndDate,
+          newEndDate,
+          extensionDays,
+          dailyRentalPrice,
+          extensionFee
         });
-        throw new BadRequest('No valid products in this order to extend. Order must still be in rental period.');
+
+        productsList.push(productData);
+        totalExtensionFee += extensionFee;
       }
 
-      // Get current end date from first valid product
-      const currentEndDate = validProducts[0]?.rentalPeriod?.endDate;
-      if (!currentEndDate) {
-        throw new BadRequest('Cannot determine current rental end date');
+      if (productsList.length === 0) {
+        throw new BadRequest('No valid products found for extension');
       }
 
-      // Calculate new end date
-      const newEndDate = new Date(
-        new Date(currentEndDate).getTime() + extendDays * 24 * 60 * 60 * 1000
-      );
+      // Find max extension days for overall status
+      const maxExtensionDays = Math.max(...productsList.map(p => p.extensionDays));
 
       // Create extension request
       const extension = new Extension({
         masterOrder: subOrder.masterOrder._id,
         subOrder: subOrderId,
         renter: renterId,
-        owner: subOrder.owner._id,
-        extensionDays: extendDays,
-        extensionFee,
+        products: productsList,
+        extensionDays: maxExtensionDays,
+        totalExtensionFee,
         notes,
-        currentEndDate,
-        newEndDate,
         status: 'PENDING'
       });
 
       await extension.save();
+      await extension.populate('masterOrder renter products.owner');
 
-      // Populate for response
-      await extension.populate('masterOrder renter owner');
-
-      // Send notification to owner
+      // Send notifications to owners
       try {
+        const owner = subOrder.owner;
+        const ownerProducts = extension.products;
+        const productNames = ownerProducts.map(p => p.productName).join(', ');
+        
+        console.log('📢 Sending extension notification:', {
+          ownerId: owner._id,
+          ownerEmail: owner.profile?.email,
+          products: productNames,
+          totalExtensionFee
+        });
+
         await sendNotification(
-          subOrder.owner._id,
+          owner._id.toString(),
           'Yêu cầu gia hạn thuê mới',
-          `${masterOrder.renter.profile?.firstName || 'Người thuê'} yêu cầu gia hạn ${extendDays} ngày`,
+          `${masterOrder.renter.profile?.firstName || 'Người thuê'} yêu cầu gia hạn cho: ${productNames}`,
           {
             type: 'EXTENSION_REQUEST',
             category: 'INFO',
@@ -108,26 +126,17 @@ class ExtensionController {
             data: {
               extensionId: extension._id.toString(),
               subOrderId,
-              extendDays,
-              extensionFee
+              totalExtensionFee,
+              productNames,
+              productCount: ownerProducts.length
             }
           }
         );
-      } catch (notifError) {
-        console.error('Notification error:', notifError);
-        // Continue even if notification fails
+        
+        console.log('✅ Extension notification sent successfully');
+      } catch (notifErr) {
+        console.error('❌ Failed to send extension notification:', notifErr.message);
       }
-
-      console.log('✅ Extension request created:', {
-        extensionId: extension._id,
-        subOrderId,
-        extendDays,
-        extensionFee,
-        renter: renterId,
-        owner: subOrder.owner._id,
-        currentEndDate,
-        newEndDate
-      });
 
       res.json({
         success: true,
@@ -188,32 +197,124 @@ class ExtensionController {
       const { status = 'PENDING', page = 1, limit = 10 } = req.query;
 
       const skip = (page - 1) * limit;
+      const ownerObjectId = new mongoose.Types.ObjectId(ownerId);
 
-      const query = { owner: ownerId };
-      if (status) {
-        query.status = status;
-      }
+      console.log('📥 Getting extension requests for owner:', { ownerId, status, page, limit });
 
-      const extensions = await Extension.find(query)
-        .populate('masterOrder', 'masterOrderNumber status totalAmount totalDepositAmount')
-        .populate('renter', 'email phone profile')
-        .populate('subOrder')
-        .sort({ createdAt: -1 })
-        .skip(skip)
-        .limit(parseInt(limit));
+      // Use aggregation pipeline to fetch data
+      const extensionsWithProducts = await Extension.aggregate([
+        // Match extensions that have products owned by this owner
+        { $match: { 'products.owner': ownerObjectId } },
+        // Unroll products array
+        { $unwind: '$products' },
+        // Filter for this owner's products with the specified status
+        { $match: { 'products.owner': ownerObjectId, 'products.status': status } },
+        // Sort by creation date
+        { $sort: { createdAt: -1 } },
+        // Pagination
+        { $skip: skip },
+        { $limit: parseInt(limit) },
+        // Lookup to populate masterOrder
+        {
+          $lookup: {
+            from: 'masterorders',
+            localField: 'masterOrder',
+            foreignField: '_id',
+            as: 'masterOrder'
+          }
+        },
+        { $unwind: '$masterOrder' },
+        // Lookup to populate renter
+        {
+          $lookup: {
+            from: 'users',
+            localField: 'renter',
+            foreignField: '_id',
+            as: 'renter'
+          }
+        },
+        { $unwind: '$renter' },
+        // Lookup to populate subOrder
+        {
+          $lookup: {
+            from: 'suborders',
+            localField: 'subOrder',
+            foreignField: '_id',
+            as: 'subOrder'
+          }
+        },
+        { $unwind: '$subOrder' },
+        // Unwind subOrder products
+        { $unwind: '$subOrder.products' },
+        // Match the correct product in subOrder
+        {
+          $match: {
+            $expr: { $eq: ['$subOrder.products._id', '$products.productId'] }
+          }
+        },
+        // Lookup to populate the product in subOrder
+        {
+          $lookup: {
+            from: 'products',
+            localField: 'subOrder.products.product',
+            foreignField: '_id',
+            as: 'productDetail'
+          }
+        },
+        { $unwind: { path: '$productDetail', preserveNullAndEmptyArrays: true } }
+        // No $group! Keep flat structure - 1 document per product
+      ]);
 
-      const total = await Extension.countDocuments(query);
+      console.log('📋 Aggregation result:', {
+        count: extensionsWithProducts.length,
+        items: extensionsWithProducts.map(e => ({
+          extensionId: e._id,
+          productName: e.products?.productName || 'unknown',
+          hasProductDetail: !!e.productDetail
+        }))
+      });
 
-      console.log('📋 Owner extension requests:', {
-        ownerId,
-        status,
-        found: extensions.length,
-        renterSample: extensions[0]?.renter
+      // Transform data to match expected format
+      // After removing $group, each document represents one product in one extension
+      const flattenedRequests = extensionsWithProducts.map(ext => ({
+        extensionId: ext._id,
+        masterOrder: ext.masterOrder,
+        renter: ext.renter,
+        product: {
+          ...ext.products,
+          _id: ext.products.productId, // Use productId as the ID that frontend will use
+          productId: ext.products.productId // Also include productId for clarity
+        },
+        productDetail: ext.productDetail,
+        extensionDays: ext.products?.extensionDays,
+        extensionFee: ext.products?.extensionFee,
+        totalExtensionFee: ext.totalExtensionFee,
+        paymentStatus: ext.paymentStatus,
+        requestedAt: ext.requestedAt,
+        createdAt: ext.createdAt,
+        subOrder: ext.subOrder,
+        notes: ext.notes
+      }));
+
+      // Count total products (not extensions) with this owner
+      const totalResult = await Extension.aggregate([
+        { $match: { 'products.owner': ownerObjectId } },
+        { $unwind: '$products' },
+        { $match: { 'products.owner': ownerObjectId, 'products.status': status } },
+        { $count: 'total' }
+      ]);
+      const total = totalResult[0]?.total || 0;
+
+      console.log('📊 Final response:', {
+        found: flattenedRequests.length,
+        total,
+        page,
+        pages: Math.ceil(total / limit)
       });
 
       res.json({
         success: true,
-        data: extensions,
+        data: flattenedRequests,
         pagination: {
           page: parseInt(page),
           limit: parseInt(limit),
@@ -222,6 +323,7 @@ class ExtensionController {
         }
       });
     } catch (error) {
+      console.error('❌ Error in getOwnerExtensionRequests:', error);
       throw error;
     }
   }
@@ -267,113 +369,189 @@ class ExtensionController {
   static async approveExtension(req, res) {
     try {
       const { requestId } = req.params;
+      const { productId } = req.body; // Approve specific product only
       const ownerId = req.user.id;
 
-      const extension = await Extension.findById(requestId).populate('masterOrder renter owner');
+      console.log('🔄 Approving extension:', { requestId, productId, ownerId });
+
+      if (!productId) {
+        throw new BadRequest('Product ID is required to approve extension');
+      }
+
+      // Don't populate products.owner as it returns the full document as string
+      // Just fetch and validate by ID directly
+      const extension = await Extension.findById(requestId).populate('masterOrder renter');
       if (!extension) {
         throw new NotFoundError('Extension request not found');
       }
 
-      // Verify owner
-      if (extension.owner._id.toString() !== ownerId) {
-        throw new ForbiddenError('Only the owner can approve this extension');
+      // Find the specific product to approve by its productId (not MongoDB ObjectId of embedded doc)
+      const productIndex = extension.products.findIndex(
+        p => p.productId.toString() === productId && p.owner.toString() === ownerId
+      );
+
+      console.log('🔍 Looking for product:', {
+        targetProductId: productId,
+        ownerId,
+        found: productIndex !== -1,
+        allProducts: extension.products.map(p => ({ 
+          productId: p.productId.toString(), 
+          owner: p.owner.toString(),
+          ownerType: typeof p.owner,
+          matches: p.productId.toString() === productId && p.owner.toString() === ownerId
+        }))
+      });
+
+      if (productIndex === -1) {
+        throw new BadRequest('Product not found or you are not the owner');
       }
+
+      const productToApprove = extension.products[productIndex];
 
       // Check if already processed
-      if (extension.status !== 'PENDING') {
-        throw new BadRequest(`Extension request is already ${extension.status}`);
+      if (productToApprove.status !== 'PENDING') {
+        throw new BadRequest(`Product is already ${productToApprove.status}`);
       }
 
-      // Get suborder and masterorder for updating
-      const subOrder = await SubOrder.findById(extension.subOrder);
+      // Get suborder
+      const subOrder = await SubOrder.findById(extension.subOrder).populate('products');
       if (!subOrder) {
         throw new NotFoundError('SubOrder not found');
       }
 
-      const masterOrder = await MasterOrder.findById(extension.masterOrder._id);
-      if (!masterOrder) {
-        throw new NotFoundError('MasterOrder not found');
-      }
+      console.log('📦 SubOrder loaded:', {
+        subOrderId: subOrder._id,
+        productCount: subOrder.products.length,
+        rentalProductId: productToApprove.productId
+      });
 
       // Deduct from renter wallet
       try {
         await SystemWalletService.transferFromUser(
-          ownerId,
           extension.renter._id,
-          extension.extensionFee,
-          `Extension fee for rental order ${masterOrder.masterOrderNumber}`
+          extension.renter._id,
+          productToApprove.extensionFee,
+          `Extension fee for product: ${productToApprove.productName}`,
+          'system_wallet'
         );
-        console.log('✅ Wallet deducted:', {
+        console.log('✅ Wallet deducted from renter:', {
           renter: extension.renter._id,
-          amount: extension.extensionFee
+          amount: productToApprove.extensionFee,
+          productName: productToApprove.productName
         });
       } catch (walletError) {
         console.error('Wallet deduction error:', walletError);
-        throw new BadRequest('Failed to deduct extension fee from renter wallet: ' + walletError.message);
+        throw new BadRequest('Failed to deduct extension fee from renter wallet');
       }
 
-      // Update product rental periods in suborder
-      const extendDays = extension.extendDays;
-      let updatedCount = 0;
-      subOrder.products.forEach(product => {
-        // Update all products that have rental periods (regardless of status)
-        if (product.rentalPeriod && product.rentalPeriod.endDate) {
-          const oldEndDate = new Date(product.rentalPeriod.endDate);
-          const newEndDate = new Date(oldEndDate.getTime() + extendDays * 24 * 60 * 60 * 1000);
-          product.rentalPeriod.endDate = newEndDate;
-          updatedCount++;
-          console.log('📅 Updated product period:', {
-            productId: product.product,
-            oldDate: oldEndDate,
-            newDate: newEndDate,
-            status: product.productStatus
+      // Update product rental period in subOrder
+      const subOrderProduct = subOrder.products.find(p => p._id.toString() === productToApprove.productId.toString());
+      if (subOrderProduct && subOrderProduct.rentalPeriod) {
+        subOrderProduct.rentalPeriod.endDate = new Date(productToApprove.newEndDate);
+        console.log('📅 Updated product period:', {
+          productId: subOrderProduct._id,
+          productName: productToApprove.productName,
+          newEndDate: productToApprove.newEndDate
+        });
+      }
+
+      // Update return shipment endDate if exists
+      try {
+        const returnShipment = await Shipment.findOne({
+          subOrder: extension.subOrder,
+          type: 'RETURN',
+          productIndex: subOrder.products.findIndex(p => p._id.toString() === productToApprove.productId.toString())
+        });
+
+        if (returnShipment) {
+          returnShipment.tracking.scheduledAt = new Date(productToApprove.newEndDate);
+          await returnShipment.save();
+          console.log('🚚 Updated return shipment:', {
+            shipmentId: returnShipment._id,
+            productName: productToApprove.productName,
+            newScheduleDate: productToApprove.newEndDate
           });
         }
-      });
+      } catch (shipmentErr) {
+        console.error('Failed to update shipment:', shipmentErr.message);
+      }
 
+      // Save updated subOrder
       await subOrder.save();
 
-      // Update extension request status
-      extension.status = 'APPROVED';
-      extension.approvedAt = new Date();
-      extension.approvedBy = ownerId;
+      // Mark this product as approved - MUST update the product object in extension.products array
+      productToApprove.status = 'APPROVED';
+      productToApprove.approvedAt = new Date();
+
+      console.log('✅ Product marked as approved:', {
+        productId: productToApprove.productId,
+        status: productToApprove.status,
+        approvedAt: productToApprove.approvedAt
+      });
+
+      // Update extension overall status based on all products
+      const pendingCount = extension.products.filter(p => p.status === 'PENDING').length;
+      const approvedCount = extension.products.filter(p => p.status === 'APPROVED').length;
+      const rejectedCount = extension.products.filter(p => p.status === 'REJECTED').length;
+      
+      console.log('📊 Extension product status summary:', {
+        pending: pendingCount,
+        approved: approvedCount,
+        rejected: rejectedCount,
+        total: extension.products.length
+      });
+
+      if (pendingCount === 0 && rejectedCount === 0) {
+        extension.status = 'APPROVED';
+      } else if (approvedCount > 0 || rejectedCount > 0) {
+        extension.status = 'PARTIALLY_APPROVED';
+      }
+
+      console.log('📝 Extension status updated to:', extension.status);
+
+      // Save the extension with updated products and status
       await extension.save();
 
-      console.log('✅ Extension approved:', {
+      console.log('💾 Extension saved with updated status:', {
         extensionId: extension._id,
-        productsUpdated: updatedCount,
-        newEndDate: extension.newEndDate
+        status: extension.status,
+        products: extension.products.map(p => ({ id: p.productId, status: p.status, name: p.productName }))
       });
 
       // Send notification to renter
       try {
         await sendNotification(
           extension.renter._id,
-          '✅ Yêu cầu gia hạn được phê duyệt',
-          `${extension.owner.profile?.firstName || 'Chủ hàng'} đã phê duyệt yêu cầu gia hạn của bạn`,
+          '✅ Yêu cầu gia hạn được chấp nhận',
+          `Chủ sản phẩm "${productToApprove.productName}" đã chấp nhận yêu cầu gia hạn ${productToApprove.extensionDays} ngày. Phí ${productToApprove.extensionFee.toLocaleString('vi-VN')}đ đã được trừ từ ví của bạn.`,
           {
             type: 'EXTENSION_APPROVED',
             category: 'SUCCESS',
             relatedExtension: extension._id,
             data: {
-              extensionId: extension._id.toString(),
-              newEndDate: extension.newEndDate.toISOString()
+              productName: productToApprove.productName,
+              extensionDays: productToApprove.extensionDays,
+              extensionFee: productToApprove.extensionFee
             }
           }
         );
-      } catch (notifError) {
-        console.error('Notification error:', notifError);
+        console.log('✅ Approval notification sent');
+      } catch (notifErr) {
+        console.error('Failed to send approval notification:', notifErr.message);
       }
 
       res.json({
         success: true,
         data: extension,
-        message: 'Extension request approved successfully'
+        message: `Extension approved for product: ${productToApprove.productName}`
       });
     } catch (error) {
+      console.error('❌ Error in approveExtension:', error);
       throw error;
     }
   }
+
+
 
   /**
    * Reject extension request
@@ -381,75 +559,142 @@ class ExtensionController {
   static async rejectExtension(req, res) {
     try {
       const { requestId } = req.params;
-      const { rejectionReason } = req.body;
+      const { productId, rejectionReason } = req.body;
       const ownerId = req.user.id;
+
+      if (!productId) {
+        throw new BadRequest('Product ID is required to reject extension');
+      }
 
       if (!rejectionReason || !rejectionReason.trim()) {
         throw new BadRequest('Rejection reason is required');
       }
 
-      const extension = await Extension.findById(requestId).populate('masterOrder renter owner');
+      const extension = await Extension.findById(requestId);
       if (!extension) {
         throw new NotFoundError('Extension request not found');
       }
 
-      // Verify owner
-      if (extension.owner._id.toString() !== ownerId) {
-        throw new ForbiddenError('Only the owner can reject this extension');
-      }
-
-      // Check if already processed
-      if (extension.status !== 'PENDING') {
-        throw new BadRequest(`Extension request is already ${extension.status}`);
-      }
-
-      // Update extension request status
-      extension.status = 'REJECTED';
-      extension.rejectionReason = rejectionReason;
-      extension.rejectedAt = new Date();
-      extension.rejectedBy = ownerId;
-      await extension.save();
-
-      console.log('❌ Extension rejected:', {
+      console.log('🔍 Extension found:', {
         extensionId: extension._id,
-        rejectionReason: rejectionReason,
-        renter: extension.renter._id
+        productCount: extension.products.length,
+        products: extension.products.map(p => ({ 
+          productId: p.productId, 
+          owner: p.owner,
+          name: p.productName 
+        }))
       });
 
-      // Send notification to renter with rejection reason
+      // Find the specific product to reject
+      const productIndex = extension.products.findIndex(
+        p => p.productId.toString() === productId && p.owner.toString() === ownerId
+      );
+
+      if (productIndex === -1) {
+        console.log('❌ Product not found. Details:', {
+          searchProductId: productId,
+          ownerId: ownerId,
+          availableProducts: extension.products.map(p => ({
+            productId: p.productId.toString(),
+            owner: p.owner.toString(),
+            match: p.productId.toString() === productId && p.owner.toString() === ownerId
+          }))
+        });
+        throw new BadRequest('Product not found or you are not the owner');
+      }
+
+      const productToReject = extension.products[productIndex];
+
+      // Check if already processed
+      if (productToReject.status !== 'PENDING') {
+        throw new BadRequest(`Product is already ${productToReject.status}`);
+      }
+
+      // Mark product as rejected
+      productToReject.status = 'REJECTED';
+      productToReject.rejectedAt = new Date();
+      productToReject.rejectionReason = rejectionReason;
+
+      console.log('✅ Product marked as rejected:', {
+        productId: productToReject.productId,
+        status: productToReject.status,
+        rejectionReason
+      });
+
+      // Update extension overall status based on all products
+      const pendingCount = extension.products.filter(p => p.status === 'PENDING').length;
+      const approvedCount = extension.products.filter(p => p.status === 'APPROVED').length;
+      const rejectedCount = extension.products.filter(p => p.status === 'REJECTED').length;
+
+      console.log('📊 Extension product status summary after rejection:', {
+        pending: pendingCount,
+        approved: approvedCount,
+        rejected: rejectedCount,
+        total: extension.products.length
+      });
+
+      // Update status logic:
+      // - If all products are rejected → REJECTED
+      // - If there are ANY pending/approved/rejected mix → PARTIALLY_APPROVED
+      // - Otherwise keep current status
+      if (rejectedCount === extension.products.length) {
+        extension.status = 'REJECTED';
+      } else if (pendingCount > 0 || approvedCount > 0 || rejectedCount > 0) {
+        extension.status = 'PARTIALLY_APPROVED';
+      }
+
+      extension.rejectionReason = rejectionReason;
+      extension.rejectedAt = new Date();
+
+      console.log('📝 Extension status updated to:', extension.status);
+
+      // Save the extension with updated products and status
+      await extension.save();
+
+      console.log('💾 Extension saved with updated status:', {
+        extensionId: extension._id,
+        status: extension.status,
+        products: extension.products.map(p => ({ id: p.productId, status: p.status, name: p.productName }))
+      });
+
+      // Send notification to renter
       try {
-        // Create a detailed notification message with rejection reason
-        const ownerName = extension.owner.profile?.firstName || extension.owner.firstName || 'Chủ hàng';
-        const notificationTitle = '❌ Yêu cầu gia hạn bị từ chối';
-        const notificationBody = `${ownerName} từ chối yêu cầu gia hạn của bạn.\n\nLý do: ${rejectionReason}`;
+        const ownerObj = await User.findById(ownerId);
+        const ownerName = (ownerObj?.profile?.firstName || ownerObj?.firstName || 'Chủ hàng');
         
+        console.log('📢 Sending rejection notification:', {
+          renterId: extension.renter._id,
+          rejectedProduct: productToReject.productName,
+          rejectionReason,
+          ownerName
+        });
+
         await sendNotification(
           extension.renter._id,
-          notificationTitle,
-          notificationBody,
+          '❌ Yêu cầu gia hạn bị từ chối',
+          `${ownerName} từ chối gia hạn cho sản phẩm "${productToReject.productName}".\n\nLý do: ${rejectionReason}`,
           { 
             type: 'EXTENSION_REJECTED', 
             category: 'ERROR',
             relatedExtension: extension._id,
             data: {
-              extensionId: extension._id.toString(),
-              rejectionReason: rejectionReason,
-              ownerName: ownerName
+              productName: productToReject.productName,
+              rejectionReason: rejectionReason
             }
           }
         );
-        console.log('✅ Rejection notification sent to renter');
-      } catch (notifError) {
-        console.error('Notification error:', notifError);
-        // Continue even if notification fails
+        console.log('✅ Rejection notification sent successfully');
+      } catch (notifErr) {
+        console.error('Failed to send rejection notification:', notifErr.message);
       }
 
       res.json({
         success: true,
         data: extension,
-        message: 'Extension request rejected successfully'
+        message: `Extension rejected for product: ${productToReject.productName}`
       });
     } catch (error) {
+      console.error('❌ Error in rejectExtension:', error);
       throw error;
     }
   }

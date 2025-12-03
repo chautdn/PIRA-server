@@ -23,14 +23,55 @@ const extensionSchema = new mongoose.Schema(
       index: true
     },
 
-    owner: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: 'User',
-      required: true,
-      index: true
-    },
+    // Selected products with their owners
+    products: [
+      {
+        productId: {
+          type: mongoose.Schema.Types.ObjectId,
+          required: true
+        },
+        owner: {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: 'User',
+          required: true
+        },
+        productName: String,
+        currentEndDate: {
+          type: Date,
+          required: true
+        },
+        newEndDate: {
+          type: Date,
+          required: true
+        },
+        extensionDays: {
+          type: Number,
+          required: true,
+          min: 1,
+          max: 365
+        },
+        dailyRentalPrice: {
+          type: Number,
+          required: true,
+          min: 0
+        },
+        extensionFee: {
+          type: Number,
+          required: true,
+          min: 0
+        },
+        status: {
+          type: String,
+          enum: ['PENDING', 'APPROVED', 'REJECTED', 'CANCELLED'],
+          default: 'PENDING'
+        },
+        approvedAt: Date,
+        rejectedAt: Date,
+        rejectionReason: String
+      }
+    ],
 
-    // Extension details - linh hoạt
+    // Total extension info
     extensionDays: {
       type: Number,
       required: true,
@@ -38,7 +79,7 @@ const extensionSchema = new mongoose.Schema(
       max: 365
     },
 
-    extensionFee: {
+    totalExtensionFee: {
       type: Number,
       required: true,
       min: 0
@@ -46,24 +87,7 @@ const extensionSchema = new mongoose.Schema(
 
     notes: String,
 
-    // Dates
-    currentEndDate: {
-      type: Date,
-      required: true
-    },
-
-    newEndDate: {
-      type: Date,
-      required: true
-    },
-
-    requestedAt: {
-      type: Date,
-      default: Date.now,
-      index: true
-    },
-
-    // Payment info (optional, linh hoạt)
+    // Payment info
     paymentMethod: {
       type: String,
       enum: ['WALLET', 'PAYOS', 'COD'],
@@ -78,18 +102,20 @@ const extensionSchema = new mongoose.Schema(
 
     paymentInfo: mongoose.Schema.Types.Mixed,
 
-    // Status - đơn giản
+    // Overall status
     status: {
       type: String,
-      enum: ['PENDING', 'APPROVED', 'REJECTED', 'CANCELLED'],
+      enum: ['PENDING', 'APPROVED', 'REJECTED', 'CANCELLED', 'PARTIALLY_APPROVED'],
       default: 'PENDING',
       index: true
     },
 
-    // Owner response - tùy chọn
-    rejectionReason: String,
-
     // Timestamps
+    requestedAt: {
+      type: Date,
+      default: Date.now,
+      index: true
+    },
     approvedAt: Date,
     rejectedAt: Date,
     cancelledAt: Date,
