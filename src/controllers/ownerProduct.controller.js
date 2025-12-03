@@ -794,8 +794,8 @@ const ownerProductController = {
         success: true,
         data: {
           canEditPricing: canEdit,
-          reason: canEdit 
-            ? 'No active rental requests or rentals' 
+          reason: canEdit
+            ? 'No active rental requests or rentals'
             : 'Product has active rental requests or is currently rented'
         }
       });

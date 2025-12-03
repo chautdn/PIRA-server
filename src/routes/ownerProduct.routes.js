@@ -112,9 +112,7 @@ router.delete(
 
 router.get(
   '/rental-requests/:subOrderId',
-  [
-    param('subOrderId').isMongoId().withMessage('Valid subOrder ID is required')
-  ],
+  [param('subOrderId').isMongoId().withMessage('Valid subOrder ID is required')],
   ownerProductController.getSubOrderDetail
 );
 

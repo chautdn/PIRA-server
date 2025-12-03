@@ -64,6 +64,10 @@ router.use('/vouchers', voucherRoutes);
 const disputeRoutes = require('./dispute.routes');
 router.use('/disputes', disputeRoutes);
 
+// Recommendation routes
+const recommendationRoutes = require('./recommendation.routes');
+router.use('/recommendations', recommendationRoutes);
+
 // Upload routes
 const uploadRoutes = require('./upload.routes');
 router.use('/upload', uploadRoutes);

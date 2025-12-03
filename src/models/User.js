@@ -157,7 +157,6 @@ const userSchema = new mongoose.Schema(
       isVerified: {
         type: Boolean,
         default: false
-        
       },
       status: {
         type: String,
@@ -174,6 +173,17 @@ const userSchema = new mongoose.Schema(
     wallet: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'Wallet'
+    },
+
+    // Category preference tracking for recommendations
+    // Stores array of click timestamps for each category to enable time-decay
+    categoryPreferences: {
+      type: Map,
+      of: {
+        type: [Date],
+        default: []
+      },
+      default: new Map()
     },
 
     lastLoginAt: Date,
@@ -231,7 +241,7 @@ userSchema.pre(['findOneAndUpdate', 'updateOne', 'updateMany'], function (next) 
 });
 
 // Virtual field for full name
-userSchema.virtual('profile.fullName').get(function() {
+userSchema.virtual('profile.fullName').get(function () {
   if (this.profile.firstName && this.profile.lastName) {
     return `${this.profile.firstName} ${this.profile.lastName}`;
   }
@@ -239,7 +249,7 @@ userSchema.virtual('profile.fullName').get(function() {
 });
 
 // Virtual field for phone number in profile (for backward compatibility)
-userSchema.virtual('profile.phoneNumber').get(function() {
+userSchema.virtual('profile.phoneNumber').get(function () {
   return this.phone;
 });
 
