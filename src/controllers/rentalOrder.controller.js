@@ -508,7 +508,7 @@ class RentalOrderController {
             { path: 'owner', select: 'profile email phone' },
             { 
               path: 'products.product',
-              select: 'name thumbnail sku category description condition rentalPrice'
+              select: 'title images sku category description condition pricing'
             },
             { path: 'contract' }
           ]
