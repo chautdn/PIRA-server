@@ -115,7 +115,8 @@ const shipmentSchema = new mongoose.Schema(
       notes: String,
       photos: [String],
       signature: String,
-      failureReason: String // Lý do thất bại
+      failureReason: String, // Lý do thất bại
+      notificationSentAt: Date // Email sent timestamp
     },
 
     // Delivery Fee

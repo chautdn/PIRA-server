@@ -4,8 +4,130 @@ const User = require('../models/User');
 const ShipmentProof = require('../models/Shipment_Proof');
 const SystemWalletService = require('./systemWallet.service');
 const RentalOrderService = require('./rentalOrder.service');
+const { sendShipperNotificationEmail } = require('../utils/mailer');
 
 class ShipmentService {
+  /**
+   * Helper: Emit shipment created to shipper and schedule email
+   * @param {Object} shipment - Shipment document
+   * @param {String} shipperId - Shipper user ID
+   * @param {Object} shipmentData - Additional shipment data for display
+   * @param {String} shipmentType - DELIVERY or RETURN
+   */
+  async emitShipmentAndScheduleEmail(shipment, shipperId, shipmentData, shipmentType) {
+    try {
+      console.log(`\n        📧 [emitShipmentAndScheduleEmail] Start for ${shipment.shipmentId}`);
+      console.log(`           shipment.scheduledAt: ${shipment.scheduledAt}`);
+      console.log(`           shipmentData: ${JSON.stringify(shipmentData)}`);
+      
+      // 1. Emit real-time socket event
+      if (global.chatGateway && typeof global.chatGateway.emitShipmentCreated === 'function') {
+        global.chatGateway.emitShipmentCreated(shipperId.toString(), {
+          _id: shipment._id,
+          shipmentId: shipment.shipmentId,
+          type: shipmentType,
+          status: shipment.status,
+          scheduledAt: shipment.scheduledAt,
+          ...shipmentData
+        });
+        console.log(`        🔔 Shipment created socket event emitted to shipper ${shipperId}`);
+      }
+
+      // 2. Get the scheduled date (from shipment or shipmentData)
+      const scheduledDateValue = shipment.scheduledAt || shipmentData?.scheduledAt;
+      console.log(`           Resolved scheduledDate: ${scheduledDateValue}`);
+      
+      if (!scheduledDateValue) {
+        console.warn(`        ⚠️  No scheduled date found! Using today's date as fallback.`);
+      }
+      
+      const scheduledDate = new Date(scheduledDateValue || Date.now());
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      scheduledDate.setHours(0, 0, 0, 0);
+      
+      const dayDiff = Math.floor((scheduledDate - today) / (1000 * 60 * 60 * 24));
+      console.log(`           dayDiff: ${dayDiff} (today vs scheduled: ${today.toDateString()} vs ${scheduledDate.toDateString()})`);
+      
+      let emailSendTime = new Date();
+      let shouldSendImmediately = false;
+      
+      if (dayDiff === 1) {
+        // Tomorrow is the scheduled date → Send email immediately (now)
+        console.log(`           📧 Scheduled for tomorrow → Email sent NOW`);
+        shouldSendImmediately = true;
+      } else if (dayDiff > 1) {
+        // More than 1 day away → Send email 1 day before
+        emailSendTime = new Date(scheduledDate);
+        emailSendTime.setDate(emailSendTime.getDate() - 1);
+        emailSendTime.setHours(9, 0, 0, 0); // 9 AM on that day
+        console.log(`           📧 Scheduled for ${dayDiff} days away → Email will be sent on ${emailSendTime.toISOString()}`);
+      } else if (dayDiff === 0) {
+        // Today is the scheduled date → Send email immediately (now)
+        console.log(`           📧 Scheduled for TODAY → Email sent NOW`);
+        shouldSendImmediately = true;
+      } else {
+        // Past date - send immediately
+        console.log(`           📧 Scheduled date is in the past → Email sent NOW`);
+        shouldSendImmediately = true;
+      }
+
+      // 3. Schedule or send email immediately
+      try {
+        const shipper = await User.findById(shipperId).select('_id email profile');
+        if (!shipper || !shipper.email) {
+          console.log(`        ⚠️  Shipper email not found`);
+          return;
+        }
+
+        const shipmentTypeLabel = shipmentType === 'DELIVERY' ? 'Giao hàng' : 'Trả hàng';
+        const scheduledDateStr = new Date(scheduledDateValue || Date.now()).toLocaleDateString('vi-VN', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+        const shipperName = `${shipper.profile?.firstName || ''} ${shipper.profile?.lastName || ''}`.trim() || shipper.email;
+
+        const emailContent = {
+          recipient: shipper.email,
+          subject: `📦 Đơn ${shipmentTypeLabel} mới - ${shipment.shipmentId}`,
+          html: `
+            <h2>Xin chào ${shipperName},</h2>
+            <p>Bạn có một đơn ${shipmentTypeLabel} mới được giao cho bạn:</p>
+            <ul>
+              <li><strong>Mã đơn:</strong> ${shipment.shipmentId}</li>
+              <li><strong>Loại:</strong> ${shipmentTypeLabel}</li>
+              <li><strong>Ngày dự kiến:</strong> ${scheduledDateStr}</li>
+            </ul>
+            <p>Vui lòng đăng nhập vào ứng dụng để xem chi tiết và nhận đơn.</p>
+            <p>Cảm ơn!</p>
+          `
+        };
+
+        if (shouldSendImmediately) {
+          // Send email immediately
+          const emailService = require('./thirdParty.service');
+          await emailService.sendEmail(emailContent);
+          console.log(`        ✅ Email sent IMMEDIATELY to ${shipper.email} for ${shipmentTypeLabel}`);
+        } else if (emailSendTime.getTime() > Date.now()) {
+          // Schedule email for later
+          const delay = emailSendTime.getTime() - Date.now();
+          console.log(`        ⏰ Email will be sent in ${Math.round(delay / 1000 / 60)} minutes (${emailSendTime.toISOString()})`);
+          
+          setTimeout(async () => {
+            try {
+              const emailService = require('./thirdParty.service');
+              await emailService.sendEmail(emailContent);
+              console.log(`        ✅ SCHEDULED email sent to ${shipper.email} for ${shipmentTypeLabel}`);
+            } catch (err) {
+              console.error(`        ⚠️  Scheduled email send failed:`, err.message);
+            }
+          }, delay);
+        }
+      } catch (emailErr) {
+        console.error(`        ⚠️  Email scheduling failed:`, emailErr.message);
+      }
+    } catch (err) {
+      console.error(`        ⚠️  Error in emitShipmentAndScheduleEmail:`, err.message);
+    }
+  }
+
   async createShipment(payload) {
     const shipmentId = `SHP${Date.now()}${Math.random().toString(36).substr(2, 5).toUpperCase()}`;
     const shipment = new Shipment({ shipmentId, ...payload });
@@ -18,14 +140,14 @@ class ShipmentService {
   }
 
   async listByShipper(shipperId) {
-    return Shipment.find({ shipper: shipperId })
+    const shipments = await Shipment.find({ shipper: shipperId })
       .populate({
         path: 'subOrder',
-        select: 'rentalPeriod owner pricing products masterOrder',
+        // Don't select here - let it populate all fields
         populate: [
           {
             path: 'masterOrder',
-            select: 'rentalPeriod renter',
+            select: 'rentalPeriod renter masterOrderNumber',
             populate: {
               path: 'renter',
               select: 'profile email phone'
@@ -38,6 +160,15 @@ class ShipmentService {
         ]
       })
       .sort({ createdAt: -1 });
+    
+    // Debug log
+    console.log(`📦 listByShipper loaded ${shipments.length} shipments`);
+    shipments.forEach((s, idx) => {
+      const hasDate = !!(s.scheduledAt || s.subOrder?.rentalPeriod?.startDate || s.subOrder?.rentalPeriod?.endDate);
+      console.log(`  [${idx}] ${s.shipmentId} - type: ${s.type}, scheduledAt: ${s.scheduledAt}, subOrder: ${!!s.subOrder}, hasRentalPeriod: ${!!s.subOrder?.rentalPeriod}, hasDate: ${hasDate}`);
+    });
+    
+    return shipments;
   }
 
 
@@ -511,6 +642,7 @@ class ShipmentService {
 
       // Get subOrders separately with full population
       const subOrders = await SubOrder.find({ masterOrder: masterOrderId })
+        .select('_id subOrderNumber status rentalPeriod owner pricing products masterOrder')
         .populate('owner', '_id profile email phone address')
         .populate('products.product', '_id name');
 
@@ -520,6 +652,9 @@ class ShipmentService {
       }
 
       console.log(`✅ Found ${subOrders.length} subOrder(s)`);
+      subOrders.forEach((so, i) => {
+        console.log(`   SubOrder ${i}: id=${so._id}, hasRentalPeriod=${!!so.rentalPeriod}, startDate=${so.rentalPeriod?.startDate}, endDate=${so.rentalPeriod?.endDate}`);
+      });
 
       const createdShipments = [];
       let shipmentPairs = 0;
@@ -616,7 +751,7 @@ class ShipmentService {
                 email: renter.email || ''
               },
               fee: subOrder.pricing?.shippingFee || 0,
-              scheduledAt: subOrder.rentalPeriod?.startDate,
+              scheduledAt: productItem?.rentalPeriod?.startDate,
               status: 'PENDING'
             };
             
@@ -631,7 +766,7 @@ class ShipmentService {
               shipment: outboundShipment._id,
               imageBeforeDelivery: '',
               imageAfterDelivery: '',
-              notes: `DELIVERY: ${product.name} | From: ${renter.profile?.fullName || 'Renter'} | To: ${owner.profile?.fullName || 'Owner'} | Date: ${subOrder.rentalPeriod?.startDate}`
+              notes: `DELIVERY: ${product.name} | From: ${renter.profile?.fullName || 'Renter'} | To: ${owner.profile?.fullName || 'Owner'} | Date: ${productItem?.rentalPeriod?.startDate}`
             });
             await deliveryProof.save();
             console.log(`        ✅ Created ShipmentProof for DELIVERY: ${deliveryProof._id}`);
@@ -641,6 +776,59 @@ class ShipmentService {
               outboundShipment.shipper = shipperId;
               await outboundShipment.save();
               console.log(`        ✅ Assigned shipper to DELIVERY: ${shipperId}`);
+              
+              // Send real-time notification and schedule email
+              try {
+                const NotificationService = require('./notification.service');
+                const shipperUser = await User.findById(shipperId).select('_id profile email');
+                
+                const deliveryNotif = await NotificationService.createNotification({
+                  recipient: shipperId,
+                  title: '📦 Đơn giao hàng mới',
+                  message: `Bạn có đơn giao hàng mới: ${product.name} giao cho ${renter.profile?.firstName || 'Renter'}. Dự kiến: ${new Date(productItem?.rentalPeriod?.startDate).toLocaleDateString('vi-VN')}`,
+                  type: 'SHIPMENT',
+                  category: 'INFO',
+                  data: {
+                    shipmentId: outboundShipment.shipmentId,
+                    shipmentObjectId: outboundShipment._id,
+                    shipmentType: 'DELIVERY',
+                    productName: product.name,
+                    scheduledAt: productItem?.rentalPeriod?.startDate
+                  }
+                });
+                
+                console.log(`        📢 DELIVERY notification sent to shipper ${shipperId}:`, deliveryNotif._id);
+                
+                // Emit socket event for real-time update
+                if (global.chatGateway && typeof global.chatGateway.emitNotification === 'function') {
+                  global.chatGateway.emitNotification(shipperId.toString(), deliveryNotif);
+                  console.log(`        🔔 DELIVERY notification socket event emitted to shipper ${shipperId}`);
+                }
+                
+                // Send email notification with complete shipment details
+                try {
+                  await sendShipperNotificationEmail(
+                    shipperUser,
+                    outboundShipment,
+                    product,
+                    {
+                      name: renter.profile?.fullName || renter.profile?.firstName || 'Renter',
+                      phone: renter.phone || '',
+                      email: renter.email || ''
+                    },
+                    {
+                      rentalStartDate: productItem?.rentalPeriod?.startDate ? new Date(productItem?.rentalPeriod?.startDate).toLocaleDateString('vi-VN') : 'N/A',
+                      rentalEndDate: productItem?.rentalPeriod?.endDate ? new Date(productItem?.rentalPeriod?.endDate).toLocaleDateString('vi-VN') : 'N/A',
+                      notes: outboundShipment.contactInfo?.notes || ''
+                    }
+                  );
+                  console.log(`        ✅ DELIVERY email notification sent to shipper ${shipperId}`);
+                } catch (emailErr) {
+                  console.error(`        ⚠️ Failed to send DELIVERY email:`, emailErr.message);
+                }
+              } catch (notifErr) {
+                console.error(`        ⚠️ Failed to handle DELIVERY notification:`, notifErr.message);
+              }
             }
             
             createdShipments.push(outboundShipment);
@@ -693,7 +881,7 @@ class ShipmentService {
                 email: renter.email || ''
               },
               fee: subOrder.pricing?.shippingFee || 0,
-              scheduledAt: subOrder.rentalPeriod?.endDate,
+              scheduledAt: productItem?.rentalPeriod?.endDate,
               status: 'PENDING'
             };
             
@@ -712,7 +900,7 @@ class ShipmentService {
               shipment: returnShipment._id,
               imageBeforeDelivery: '',
               imageAfterDelivery: '',
-              notes: `RETURN: ${product.name} | From: ${owner.profile?.fullName || 'Owner'} | To: ${renter.profile?.fullName || 'Renter'} | Date: ${subOrder.rentalPeriod?.endDate}`
+              notes: `RETURN: ${product.name} | From: ${owner.profile?.fullName || 'Owner'} | To: ${renter.profile?.fullName || 'Renter'} | Date: ${productItem?.rentalPeriod?.endDate}`
             });
             await returnProof.save();
             console.log(`        ✅ Created ShipmentProof for RETURN: ${returnProof._id}`);
@@ -722,6 +910,59 @@ class ShipmentService {
               returnShipment.shipper = shipperId;
               await returnShipment.save();
               console.log(`        ✅ Assigned shipper to RETURN: ${shipperId}`);
+              
+              // Send real-time notification and schedule email
+              try {
+                const NotificationService = require('./notification.service');
+                const shipperUser = await User.findById(shipperId).select('_id profile email');
+                
+                const returnNotif = await NotificationService.createNotification({
+                  recipient: shipperId,
+                  title: '🔄 Đơn trả hàng mới',
+                  message: `Bạn có đơn trả hàng mới: ${product.name} trả lại từ ${renter.profile?.firstName || 'Renter'}. Dự kiến: ${new Date(productItem?.rentalPeriod?.endDate).toLocaleDateString('vi-VN')}`,
+                  type: 'SHIPMENT',
+                  category: 'INFO',
+                  data: {
+                    shipmentId: returnShipment.shipmentId,
+                    shipmentObjectId: returnShipment._id,
+                    shipmentType: 'RETURN',
+                    productName: product.name,
+                    scheduledAt: productItem?.rentalPeriod?.endDate
+                  }
+                });
+                
+                console.log(`        📢 RETURN notification sent to shipper ${shipperId}:`, returnNotif._id);
+                
+                // Emit socket event for real-time update
+                if (global.chatGateway && typeof global.chatGateway.emitNotification === 'function') {
+                  global.chatGateway.emitNotification(shipperId.toString(), returnNotif);
+                  console.log(`        🔔 RETURN notification socket event emitted to shipper ${shipperId}`);
+                }
+                
+                // Send email notification with complete shipment details
+                try {
+                  await sendShipperNotificationEmail(
+                    shipperUser,
+                    returnShipment,
+                    product,
+                    {
+                      name: renter.profile?.fullName || renter.profile?.firstName || 'Renter',
+                      phone: renter.phone || '',
+                      email: renter.email || ''
+                    },
+                    {
+                      rentalStartDate: productItem?.rentalPeriod?.startDate ? new Date(productItem?.rentalPeriod?.startDate).toLocaleDateString('vi-VN') : 'N/A',
+                      rentalEndDate: productItem?.rentalPeriod?.endDate ? new Date(productItem?.rentalPeriod?.endDate).toLocaleDateString('vi-VN') : 'N/A',
+                      notes: returnShipment.contactInfo?.notes || ''
+                    }
+                  );
+                  console.log(`        ✅ RETURN email notification sent to shipper ${shipperId}`);
+                } catch (emailErr) {
+                  console.error(`        ⚠️ Failed to send RETURN email:`, emailErr.message);
+                }
+              } catch (notifErr) {
+                console.error(`        ⚠️ Failed to handle RETURN notification:`, notifErr.message);
+              }
             }
             
             createdShipments.push(returnShipment);
@@ -1862,6 +2103,104 @@ class ShipmentService {
     } catch (err) {
       console.error(`   ❌ Return failed processing failed: ${err.message}`);
       throw new Error(`Return failed processing error: ${err.message}`);
+    }
+  }
+
+  /**
+   * Send shipper notification email for new shipment assignment
+   */
+  async sendShipperNotificationEmail(shipperId, shipmentId) {
+    try {
+      const { sendShipperNotificationEmail } = require('../utils/mailer');
+      
+      // Get shipper with email
+      const shipper = await User.findById(shipperId).select('email profile phone');
+      if (!shipper || !shipper.email) {
+        console.warn(`⚠️ Shipper not found or has no email: ${shipperId}`);
+        return null;
+      }
+
+      // Get shipment with all populated fields
+      const shipment = await Shipment.findById(shipmentId)
+        .populate({
+          path: 'subOrder',
+          populate: [
+            {
+              path: 'masterOrder',
+              populate: {
+                path: 'renter',
+                select: 'email phone profile'
+              }
+            },
+            {
+              path: 'owner',
+              select: 'email phone profile'
+            },
+            {
+              path: 'products.product',
+              select: 'name'
+            }
+          ]
+        });
+
+      if (!shipment) {
+        console.warn(`⚠️ Shipment not found: ${shipmentId}`);
+        return null;
+      }
+
+      // Extract necessary info
+      const renter = shipment.subOrder?.masterOrder?.renter;
+      const renterInfo = {
+        name: renter?.profile?.fullName || `${renter?.profile?.firstName || ''} ${renter?.profile?.lastName || ''}`.trim() || 'Không rõ',
+        phone: renter?.phone || shipment.contactInfo?.phone || 'Không rõ',
+        email: renter?.email || 'Không rõ'
+      };
+
+      // Get product info - try multiple ways
+      let productName = 'Sản phẩm';
+      
+      // Try to get from products array using productIndex
+      if (shipment.productId) {
+        const productItem = shipment.subOrder?.products?.find(p => p._id?.toString() === shipment.productId?.toString());
+        if (productItem?.product?.name) {
+          productName = productItem.product.name;
+        }
+      }
+      
+      // If still not found, try productIndex
+      if (productName === 'Sản phẩm' && shipment.productIndex !== undefined) {
+        const productItem = shipment.subOrder?.products?.[shipment.productIndex];
+        if (productItem?.product?.name) {
+          productName = productItem.product.name;
+        }
+      }
+
+      // Get order details
+      const orderDetails = {
+        rentalStartDate: shipment.subOrder?.rentalPeriod?.startDate 
+          ? new Date(shipment.subOrder.rentalPeriod.startDate).toLocaleDateString('vi-VN')
+          : 'Không rõ',
+        rentalEndDate: shipment.subOrder?.rentalPeriod?.endDate
+          ? new Date(shipment.subOrder.rentalPeriod.endDate).toLocaleDateString('vi-VN')
+          : 'Không rõ',
+        notes: shipment.contactInfo?.notes || '(không có)'
+      };
+
+      // Send email
+      const result = await sendShipperNotificationEmail(
+        shipper,
+        shipment,
+        { name: productName },
+        renterInfo,
+        orderDetails
+      );
+
+      console.log(`✅ Shipper notification email sent successfully for shipment ${shipmentId}`);
+      return result;
+    } catch (error) {
+      console.error(`❌ Error sending shipper notification email: ${error.message}`);
+      // Don't throw - email sending is non-critical
+      return null;
     }
   }
 }

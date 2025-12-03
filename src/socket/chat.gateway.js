@@ -452,6 +452,22 @@ class ChatGateway {
     }
   }
 
+  // SHIPMENT REAL-TIME UPDATES
+  
+  // Emit new shipment created to shipper
+  emitShipmentCreated(shipperId, shipmentData) {
+    try {
+      console.log(`[ChatGateway] 📦 Emitting shipment created to shipper ${shipperId}:`, shipmentData.shipmentId);
+      this.io.to(`user:${shipperId}`).emit('shipment:created', {
+        shipment: shipmentData,
+        timestamp: new Date().toISOString()
+      });
+      console.log(`[ChatGateway] ✅ Shipment created event emitted successfully`);
+    } catch (error) {
+      console.error('[ChatGateway] ❌ Error emitting shipment created:', error);
+    }
+  }
+
   // Cleanup method
   cleanup() {
     this.userSockets.clear();

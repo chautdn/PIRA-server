@@ -464,7 +464,7 @@ class ExtensionController {
         });
 
         if (returnShipment) {
-          returnShipment.tracking.scheduledAt = new Date(productToApprove.newEndDate);
+          returnShipment.scheduledAt = new Date(productToApprove.newEndDate);
           await returnShipment.save();
           console.log('🚚 Updated return shipment:', {
             shipmentId: returnShipment._id,
