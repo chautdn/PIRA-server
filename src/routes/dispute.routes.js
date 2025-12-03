@@ -89,6 +89,29 @@ router.post('/:disputeId/negotiation/respond-owner-decision', authenticate, disp
  */
 router.post('/:disputeId/escalate-third-party', authenticate, disputeController.userEscalateToThirdParty);
 
+// ========== EXTERNAL PAYMENT ROUTES ==========
+
+/**
+ * @route   POST /api/disputes/:disputeId/upload-payment-receipt
+ * @desc    Renter upload biên lai thanh toán ngoài hệ thống
+ * @access  Private (Renter)
+ */
+router.post('/:disputeId/upload-payment-receipt', authenticate, disputeController.uploadPaymentReceipt);
+
+/**
+ * @route   POST /api/disputes/:disputeId/confirm-external-payment
+ * @desc    Owner xác nhận đã nhận thanh toán ngoài
+ * @access  Private (Owner)
+ */
+router.post('/:disputeId/confirm-external-payment', authenticate, disputeController.confirmExternalPayment);
+
+/**
+ * @route   POST /api/disputes/:disputeId/admin-review-external-payment
+ * @desc    Admin xem xét external payment khi owner báo chưa nhận tiền
+ * @access  Private (Admin)
+ */
+router.post('/:disputeId/admin-review-external-payment', authenticate, requireAdmin, disputeController.adminReviewExternalPayment);
+
 // ========== THIRD PARTY ROUTES ==========
 
 /**
