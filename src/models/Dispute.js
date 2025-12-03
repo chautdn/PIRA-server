@@ -88,6 +88,13 @@ const disputeSchema = new mongoose.Schema(
       maxlength: 2000
     },
 
+    // Chi phí sửa chữa/bồi thường (cho DAMAGED_ON_RETURN)
+    repairCost: {
+      type: Number,
+      default: 0,
+      min: 0
+    },
+
     // Evidence
     evidence: {
       photos: [String],

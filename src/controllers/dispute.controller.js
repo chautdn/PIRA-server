@@ -19,7 +19,8 @@ class DisputeController {
         type,
         title,
         description,
-        evidence
+        evidence,
+        repairCost
       } = req.body;
 
       const complainantId = req.user._id;
@@ -34,7 +35,8 @@ class DisputeController {
         type,
         title,
         description,
-        evidence
+        evidence,
+        repairCost
       });
 
       return responseUtils.success(res, {

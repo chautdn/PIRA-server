@@ -69,7 +69,8 @@ class DisputeService {
       type,
       title,
       description,
-      evidence
+      evidence,
+      repairCost
     } = data;
 
     // Lấy thông tin SubOrder
@@ -149,6 +150,7 @@ class DisputeService {
       title,
       description,
       evidence: evidence || {},
+      repairCost: repairCost || 0, // Chi phí sửa chữa cho DAMAGED_ON_RETURN
       status: isShipperFault ? 'ADMIN_REVIEW' : 'OPEN',
       timeline: [{
         action: 'DISPUTE_CREATED',
