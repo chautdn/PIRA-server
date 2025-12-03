@@ -81,6 +81,12 @@ const earlyReturnRequestSchema = new mongoose.Schema(
       }
     },
 
+    // Original return date (stored for restoration on delete)
+    originalReturnDate: {
+      type: Date,
+      required: true // Store the original subOrder end date
+    },
+
     // Return address
     returnAddress: {
       streetAddress: {
@@ -113,18 +119,14 @@ const earlyReturnRequestSchema = new mongoose.Schema(
       required: true
     },
 
-    // Status
+    // Status - simplified, shipment handles the actual return
     status: {
       type: String,
       enum: [
-        'PENDING', // Waiting for owner acknowledgment
-        'ACKNOWLEDGED', // Owner acknowledged the request
-        'RETURNED', // Items returned and confirmed by owner
-        'COMPLETED', // Deposit refunded, order completed
-        'AUTO_COMPLETED', // Auto-completed after 24h
+        'ACTIVE', // Active early return request
         'CANCELLED' // Request cancelled by renter
       ],
-      default: 'PENDING',
+      default: 'ACTIVE',
       index: true
     },
 
@@ -179,6 +181,37 @@ const earlyReturnRequestSchema = new mongoose.Schema(
     canOwnerReview: {
       type: Boolean,
       default: true
+    },
+
+    // Additional shipping (if address changed)
+    additionalShipping: {
+      originalDistance: {
+        km: Number,
+        meters: Number
+      },
+      newDistance: {
+        km: Number,
+        meters: Number
+      },
+      additionalFee: {
+        type: Number,
+        default: 0
+      },
+      paymentStatus: {
+        type: String,
+        enum: ['none', 'pending', 'paid'],
+        default: 'none'
+      },
+      paymentMethod: {
+        type: String,
+        enum: ['wallet', 'payos']
+      },
+      transactionId: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'Transaction'
+      },
+      payosOrderCode: String,
+      paidAt: Date
     },
 
     // Notes

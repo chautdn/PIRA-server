@@ -8,7 +8,7 @@ const productPromotionController = {
   create: async (req, res, next) => {
     try {
       const userId = req.user._id;
-      const { productId, tier, duration, paymentMethod } = req.body;
+      const { productId, tier, duration, paymentMethod, scheduleMode } = req.body;
 
       // Validate tier
       if (![1, 2, 3, 4, 5].includes(tier)) {
@@ -25,12 +25,18 @@ const productPromotionController = {
         throw new BadRequestError('Invalid payment method. Must be wallet or payos');
       }
 
+      // Validate schedule mode if provided
+      if (scheduleMode && !['override', 'after'].includes(scheduleMode)) {
+        throw new BadRequestError('Invalid schedule mode. Must be override or after');
+      }
+
       let result;
 
       if (paymentMethod === 'wallet') {
         result = await productPromotionService.createWithWallet(userId, productId, {
           tier,
-          duration
+          duration,
+          scheduleMode: scheduleMode || 'override'
         });
 
         // Emit socket update for wallet balance
@@ -52,7 +58,8 @@ const productPromotionController = {
       } else if (paymentMethod === 'payos') {
         result = await productPromotionService.createWithPayOS(userId, productId, {
           tier,
-          duration
+          duration,
+          scheduleMode: scheduleMode || 'override'
         });
 
         new SUCCESS({

@@ -38,6 +38,11 @@ require('./earlyReturn.routes.register');
 require('./systemPromotion.routes');
 require('./shipment.routes.register');
 require('./upload.routes.register');
+require('./ai.routes'); // AI Visual Search
+
+// Owner Statistics routes
+const ownerStatisticsRoutes = require('./ownerStatistics.routes');
+router.use('/owner/statistics', ownerStatisticsRoutes);
 
 // Withdrawal routes
 const withdrawalRoutes = require('./withdrawal.routes');
@@ -59,6 +64,10 @@ router.use('/vouchers', voucherRoutes);
 const disputeRoutes = require('./dispute.routes');
 router.use('/disputes', disputeRoutes);
 
+// Recommendation routes
+const recommendationRoutes = require('./recommendation.routes');
+router.use('/recommendations', recommendationRoutes);
+
 // Upload routes
 const uploadRoutes = require('./upload.routes');
 router.use('/upload', uploadRoutes);
@@ -66,6 +75,10 @@ router.use('/upload', uploadRoutes);
 // Extension routes
 const extensionRoutes = require('./extension.routes');
 router.use('/extensions', extensionRoutes);
+
+// OTP routes
+const otpRoutes = require('./otp.routes');
+router.use('/otp', otpRoutes);
 
 // Register all routes from the registry FIRST
 getRoutes()?.forEach(({ path, router: moduleRouter }) => {

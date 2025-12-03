@@ -90,6 +90,12 @@ const productPromotionSchema = new mongoose.Schema({
     default: 0
   },
 
+  // Metadata for scheduling and other info
+  metadata: {
+    type: mongoose.Schema.Types.Mixed,
+    default: {}
+  },
+
   createdAt: { type: Date, default: Date.now },
   updatedAt: { type: Date, default: Date.now }
 });

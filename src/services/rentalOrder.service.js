@@ -44,16 +44,25 @@ class RentalOrderService {
       let itemsToProcess = cart.items;
       if (selectedItems && Array.isArray(selectedItems) && selectedItems.length > 0) {
         console.log(`📋 Received selectedItems from frontend: ${selectedItems.length} items`);
-        console.log('DEBUG selectedItems:', JSON.stringify(selectedItems.map(item => ({ _id: item._id, product: item.product?._id }))));
-        
-        const selectedItemIds = new Set(selectedItems.map(item => item._id?.toString() || item._id));
-        itemsToProcess = cart.items.filter(item => selectedItemIds.has(item._id.toString()));
-        
+        console.log(
+          'DEBUG selectedItems:',
+          JSON.stringify(
+            selectedItems.map((item) => ({ _id: item._id, product: item.product?._id }))
+          )
+        );
+
+        const selectedItemIds = new Set(
+          selectedItems.map((item) => item._id?.toString() || item._id)
+        );
+        itemsToProcess = cart.items.filter((item) => selectedItemIds.has(item._id.toString()));
+
         if (itemsToProcess.length === 0) {
           throw new Error('Không tìm thấy các sản phẩm được chọn trong giỏ hàng');
         }
-        
-        console.log(`✅ Processing ${itemsToProcess.length} selected items out of ${cart.items.length} in cart`);
+
+        console.log(
+          `✅ Processing ${itemsToProcess.length} selected items out of ${cart.items.length} in cart`
+        );
       } else {
         console.log('⚠️ No selectedItems provided, using all cart items');
       }
@@ -161,38 +170,100 @@ class RentalOrderService {
           status: 'DRAFT'
         });
 
-        // Tính phí shipping nếu cần giao hàng
-        if (deliveryMethod === 'DELIVERY') {
-          // Use owner's address if available, otherwise use fallback/default fee
-          let ownerAddr = owner.profile?.address || {
-            streetAddress: 'Owner Address Not Set',
-            city: 'Unknown',
-            district: 'Unknown',
-            ward: 'Unknown',
-            // Use default coordinates in HCM if not available
-            latitude: 10.7769,
-            longitude: 106.6965
+        // Tính phí shipping - Always calculate for DELIVERY since PICKUP is not used
+        if (deliveryMethod === 'DELIVERY' && owner.address) {
+          const ownerLocation = {
+            latitude: owner.address?.coordinates?.latitude || owner.address?.latitude,
+            longitude: owner.address?.coordinates?.longitude || owner.address?.longitude
           };
 
-          const shippingInfo = await this.calculateShippingFee(
-            ownerAddr,
-            deliveryAddress
+          const userLocation = {
+            latitude: deliveryAddress.latitude,
+            longitude: deliveryAddress.longitude
+          };
+
+          // Kiểm tra tọa độ
+          if (!ownerLocation.latitude || !ownerLocation.longitude) {
+            throw new Error(`Chủ sản phẩm chưa có tọa độ địa chỉ`);
+          }
+
+          if (!userLocation.latitude || !userLocation.longitude) {
+            throw new Error('Địa chỉ giao hàng chưa có tọa độ');
+          }
+
+          // Tính khoảng cách và phí ship với VietMap
+          const distanceResult = await VietMapService.calculateDistance(
+            ownerLocation.longitude,
+            ownerLocation.latitude,
+            userLocation.longitude,
+            userLocation.latitude
           );
 
-          // ✅ Set totalFee from calculated fee
-          const calculatedFee = shippingInfo.fee.calculatedFee || shippingInfo.fee.breakdown?.total || 0;
-          
-          // Update shipping with distance and time info
-          subOrder.shipping.distance = shippingInfo.distance;
-          subOrder.shipping.estimatedTime = shippingInfo.estimatedTime;
-          subOrder.shipping.vietmapResponse = shippingInfo.vietmapResponse;
-          
-          // Set shipping fee properly without conflict
-          subOrder.shipping.fee.totalFee = calculatedFee;
-          subOrder.shipping.fee.baseFee = shippingInfo.fee.baseFee || 15000;
-          subOrder.shipping.fee.pricePerKm = shippingInfo.fee.pricePerKm || 0;
-          
-          subOrder.pricing.shippingFee = calculatedFee;
+          if (!distanceResult.success) {
+            throw new Error('Không thể tính khoảng cách từ VietMap API');
+          }
+
+          const distanceKm = distanceResult.distanceKm;
+
+          // Tính phí ship cho toàn SubOrder với delivery batches
+          const shippingCalculation = VietMapService.calculateProductShippingFees(
+            processedProducts,
+            distanceKm
+          );
+
+          // Cập nhật shipping cho SubOrder level
+          subOrder.shipping = {
+            method: deliveryMethod,
+            fee: {
+              baseFee: 15000,
+              pricePerKm: 5000,
+              totalFee: shippingCalculation.totalShippingFee
+            },
+            distance: distanceKm,
+            estimatedTime: distanceResult.durationMinutes,
+            vietmapResponse: {
+              distance: distanceKm,
+              distanceMeters: distanceResult.distanceMeters,
+              estimatedTime: distanceResult.durationMinutes,
+              fee: shippingCalculation.totalShippingFee,
+              shippingDetails: {
+                distanceKm,
+                baseFee: 15000,
+                distanceFee: Math.round(distanceKm) * 5000,
+                finalFee: shippingCalculation.totalShippingFee,
+                note: `Phí ship = 15.000 + ${Math.round(distanceKm)}km × 5.000 = ${shippingCalculation.totalShippingFee.toLocaleString()}đ`
+              },
+              success: true
+            }
+          };
+
+          // Cập nhật shipping cho từng product theo delivery batch
+          // IMPORTANT: Update subOrder.products directly, not processedProducts
+          shippingCalculation.productFees.forEach((productFee) => {
+            const product = subOrder.products[productFee.productIndex];
+            if (product) {
+              product.shipping = {
+                distance: distanceKm,
+                fee: {
+                  baseFee: 15000,
+                  pricePerKm: 5000,
+                  totalFee: productFee.allocatedFee
+                },
+                method: 'DELIVERY', // Always set to DELIVERY when in delivery mode
+                deliveryInfo: {
+                  deliveryDate: productFee.deliveryDate,
+                  deliveryBatch: productFee.deliveryBatch,
+                  batchSize: productFee.batchSize,
+                  batchQuantity: product.quantity,
+                  sharedDeliveryFee: productFee.batchTotalFee
+                }
+              };
+              product.totalShippingFee = productFee.allocatedFee;
+            }
+          });
+
+          subOrder.pricing.shippingFee = shippingCalculation.totalShippingFee;
+          subOrder.pricing.shippingDistance = distanceKm;
 
           // ✅ Apply system promotion discount to shipping fee
           const discountResult = await systemPromotionService.calculateShippingDiscount(subOrder);
@@ -364,7 +435,9 @@ class RentalOrderService {
 
       // Remove selected items from cart (only selected items, not entire cart)
       if (selectedItems && Array.isArray(selectedItems) && selectedItems.length > 0) {
-        const selectedItemIds = new Set(selectedItems.map(item => item._id?.toString() || item._id));
+        const selectedItemIds = new Set(
+          selectedItems.map((item) => item._id?.toString() || item._id)
+        );
         await Cart.findOneAndUpdate(
           { user: renterId },
           { $pull: { items: { _id: { $in: Array.from(selectedItemIds) } } } }
@@ -372,10 +445,7 @@ class RentalOrderService {
         console.log(`✅ Removed ${selectedItemIds.size} selected items from cart`);
       } else {
         // If no selectedItems specified, remove all items (backward compatibility)
-        await Cart.findOneAndUpdate(
-          { user: renterId },
-          { $set: { items: [] } }
-        );
+        await Cart.findOneAndUpdate({ user: renterId }, { $set: { items: [] } });
         console.log('✅ Cleared entire cart');
       }
 
@@ -1250,6 +1320,8 @@ class RentalOrderService {
         if (ownerGeocode.success) {
           ownerLat = ownerGeocode.latitude;
           ownerLon = ownerGeocode.longitude;
+        } else {
+          throw new Error('Không thể xác định tọa độ của chủ sản phẩm');
         }
       }
 
@@ -1260,37 +1332,12 @@ class RentalOrderService {
         if (userGeocode.success) {
           userLat = userGeocode.latitude;
           userLon = userGeocode.longitude;
+        } else {
+          throw new Error('Không thể xác định tọa độ địa chỉ giao hàng');
         }
       }
 
-      // Fallback mechanism: sử dụng tọa độ mặc định nếu geocoding thất bại
-      if (!ownerLat || !ownerLon || !userLat || !userLon) {
-        // Fallback coordinates cho các thành phố lớn
-        const fallbackCoords = {
-          'Hồ Chí Minh': { lat: 10.8231, lon: 106.6297 },
-          'Hà Nội': { lat: 21.0285, lon: 105.8542 },
-          'Đà Nẵng': { lat: 16.0471, lon: 108.2068 },
-          'Cần Thơ': { lat: 10.0452, lon: 105.7469 }
-        };
-
-        // Sử dụng fallback cho owner
-        if (!ownerLat || !ownerLon) {
-          const ownerCity = ownerAddress.city || 'Hồ Chí Minh';
-          const fallback = fallbackCoords[ownerCity] || fallbackCoords['Hồ Chí Minh'];
-          ownerLat = fallback.lat;
-          ownerLon = fallback.lon;
-        }
-
-        // Sử dụng fallback cho user
-        if (!userLat || !userLon) {
-          const userCity = deliveryAddress.city || deliveryAddress.province || 'Hồ Chí Minh';
-          const fallback = fallbackCoords[userCity] || fallbackCoords['Hồ Chí Minh'];
-          userLat = fallback.lat;
-          userLon = fallback.lon;
-        }
-      }
-
-      // Tính khoảng cách
+      // Tính khoảng cách thông qua VietMap API
       const distanceResult = await VietMapService.calculateDistance(
         ownerLon,
         ownerLat,
@@ -1298,68 +1345,24 @@ class RentalOrderService {
         userLat
       );
 
-      // ⚠️  FIX: Nếu fallback hoặc API lỗi, cập nhật distanceKm để tránh phí quá cao
-      // Nếu distance > 50km, có thể VietMap trả sai dữ liệu hoặc fallback từ thành phố khác
-      // Giới hạn về 25km (tương đương phí ~135k, hợp lý cho HCMC)
-      if ((distanceResult.fallback || !distanceResult.success) && distanceResult.distanceKm > 50) {
-        console.warn(
-          `⚠️  Distance seems too large (${distanceResult.distanceKm}km), likely fallback coordinates issue. Capping to 25km for fee calculation.`
-        );
-        distanceResult.distanceKm = 25; // Cap at 25km = (10k + 5k*25) = 135k max
+      if (!distanceResult.success) {
+        throw new Error('Không thể tính khoảng cách qua VietMap API');
       }
 
-      // Nếu VietMap API thất bại, sử dụng công thức haversine đơn giản
-      if (!distanceResult.success && !distanceResult.fallback) {
-        // Công thức Haversine đơn giản
-        const R = 6371; // Bán kính Trái đất (km)
-        const dLat = ((userLat - ownerLat) * Math.PI) / 180;
-        const dLon = ((userLon - ownerLon) * Math.PI) / 180;
-        const a =
-          Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-          Math.cos((ownerLat * Math.PI) / 180) *
-            Math.cos((userLat * Math.PI) / 180) *
-            Math.sin(dLon / 2) *
-            Math.sin(dLon / 2);
-        const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-        const fallbackDistance = R * c;
-
-        distanceResult.distanceKm = Math.round(fallbackDistance * 100) / 100;
-        distanceResult.duration = Math.round(fallbackDistance * 3); // Ước tính 3 phút/km
-        distanceResult.success = true;
-        distanceResult.fallback = true;
-      }
-
-      // Tính phí ship
+      // Tính phí ship dựa trên khoảng cách thực tế
       const shippingFee = VietMapService.calculateShippingFee(distanceResult.distanceKm);
 
       return {
         distance: distanceResult.distanceKm,
-        estimatedTime: distanceResult.duration,
-        fee: shippingFee,
-        calculatedFee: shippingFee.calculatedFee, // For backward compatibility
-        vietmapResponse: distanceResult,
+        distanceMeters: distanceResult.distanceMeters,
+        estimatedTime: distanceResult.durationMinutes,
+        fee: shippingFee.finalFee,
+        shippingDetails: shippingFee,
         success: true
       };
     } catch (error) {
       console.error('Lỗi tính phí ship:', error);
-
-      // Fallback: phí cố định
-      return {
-        distance: 0,
-        estimatedTime: 0,
-        fee: {
-          baseFee: 15000,
-          pricePerKm: 0,
-          distance: 0,
-          calculatedFee: 15000,
-          breakdown: {
-            base: 15000,
-            distance: 0,
-            total: 15000
-          }
-        },
-        error: error.message
-      };
+      throw error; // Không fallback, throw lỗi để xử lý ở tầng trên
     }
   }
 
@@ -1392,8 +1395,13 @@ class RentalOrderService {
         return;
       }
 
-      const subOrders = await SubOrder.find({ masterOrder: masterOrderId }).populate('owner', 'address profile');
-      console.log(`📋 checkAllContractsSigned: Found ${subOrders.length} subOrders for master order ${masterOrderId}`);
+      const subOrders = await SubOrder.find({ masterOrder: masterOrderId }).populate(
+        'owner',
+        'address profile'
+      );
+      console.log(
+        `📋 checkAllContractsSigned: Found ${subOrders.length} subOrders for master order ${masterOrderId}`
+      );
 
       if (subOrders.length === 0) {
         console.warn('⚠️ No subOrders found for master order');
@@ -1401,27 +1409,29 @@ class RentalOrderService {
       }
 
       const allSigned = subOrders.every((so) => so.status === 'CONTRACT_SIGNED');
-      console.log(`   Status breakdown: ${subOrders.map(so => so.status).join(', ')}`);
+      console.log(`   Status breakdown: ${subOrders.map((so) => so.status).join(', ')}`);
       console.log(`   All signed? ${allSigned}`);
 
       if (allSigned) {
         // Update master order status
-        const masterOrder = await MasterOrder.findByIdAndUpdate(masterOrderId, {
-          status: 'CONTRACT_SIGNED'
-        }, { new: true });
+        const masterOrder = await MasterOrder.findByIdAndUpdate(
+          masterOrderId,
+          {
+            status: 'CONTRACT_SIGNED'
+          },
+          { new: true }
+        );
         console.log(`✅ Master Order status updated to CONTRACT_SIGNED`);
 
         // 🚀 Tự động tạo shipments cho tất cả subOrders
         console.log(`\n🚀 Auto-creating shipments for master order ${masterOrderId}...`);
-        
+
         try {
           const ShipmentService = require('./shipment.service');
-          
+
           // Lấy owner từ subOrders (ưu tiên subOrder đầu tiên để tìm shipper)
           // Nếu có multiple owners, sẽ tìm shipper cho từng owner nhưng chỉ assign 1 shipper cho tất cả
-          const owners = subOrders
-            .filter(so => so.owner)
-            .map(so => so.owner);
+          const owners = subOrders.filter((so) => so.owner).map((so) => so.owner);
 
           if (owners.length === 0) {
             throw new Error('No owners found for shipment creation');
@@ -1431,11 +1441,11 @@ class RentalOrderService {
 
           // Tìm shipper dựa trên owner đầu tiên (hoặc có thể implement logic khác)
           let shipperId = null;
-          
+
           for (const owner of owners) {
             console.log(`   📦 Trying owner ${owner._id} with address:`, owner.address);
             const shipper = await ShipmentService.findShipperInSameArea(owner.address);
-            
+
             if (shipper) {
               console.log(`   ✅ Found shipper in same area: ${shipper._id}`);
               shipperId = shipper._id;
@@ -1444,12 +1454,17 @@ class RentalOrderService {
           }
 
           if (!shipperId) {
-            console.warn('   ⚠️ Could not find shipper in same area for any owner. Creating shipments without shipper assignment...');
+            console.warn(
+              '   ⚠️ Could not find shipper in same area for any owner. Creating shipments without shipper assignment...'
+            );
           }
 
           // Tạo shipments cho toàn bộ masterOrder (nó sẽ tạo cho tất cả subOrders)
-          const result = await ShipmentService.createDeliveryAndReturnShipments(masterOrderId, shipperId);
-          
+          const result = await ShipmentService.createDeliveryAndReturnShipments(
+            masterOrderId,
+            shipperId
+          );
+
           console.log(`✅ Shipments created automatically:`, result);
           console.log(`   Total shipments: ${result.count}`);
           console.log(`   Shipment pairs: ${result.pairs}`);
@@ -1868,17 +1883,8 @@ class RentalOrderService {
         userLocation.latitude
       );
 
-      if (!distanceResult.success && !distanceResult.fallback) {
-        throw new Error('Không thể tính khoảng cách giao hàng');
-      }
-
-      // ⚠️  FIX: Nếu fallback hoặc API lỗi, cập nhật distanceKm để tránh phí quá cao
-      // Giới hạn về 25km để tránh phí bất hợp lý
-      if ((distanceResult.fallback || !distanceResult.success) && distanceResult.distanceKm > 50) {
-        console.warn(
-          `⚠️  Distance seems too large (${distanceResult.distanceKm}km), likely fallback coordinates issue. Capping to 25km.`
-        );
-        distanceResult.distanceKm = 25;
+      if (!distanceResult.success) {
+        throw new Error('Không thể tính khoảng cách giao hàng từ VietMap API');
       }
 
       const distanceKm = distanceResult.distanceKm;
@@ -1891,9 +1897,8 @@ class RentalOrderService {
         success: true,
         distance: {
           km: distanceKm,
-          meters: distanceResult.distance,
-          duration: distanceResult.duration,
-          fallback: distanceResult.fallback || false
+          meters: distanceResult.distanceMeters,
+          duration: distanceResult.durationMinutes
         },
         shipping: shippingCalculation,
         vietmapResponse: distanceResult.rawResponse
@@ -2551,11 +2556,18 @@ class RentalOrderService {
         try {
           const creditAmount = Number(payosPaymentInfo.amount) || transaction?.amount || 0;
           if (creditAmount > 0) {
-            await SystemWalletService.addFunds(process.env.SYSTEM_ADMIN_ID || null, creditAmount, `PayOS payment for order ${masterOrder.masterOrderNumber}`);
+            await SystemWalletService.addFunds(
+              process.env.SYSTEM_ADMIN_ID || null,
+              creditAmount,
+              `PayOS payment for order ${masterOrder.masterOrderNumber}`
+            );
             console.log('✅ Credited system wallet with PayOS amount:', creditAmount);
           }
         } catch (err) {
-          console.error('Failed to credit system wallet after PayOS payment:', err.message || String(err));
+          console.error(
+            'Failed to credit system wallet after PayOS payment:',
+            err.message || String(err)
+          );
         }
       } else if (isCODDeposit) {
         // Deposit payment for COD
@@ -2567,11 +2579,18 @@ class RentalOrderService {
         try {
           const depositAmount = transaction?.amount || Number(payosPaymentInfo.amount) || 0;
           if (depositAmount > 0) {
-            await SystemWalletService.addFunds(process.env.SYSTEM_ADMIN_ID || null, depositAmount, `PayOS deposit for order ${masterOrder.masterOrderNumber}`);
+            await SystemWalletService.addFunds(
+              process.env.SYSTEM_ADMIN_ID || null,
+              depositAmount,
+              `PayOS deposit for order ${masterOrder.masterOrderNumber}`
+            );
             console.log('✅ Credited system wallet with deposit amount:', depositAmount);
           }
         } catch (err) {
-          console.error('Failed to credit system wallet for deposit after PayOS:', err.message || String(err));
+          console.error(
+            'Failed to credit system wallet for deposit after PayOS:',
+            err.message || String(err)
+          );
         }
       }
 
@@ -2794,11 +2813,19 @@ class RentalOrderService {
 
       // 4. Cập nhật trạng thái SubOrder
       if (totalConfirmed > 0 && totalRejected > 0) {
+        // TRƯỜNG HỢP C: XÁC NHẬN MỘT PHẦN
         subOrder.status = 'PARTIALLY_CONFIRMED';
+        console.log(
+          `📊 Partial confirmation: ${totalConfirmed} confirmed, ${totalRejected} rejected`
+        );
       } else if (totalConfirmed === subOrder.products.length) {
+        // TRƯỜNG HỢP A: XÁC NHẬN ĐỦ/TẤT CẢ
         subOrder.status = 'OWNER_CONFIRMED';
+        console.log('✅ All products confirmed by owner');
       } else if (totalRejected === subOrder.products.length) {
+        // TRƯỜNG HỢP B: TỪ CHỐI TOÀN BỘ → TỰ ĐỘNG HỦY ĐƠN VÀ HOÀN TIỀN 100%
         subOrder.status = 'OWNER_REJECTED';
+        console.log('❌ All products rejected by owner → Auto-cancelling order');
       }
 
       subOrder.ownerConfirmation = {
@@ -2809,8 +2836,33 @@ class RentalOrderService {
 
       await subOrder.save({ session });
 
-      // 5. Hoàn tiền cho các sản phẩm bị rejected
-      if (rejectedAmount > 0) {
+      // 5. Xử lý theo từng trường hợp
+      if (totalRejected === subOrder.products.length) {
+        // TRƯỜNG HỢP B: TỪ CHỐI TOÀN BỘ
+        // → Hoàn tiền 100% và tự động hủy đơn
+        console.log('🔄 Processing full rejection - refunding 100% and cancelling order');
+
+        await this.refundRejectedProducts(
+          masterOrder,
+          subOrder,
+          rejectedAmount,
+          'Chủ đồ từ chối toàn bộ sản phẩm - Hủy đơn tự động',
+          session
+        );
+
+        // Đánh dấu SubOrder là CANCELLED
+        subOrder.status = 'CANCELLED';
+        subOrder.cancelledAt = now;
+        subOrder.cancelReason = 'Chủ đồ từ chối toàn bộ sản phẩm';
+        await subOrder.save({ session });
+
+        // Kiểm tra nếu tất cả SubOrders đều bị reject/cancel → Hủy MasterOrder
+        await this.checkAndCancelMasterOrderIfAllRejected(masterOrder._id, session);
+      } else if (rejectedAmount > 0) {
+        // TRƯỜNG HỢP C: XÁC NHẬN MỘT PHẦN
+        // → Hoàn tiền phần bị rejected ngay lập tức
+        console.log('💰 Processing partial rejection - refunding rejected products');
+
         await this.refundRejectedProducts(
           masterOrder,
           subOrder,
@@ -3163,7 +3215,8 @@ class RentalOrderService {
     totalRental,
     totalDeposit,
     totalShipping,
-    totalAmount
+    totalAmount,
+    editableTerms = null
   ) {
     const productListHTML = confirmedProducts
       .map(
@@ -3259,6 +3312,35 @@ class RentalOrderService {
           <li>Nếu trả trễ, bên thuê phải chịu phí phạt theo quy định.</li>
           <li>Nếu sản phẩm bị hư hỏng, bên thuê phải bồi thường theo giá trị thực tế.</li>
         </ol>
+
+        ${
+          editableTerms?.additionalTerms && editableTerms.additionalTerms.length > 0
+            ? `
+        <h3>ĐIỀU KHOẢN BỔ SUNG</h3>
+        <ol start="5">
+          ${editableTerms.additionalTerms.map((term) => `<li><strong>${term.title}:</strong> ${term.content}</li>`).join('')}
+        </ol>
+        `
+            : ''
+        }
+
+        ${
+          editableTerms?.customClauses
+            ? `
+        <h3>ĐIỀU KHOẢN TỰY CHỈNH</h3>
+        <p style="white-space: pre-wrap;">${editableTerms.customClauses}</p>
+        `
+            : ''
+        }
+
+        ${
+          editableTerms?.specialConditions
+            ? `
+        <h3>ĐIỀU KIỆN ĐẶC BIỆT</h3>
+        <p style="white-space: pre-wrap;">${editableTerms.specialConditions}</p>
+        `
+            : ''
+        }
 
         <div style="margin-top: 50px; display: flex; justify-content: space-between;">
           <div style="text-align: center;">
@@ -3370,10 +3452,14 @@ class RentalOrderService {
   }
 
   /**
-   * Renter từ chối SubOrder đã được partial confirm
+   * Renter từ chối SubOrder đã được partial confirm (TRƯỜNG HỢP C)
+   * - Người thuê có quyền KHÔNG chấp nhận khi bị thiếu hàng
    * - Hủy toàn bộ SubOrder
-   * - Hoàn tiền 100% (cả sản phẩm đã confirm)
+   * - Hoàn tiền 100% (kể cả phần sản phẩm đã confirm)
    * - Cập nhật MasterOrder status
+   *
+   * QUY TẮC: Người thuê có quyền từ chối nếu không đồng ý với số lượng partial confirm
+   * → Hoàn 100% toàn bộ tiền cọc, không bị ép buộc phải thuê
    */
   async renterRejectSubOrder(subOrderId, renterId, reason) {
     const session = await mongoose.startSession();
@@ -3461,6 +3547,266 @@ class RentalOrderService {
       await session.abortTransaction();
       session.endSession();
       console.error('❌ Error in renterRejectSubOrder:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * ============================================================================
+   * CONTRACT EDITING METHODS (Owner can edit terms before signing)
+   * ============================================================================
+   */
+
+  /**
+   * Get contract for editing (owner only, before signing)
+   * @param {string} contractId - Contract ID
+   * @param {string} ownerId - Owner ID
+   * @returns {Promise<Object>} Contract with editable fields
+   */
+  async getContractForEditing(contractId, ownerId) {
+    const contract = await Contract.findById(contractId)
+      .populate('owner', 'fullName email phone')
+      .populate('renter', 'fullName email phone')
+      .populate('product', 'title description images')
+      .populate('subOrder')
+      .populate('masterOrder', 'orderNumber');
+
+    if (!contract) {
+      throw new Error('Không tìm thấy hợp đồng');
+    }
+
+    console.log('📄 Contract status:', contract.status);
+    console.log('📝 Owner signed:', contract.signatures?.owner?.signed);
+    console.log('📝 Renter signed:', contract.signatures?.renter?.signed);
+
+    // Check owner permission
+    if (contract.owner._id.toString() !== ownerId.toString()) {
+      throw new Error('Bạn không có quyền chỉnh sửa hợp đồng này');
+    }
+
+    // Check if owner hasn't signed yet (main condition)
+    if (contract.signatures?.owner?.signed) {
+      throw new Error('Bạn đã ký hợp đồng này, không thể chỉnh sửa nữa');
+    }
+
+    // Allow editing if owner hasn't signed, regardless of status
+    // The owner should be able to edit before signing
+    return contract;
+  }
+
+  /**
+   * Update contract editable terms (owner only, before signing)
+   * @param {string} contractId - Contract ID
+   * @param {string} ownerId - Owner ID
+   * @param {Object} editData - { additionalTerms, customClauses, specialConditions }
+   * @returns {Promise<Object>} Updated contract
+   */
+  async updateContractTerms(contractId, ownerId, editData) {
+    const contract = await this.getContractForEditing(contractId, ownerId);
+
+    const { additionalTerms, customClauses, specialConditions } = editData;
+
+    // Update editable terms
+    if (!contract.editableTerms) {
+      contract.editableTerms = {
+        additionalTerms: [],
+        editHistory: [],
+        isEdited: false
+      };
+    }
+
+    let changesMade = [];
+
+    // Update additional terms (array of terms with title and content)
+    if (additionalTerms && Array.isArray(additionalTerms)) {
+      contract.editableTerms.additionalTerms = additionalTerms.map((term) => ({
+        title: term.title,
+        content: term.content,
+        addedBy: ownerId,
+        addedAt: new Date()
+      }));
+      changesMade.push('Cập nhật điều khoản bổ sung');
+    }
+
+    // Update custom clauses (rich text)
+    if (customClauses !== undefined) {
+      contract.editableTerms.customClauses = customClauses;
+      changesMade.push('Cập nhật điều khoản tùy chỉnh');
+    }
+
+    // Update special conditions
+    if (specialConditions !== undefined) {
+      contract.editableTerms.specialConditions = specialConditions;
+      changesMade.push('Cập nhật điều kiện đặc biệt');
+    }
+
+    // Add to edit history
+    if (changesMade.length > 0) {
+      contract.editableTerms.editHistory.push({
+        editedBy: ownerId,
+        editedAt: new Date(),
+        changes: changesMade.join(', ')
+      });
+      contract.editableTerms.isEdited = true;
+      contract.editableTerms.lastEditedAt = new Date();
+
+      // Regenerate HTML content with updated terms
+      await contract.populate('subOrder');
+      await contract.populate('owner', 'profile phone email');
+      await contract.populate('renter', 'profile phone email');
+
+      const subOrder = contract.subOrder;
+      if (subOrder) {
+        await subOrder.populate('owner', 'profile phone email');
+        await subOrder.populate('products.product', 'title name');
+
+        // Calculate totals from contract terms
+        const totalRental = contract.terms.rentalRate || 0;
+        const totalDeposit = contract.terms.deposit || 0;
+        const totalShipping = contract.terms.shippingFee || 0;
+        const totalAmount = contract.terms.totalAmount || 0;
+
+        // Get confirmed products from subOrder
+        const confirmedProducts = subOrder.products.filter((p) => p.productStatus === 'CONFIRMED');
+
+        // Regenerate HTML with editable terms
+        const updatedHTML = this.generateContractHTML(
+          contract.contractNumber,
+          subOrder,
+          contract.renter,
+          confirmedProducts,
+          totalRental,
+          totalDeposit,
+          totalShipping,
+          totalAmount,
+          contract.editableTerms
+        );
+
+        contract.content.htmlContent = updatedHTML;
+        console.log('🔄 Regenerated contract HTML with updated terms');
+      }
+    }
+
+    await contract.save();
+
+    console.log(`✅ Contract ${contractId} updated by owner ${ownerId}`);
+    return contract;
+  }
+
+  /**
+   * Add a single additional term to contract
+   * @param {string} contractId - Contract ID
+   * @param {string} ownerId - Owner ID
+   * @param {Object} term - { title, content }
+   * @returns {Promise<Object>} Updated contract
+   */
+  async addContractTerm(contractId, ownerId, term) {
+    const contract = await this.getContractForEditing(contractId, ownerId);
+
+    if (!contract.editableTerms) {
+      contract.editableTerms = {
+        additionalTerms: [],
+        editHistory: [],
+        isEdited: false
+      };
+    }
+
+    // Add new term
+    contract.editableTerms.additionalTerms.push({
+      title: term.title,
+      content: term.content,
+      addedBy: ownerId,
+      addedAt: new Date()
+    });
+
+    // Add to edit history
+    contract.editableTerms.editHistory.push({
+      editedBy: ownerId,
+      editedAt: new Date(),
+      changes: `Thêm điều khoản: ${term.title}`
+    });
+    contract.editableTerms.isEdited = true;
+    contract.editableTerms.lastEditedAt = new Date();
+
+    await contract.save();
+
+    console.log(`✅ Added term "${term.title}" to contract ${contractId}`);
+    return contract;
+  }
+
+  /**
+   * Remove an additional term from contract
+   * @param {string} contractId - Contract ID
+   * @param {string} ownerId - Owner ID
+   * @param {string} termId - Term ID to remove
+   * @returns {Promise<Object>} Updated contract
+   */
+  async removeContractTerm(contractId, ownerId, termId) {
+    const contract = await this.getContractForEditing(contractId, ownerId);
+
+    if (!contract.editableTerms || !contract.editableTerms.additionalTerms) {
+      throw new Error('Không có điều khoản nào để xóa');
+    }
+
+    const termIndex = contract.editableTerms.additionalTerms.findIndex(
+      (t) => t._id.toString() === termId
+    );
+
+    if (termIndex === -1) {
+      throw new Error('Không tìm thấy điều khoản');
+    }
+
+    const removedTerm = contract.editableTerms.additionalTerms[termIndex];
+    contract.editableTerms.additionalTerms.splice(termIndex, 1);
+
+    // Add to edit history
+    contract.editableTerms.editHistory.push({
+      editedBy: ownerId,
+      editedAt: new Date(),
+      changes: `Xóa điều khoản: ${removedTerm.title}`
+    });
+    contract.editableTerms.lastEditedAt = new Date();
+
+    await contract.save();
+
+    console.log(`✅ Removed term "${removedTerm.title}" from contract ${contractId}`);
+    return contract;
+  }
+
+  /**
+   * Check if all SubOrders are rejected/cancelled, then cancel MasterOrder
+   * @param {string} masterOrderId - MasterOrder ID
+   * @param {Session} session - Mongoose session
+   */
+  async checkAndCancelMasterOrderIfAllRejected(masterOrderId, session) {
+    try {
+      const masterOrder = await MasterOrder.findById(masterOrderId)
+        .populate('subOrders')
+        .session(session);
+
+      if (!masterOrder) {
+        throw new Error('Không tìm thấy MasterOrder');
+      }
+
+      const subOrders = masterOrder.subOrders;
+      const allRejectedOrCancelled = subOrders.every(
+        (so) =>
+          so.status === 'OWNER_REJECTED' ||
+          so.status === 'CANCELLED' ||
+          so.status === 'RENTER_REJECTED'
+      );
+
+      if (allRejectedOrCancelled) {
+        console.log('🔴 All SubOrders rejected/cancelled → Cancelling MasterOrder');
+        masterOrder.status = 'CANCELLED';
+        masterOrder.cancelledAt = new Date();
+        masterOrder.cancelReason = 'Tất cả SubOrders đã bị từ chối hoặc hủy';
+        await masterOrder.save({ session });
+
+        console.log(`✅ MasterOrder ${masterOrderId} has been cancelled`);
+      }
+    } catch (error) {
+      console.error('❌ Error in checkAndCancelMasterOrderIfAllRejected:', error);
       throw error;
     }
   }

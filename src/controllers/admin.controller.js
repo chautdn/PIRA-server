@@ -592,6 +592,96 @@ class AdminController {
     }
   }
 
+  // ========== TRANSACTION MANAGEMENT ==========
+  async getAllTransactions(req, res) {
+    try {
+      const { 
+        page = 1, 
+        limit = 10, 
+        search, 
+        type, 
+        status, 
+        startDate, 
+        endDate,
+        minAmount,
+        maxAmount,
+        sortBy = 'createdAt',
+        sortOrder = 'desc'
+      } = req.query;
+      
+      const filters = { 
+        page, 
+        limit, 
+        search, 
+        type, 
+        status, 
+        startDate, 
+        endDate,
+        minAmount,
+        maxAmount,
+        sortBy,
+        sortOrder
+      };
+      
+      const result = await adminService.getAllTransactions(filters);
+      return responseUtils.success(res, result, 'Lấy danh sách giao dịch thành công');
+    } catch (error) {
+      return responseUtils.error(res, error.message, 500);
+    }
+  }
+
+  async getTransactionById(req, res) {
+    try {
+      const { transactionId } = req.params;
+      const transaction = await adminService.getTransactionById(transactionId);
+      
+      if (!transaction) {
+        return responseUtils.error(res, 'Không tìm thấy giao dịch', 404);
+      }
+      
+      return responseUtils.success(res, transaction, 'Lấy thông tin giao dịch thành công');
+    } catch (error) {
+      return responseUtils.error(res, error.message, 500);
+    }
+  }
+
+  async getTransactionStats(req, res) {
+    try {
+      const { startDate, endDate, period = 'day' } = req.query;
+      const stats = await adminService.getTransactionStats({ startDate, endDate, period });
+      return responseUtils.success(res, stats, 'Lấy thống kê giao dịch thành công');
+    } catch (error) {
+      return responseUtils.error(res, error.message, 500);
+    }
+  }
+
+  async exportTransactions(req, res) {
+    try {
+      const { 
+        type, 
+        status, 
+        startDate, 
+        endDate,
+        format = 'csv'
+      } = req.query;
+      
+      const filters = { type, status, startDate, endDate };
+      const exportData = await adminService.exportTransactions(filters, format);
+      
+      if (format === 'csv') {
+        res.setHeader('Content-Type', 'text/csv');
+        res.setHeader('Content-Disposition', 'attachment; filename=transactions.csv');
+      } else {
+        res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+        res.setHeader('Content-Disposition', 'attachment; filename=transactions.xlsx');
+      }
+      
+      return res.send(exportData);
+    } catch (error) {
+      return responseUtils.error(res, error.message, 500);
+    }
+  }
+
   // ========== WITHDRAWAL FINANCIAL ANALYSIS ==========
   
   /**

@@ -17,7 +17,7 @@ const timezoneMiddleware = (req, res, next) => {
       // Helper to check if object should be skipped
       const shouldSkipObject = (obj) => {
         if (!obj || typeof obj !== 'object') return true;
-        
+
         // Skip special types
         if (
           obj instanceof Date ||
@@ -130,7 +130,12 @@ const timezoneMiddleware = (req, res, next) => {
         Object.keys(result).forEach((key) => {
           try {
             const value = result[key];
-            if (value && typeof value === 'object' && !shouldSkipObject(value) && !visited.has(value)) {
+            if (
+              value &&
+              typeof value === 'object' &&
+              !shouldSkipObject(value) &&
+              !visited.has(value)
+            ) {
               result[key] = addTimezoneInfo(value);
             }
           } catch (error) {

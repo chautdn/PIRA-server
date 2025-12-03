@@ -20,13 +20,14 @@ const validateCreateRequest = [
   body('useOriginalAddress').optional().isBoolean(),
   body('returnAddress').optional().isObject(),
   body('returnAddress.streetAddress')
-    .if(body('useOriginalAddress').not().equals(true))
+    .if((value, { req }) => !req.body.useOriginalAddress)
     .notEmpty()
     .withMessage('Street address is required when not using original address'),
   body('returnAddress.contactPhone')
-    .if(body('useOriginalAddress').not().equals(true))
-    .notEmpty()
-    .withMessage('Contact phone is required when not using original address'),
+    .if((value, { req }) => !req.body.useOriginalAddress)
+    .optional()
+    .isString()
+    .withMessage('Contact phone must be a string if provided'),
   body('notes').optional().isString().trim(),
   handleValidationErrors
 ];
@@ -50,6 +51,32 @@ const validateCancelRequest = [
   handleValidationErrors
 ];
 
+const validateUpdateRequest = [
+  param('id').isMongoId().withMessage('Invalid request ID'),
+  body('requestedReturnDate').optional().isISO8601().withMessage('Invalid date format'),
+  body('returnAddress').optional().isObject(),
+  body('returnAddress.streetAddress')
+    .optional()
+    .notEmpty()
+    .withMessage('Street address cannot be empty'),
+  body('returnAddress.coordinates').optional().isObject(),
+  body('returnAddress.coordinates.latitude')
+    .optional()
+    .isFloat()
+    .withMessage('Valid latitude is required'),
+  body('returnAddress.coordinates.longitude')
+    .optional()
+    .isFloat()
+    .withMessage('Valid longitude is required'),
+  body('notes').optional().isString().trim(),
+  handleValidationErrors
+];
+
+const validateDeleteRequest = [
+  param('id').isMongoId().withMessage('Invalid request ID'),
+  handleValidationErrors
+];
+
 const validateCreateReview = [
   param('id').isMongoId().withMessage('Invalid request ID'),
   body('rating')
@@ -64,6 +91,32 @@ const validateCreateReview = [
   handleValidationErrors
 ];
 
+const validateUpdateAddress = [
+  param('id').isMongoId().withMessage('Invalid request ID'),
+  body('returnAddress').notEmpty().withMessage('Return address is required').isObject(),
+  body('returnAddress.streetAddress').notEmpty().withMessage('Street address is required'),
+  body('returnAddress.coordinates').notEmpty().withMessage('Coordinates are required').isObject(),
+  body('returnAddress.coordinates.latitude').isFloat().withMessage('Valid latitude is required'),
+  body('returnAddress.coordinates.longitude').isFloat().withMessage('Valid longitude is required'),
+  body('returnAddress.contactPhone').notEmpty().withMessage('Contact phone is required'),
+  handleValidationErrors
+];
+
+const validatePayAdditionalShipping = [
+  param('id').isMongoId().withMessage('Invalid request ID'),
+  body('paymentMethod')
+    .notEmpty()
+    .withMessage('Payment method is required')
+    .isIn(['wallet', 'payos'])
+    .withMessage('Payment method must be wallet or payos'),
+  handleValidationErrors
+];
+
+const validateOrderCode = [
+  param('orderCode').notEmpty().withMessage('Order code is required'),
+  handleValidationErrors
+];
+
 const validateRequestId = [
   param('id').isMongoId().withMessage('Invalid request ID'),
   handleValidationErrors
@@ -75,19 +128,39 @@ const validateQueryParams = [
     .optional()
     .isInt({ min: 1, max: 100 })
     .withMessage('Limit must be between 1 and 100'),
-  query('status')
-    .optional()
-    .isIn(['PENDING', 'ACKNOWLEDGED', 'RETURNED', 'COMPLETED', 'AUTO_COMPLETED', 'CANCELLED'])
-    .withMessage('Invalid status'),
+  query('status').optional().isIn(['ACTIVE', 'CANCELLED']).withMessage('Invalid status'),
   handleValidationErrors
 ];
 
 // All routes require authentication
 router.use(authMiddleware.verifyToken);
 
+// Fee calculation and upfront payment (before creating request)
+router.post(
+  '/calculate-fee',
+  authMiddleware.verifyToken,
+  earlyReturnController.calculateAdditionalFee
+);
+router.post(
+  '/pay-upfront-shipping',
+  authMiddleware.verifyToken,
+  earlyReturnController.payUpfrontShippingFee
+);
+
 // Renter routes
 router.post('/', validateCreateRequest, earlyReturnController.createRequest);
 router.get('/renter', validateQueryParams, earlyReturnController.getRenterRequests);
+router.delete('/:id', validateDeleteRequest, earlyReturnController.deleteRequest);
+router.post(
+  '/:id/pay-additional-shipping',
+  validatePayAdditionalShipping,
+  earlyReturnController.payAdditionalShipping
+);
+router.get(
+  '/verify-additional-shipping/:orderCode',
+  validateOrderCode,
+  earlyReturnController.verifyAdditionalShippingPayment
+);
 router.post('/:id/cancel', validateCancelRequest, earlyReturnController.cancelRequest);
 
 // Owner routes

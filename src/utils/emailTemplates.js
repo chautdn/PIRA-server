@@ -144,6 +144,63 @@ const emailTemplates = {
     </html>
   `,
 
+  contractSigningOTP: (userName, userRole, orderId, otp, expiryMinutes = 5) => `
+    <!DOCTYPE html>
+    <html lang="vi">
+    <head>
+      <meta charset="UTF-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      <title>Mã xác minh ký hợp đồng thuê</title>
+    </head>
+    <body style="margin: 0; padding: 0; font-family: Arial, Helvetica, sans-serif; background-color: #f4f4f4;">
+      <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="max-width: 600px; margin: 20px auto; background-color: #ffffff; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+        <tr>
+          <td style="padding: 20px 0; text-align: center; background-color: #28a745; border-top-left-radius: 8px; border-top-right-radius: 8px;">
+            <img src="https://via.placeholder.com/150x50?text=PIRA+System" alt="Logo" style="max-width: 150px; height: auto;">
+          </td>
+        </tr>
+        <tr>
+          <td style="padding: 30px;">
+            <h1 style="font-size: 24px; color: #333333; margin: 0 0 20px; text-align: center;">🔐 Mã xác minh ký hợp đồng</h1>
+            <p style="font-size: 16px; color: #555555; line-height: 1.6; margin: 0 0 20px;">Xin chào <strong>${userName}</strong> (${userRole === 'owner' ? 'Chủ sản phẩm' : 'Người thuê'}),</p>
+            <p style="font-size: 16px; color: #555555; line-height: 1.6; margin: 0 0 20px;">Bạn đang thực hiện ký hợp đồng thuê điện tử cho đơn hàng <strong>#${orderId}</strong>.</p>
+            
+            <div style="background-color: #d1f2eb; border: 2px dashed #28a745; padding: 20px; margin: 20px 0; border-radius: 8px; text-align: center;">
+              <p style="margin: 0 0 10px; font-size: 14px; color: #155724; font-weight: bold;">MÃ OTP CỦA BẠN LÀ:</p>
+              <p style="margin: 0; font-size: 36px; font-weight: bold; color: #28a745; letter-spacing: 8px; font-family: 'Courier New', monospace;">${otp}</p>
+            </div>
+
+            <div style="background-color: #fff3cd; border-left: 4px solid #ffc107; padding: 15px; margin: 20px 0; border-radius: 4px;">
+              <p style="margin: 0 0 10px; font-weight: bold; color: #856404;">⚠️ Lưu ý quan trọng:</p>
+              <ul style="margin: 10px 0; padding-left: 20px; color: #856404;">
+                <li>Mã OTP này có hiệu lực trong <strong>${expiryMinutes} phút</strong></li>
+                <li>Vui lòng <strong>KHÔNG chia sẻ</strong> mã này cho bất kỳ ai</li>
+                <li>Nếu bạn không yêu cầu mã này, vui lòng bỏ qua email</li>
+              </ul>
+            </div>
+
+            <div style="background-color: #d1ecf1; border-left: 4px solid #17a2b8; padding: 15px; margin: 20px 0; border-radius: 4px;">
+              <p style="margin: 0 0 10px; font-weight: bold; color: #0c5460;">📋 Thông tin đơn hàng:</p>
+              <p style="margin: 0 0 5px; color: #0c5460;"><strong>Mã đơn hàng:</strong> #${orderId}</p>
+              <p style="margin: 0 0 5px; color: #0c5460;"><strong>Vai trò:</strong> ${userRole === 'owner' ? 'Chủ sản phẩm' : 'Người thuê'}</p>
+              <p style="margin: 0; color: #0c5460;"><strong>Thời gian gửi:</strong> ${new Date().toLocaleString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh' })}</p>
+            </div>
+
+            <p style="font-size: 14px; color: #777777; line-height: 1.6; margin: 20px 0 0;">Nếu có bất kỳ thắc mắc nào, vui lòng liên hệ với chúng tôi qua email hoặc hotline hỗ trợ.</p>
+            <p style="font-size: 14px; color: #777777; line-height: 1.6; margin: 10px 0 0;">Trân trọng,<br>Đội ngũ PIRA System</p>
+          </td>
+        </tr>
+        <tr>
+          <td style="padding: 20px; text-align: center; background-color: #f8f8f8; border-bottom-left-radius: 8px; border-bottom-right-radius: 8px;">
+            <p style="font-size: 14px; color: #777777; margin: 0;">© 2025 PIRA System. All rights reserved.</p>
+            <p style="font-size: 12px; color: #999999; margin: 10px 0 0;">Email: support@pira.com | Hotline: 1900 xxxx</p>
+          </td>
+        </tr>
+      </table>
+    </body>
+    </html>
+  `,
+
   shipperNotificationEmail: (shipperName, shipmentId, shipmentType, productName, renterInfo, scheduledDate, orderDetails) => `
     <!DOCTYPE html>
     <html lang="vi">

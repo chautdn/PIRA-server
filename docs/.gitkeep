@@ -1,9 +1,0 @@
-// Placeholder file to ensure docs folder is tracked in git
-// Only essential API documentation files (API\_\*.md) are kept
-// Guides and tutorials are moved to reports/
-
-// Example docs structure:
-// docs/
-// ├── API_RENTAL_ORDER.md
-// ├── API_PAYMENT.md
-// └── API_AUTHENTICATION.md

@@ -1,4 +1,5 @@
 const User = require('../models/User');
+const bcrypt = require('bcrypt');
 const { NotFoundError, ValidationError, DatabaseError } = require('../core/error');
 const { encryptCCCDNumber, validateNationalIdFormat } = require('./kyc.service');
 
@@ -40,6 +41,31 @@ const updateProfile = async (id, userParam) => {
     throw new NotFoundError('User');
   }
   return user;
+};
+
+const changePassword = async (id, currentPassword, newPassword) => {
+  const user = await User.findById(id);
+  if (!user) {
+    throw new NotFoundError('User not found');
+  }
+
+  // Verify current password
+  const isCurrentPasswordValid = await bcrypt.compare(currentPassword, user.password);
+  if (!isCurrentPasswordValid) {
+    throw new ValidationError('Mật khẩu hiện tại không đúng');
+  }
+
+  // Check if new password is different from current password
+  const isSamePassword = await bcrypt.compare(newPassword, user.password);
+  if (isSamePassword) {
+    throw new ValidationError('Mật khẩu mới phải khác với mật khẩu hiện tại');
+  }
+
+  // Update password (will be hashed by pre-save middleware in User model)
+  user.password = newPassword;
+  await user.save();
+
+  return { message: 'Password changed successfully' };
 };
 const updateProfileByKyc = async (id) => {
   try {
@@ -267,6 +293,7 @@ module.exports = {
   getProfile,
   updateProfile,
   updateProfileByKyc,
+  changePassword,
   addBankAccount,
   updateBankAccount,
   removeBankAccount,

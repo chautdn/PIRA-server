@@ -36,6 +36,10 @@ const validateCreate = [
     .withMessage('Payment method is required')
     .isIn(['wallet', 'payos'])
     .withMessage('Payment method must be either wallet or payos'),
+  body('scheduleMode')
+    .optional()
+    .isIn(['override', 'after'])
+    .withMessage('Schedule mode must be either override or after'),
   handleValidationErrors
 ];
 
