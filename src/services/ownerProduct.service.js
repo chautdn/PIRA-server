@@ -419,7 +419,12 @@ const ownerProductService = {
     try {
       const SubOrder = require('../models/SubOrder');
 
-      console.log('🔍 [confirmProductItem] Confirming product:', productItemIndex, 'in subOrder:', subOrderId);
+      console.log(
+        '🔍 [confirmProductItem] Confirming product:',
+        productItemIndex,
+        'in subOrder:',
+        subOrderId
+      );
 
       const subOrder = await SubOrder.findOne({
         _id: subOrderId,
@@ -438,7 +443,10 @@ const ownerProductService = {
 
       const productItem = subOrder.products[productItemIndex];
       if (productItem.productStatus !== 'PENDING') {
-        console.log('❌ [confirmProductItem] Product already processed:', productItem.productStatus);
+        console.log(
+          '❌ [confirmProductItem] Product already processed:',
+          productItem.productStatus
+        );
         throw new Error('Sản phẩm này đã được xử lý rồi');
       }
 
@@ -798,23 +806,23 @@ const ownerProductService = {
   canEditPricing: async (productId) => {
     try {
       const SubOrder = require('../models/SubOrder');
-      
+
       // Check for any sub-orders with this product that are in states where pricing shouldn't change
       const activeOrders = await SubOrder.find({
         'products.product': productId,
         'products.productStatus': {
           $in: [
-            'PENDING',           // Pending confirmation
-            'CONFIRMED',         // Confirmed by owner
+            'PENDING', // Pending confirmation
+            'CONFIRMED', // Confirmed by owner
             'SHIPPER_CONFIRMED', // Shipper confirmed
-            'IN_TRANSIT',        // In transit
-            'DELIVERED',         // Delivered
-            'ACTIVE',            // Currently rented
-            'DISPUTED',          // Has dispute
-            'RETURN_REQUESTED',  // Return requested
+            'IN_TRANSIT', // In transit
+            'DELIVERED', // Delivered
+            'ACTIVE', // Currently rented
+            'DISPUTED', // Has dispute
+            'RETURN_REQUESTED', // Return requested
             'EARLY_RETURN_REQUESTED',
             'RETURN_SHIPPER_CONFIRMED',
-            'RETURNING'          // Returning to owner
+            'RETURNING' // Returning to owner
           ]
         }
       }).limit(1);
@@ -844,7 +852,9 @@ const ownerProductService = {
       // Check if pricing can be edited
       const canEdit = await ownerProductService.canEditPricing(productId);
       if (!canEdit) {
-        throw new Error('Cannot edit pricing while product has active rental requests or is currently rented');
+        throw new Error(
+          'Cannot edit pricing while product has active rental requests or is currently rented'
+        );
       }
 
       // Update pricing fields
