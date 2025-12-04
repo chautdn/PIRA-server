@@ -585,8 +585,8 @@ class RentalOrderService {
         orderCode,
         amount: amount,
         description: `Thanh toan don hang ${orderNumber}`.substring(0, 25), // Max 25 chars
-        returnUrl: `${process.env.CLIENT_URL || 'http://localhost:3000'}/rental-orders?payment=success&orderCode=${orderCode}&orderId=${masterOrderId}`,
-        cancelUrl: `${process.env.CLIENT_URL || 'http://localhost:3000'}/rental-orders?payment=cancel&orderCode=${orderCode}&orderId=${masterOrderId}`
+        returnUrl: `${process.env.CLIENT_URL || 'https://pira.asia'}/rental-orders?payment=success&orderCode=${orderCode}&orderId=${masterOrderId}`,
+        cancelUrl: `${process.env.CLIENT_URL || 'https://pira.asia'}/rental-orders?payment=cancel&orderCode=${orderCode}&orderId=${masterOrderId}`
       };
 
       const paymentLink = await payos.paymentRequests.create(paymentRequest);

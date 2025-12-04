@@ -29,8 +29,8 @@ app.use(
       if (!origin) return callback(null, true);
 
       const allowedOrigins = [
-        process.env.CLIENT_URL || 'http://localhost:3000',
-        'http://localhost:3000',
+        process.env.CLIENT_URL || 'https://pira.asia',
+        'https://pira.asia',
         'http://localhost:3001',
         'http://localhost:5173',
         'http://127.0.0.1:3000'
