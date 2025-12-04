@@ -527,6 +527,15 @@ class RentalOrderController {
         throw new ForbiddenError('Không có quyền xem đơn hàng này');
       }
 
+      // Populate shipments for each subOrder separately
+      const Shipment = require('../models/Shipment');
+      for (let subOrder of masterOrder.subOrders) {
+        const shipments = await Shipment.find({ subOrder: subOrder._id })
+          .select('shipmentNumber type status shipper estimatedDeliveryDate actualDeliveryDate fromAddress toAddress contactInfo')
+          .populate('shipper', 'name email phone profile');
+        subOrder.shipments = shipments;
+      }
+
       return new SuccessResponse(
         {
           masterOrder
@@ -1145,6 +1154,74 @@ class RentalOrderController {
       return res.status(400).json({
         success: false,
         message: error.message || 'Không thể xác nhận đơn hàng'
+      });
+    }
+  }
+
+  /**
+   * Người thuê quyết định HỦY TOÀN BỘ đơn khi owner xác nhận một phần
+   * POST /api/rental-orders/suborders/:subOrderId/renter-cancel-partial
+   */
+  async renterCancelPartialOrder(req, res) {
+    try {
+      const renterId = req.user.id;
+      const { subOrderId } = req.params;
+      const { reason } = req.body;
+
+      console.log('📥 POST /api/rental-orders/suborders/:subOrderId/renter-cancel-partial');
+      console.log('SubOrder ID:', subOrderId);
+      console.log('Renter ID:', renterId);
+
+      const result = await RentalOrderService.renterCancelPartialOrder(
+        subOrderId,
+        renterId,
+        reason || 'Người thuê từ chối đơn một phần'
+      );
+
+      return new SuccessResponse({
+        message: result.message,
+        metadata: {
+          subOrder: result.subOrder,
+          refundAmount: result.refundAmount
+        }
+      }).send(res);
+    } catch (error) {
+      console.error('❌ Error in renterCancelPartialOrder:', error);
+      return res.status(400).json({
+        success: false,
+        message: error.message || 'Không thể hủy đơn hàng'
+      });
+    }
+  }
+
+  /**
+   * Người thuê quyết định TIẾP TỤC (ký hợp đồng) khi owner xác nhận một phần
+   * POST /api/rental-orders/suborders/:subOrderId/renter-accept-partial
+   */
+  async renterAcceptPartialOrder(req, res) {
+    try {
+      const renterId = req.user.id;
+      const { subOrderId } = req.params;
+
+      console.log('📥 POST /api/rental-orders/suborders/:subOrderId/renter-accept-partial');
+      console.log('SubOrder ID:', subOrderId);
+      console.log('Renter ID:', renterId);
+
+      const result = await RentalOrderService.renterAcceptPartialOrder(subOrderId, renterId);
+
+      return new SuccessResponse({
+        message: result.message,
+        metadata: {
+          subOrder: result.subOrder,
+          refundAmount: result.refundAmount,
+          keptAmount: result.keptAmount
+        }
+      }).send(res);
+    } catch (error) {
+      console.error('❌ Error in renterAcceptPartialOrder:', error);
+      return res.status(400).json({
+        success: false,
+        message: error.message || 'Không thể chấp nhận đơn hàng'
       });
     }
   }

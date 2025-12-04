@@ -47,12 +47,20 @@ class ExtensionController {
           continue;
         }
 
-        // Use data from frontend (frontend already calculated newEndDate and extensionDays)
+        // Use data from frontend (frontend already calculated everything)
         const currentEndDate = new Date(product.rentalPeriod.endDate);
         const newEndDate = new Date(selectedProduct.newEndDate);
         const extensionDays = selectedProduct.extensionDays;
-        const dailyRentalPrice = product.rentalRate || 0;
-        const extensionFee = Math.ceil(dailyRentalPrice * extensionDays);
+        const dailyRentalPrice = selectedProduct.dailyRentalPrice || product.rentalRate || 0;
+        // Use extensionFee sent from frontend (already correctly calculated there)
+        // But also validate by recalculating as backup if frontend data seems wrong
+        let extensionFee = selectedProduct.extensionFee || 0;
+        
+        // If extensionFee is 0 or not provided, recalculate it
+        if (!extensionFee || extensionFee <= 0) {
+          extensionFee = Math.ceil(dailyRentalPrice * extensionDays);
+          console.warn(`⚠️ extensionFee was 0 or missing, recalculated: ${extensionFee}`);
+        }
 
         const productData = {
           productId: product._id,
@@ -73,7 +81,11 @@ class ExtensionController {
           newEndDate,
           extensionDays,
           dailyRentalPrice,
-          extensionFee
+          extensionFee,
+          receivedFromFrontend: {
+            extensionFee: selectedProduct.extensionFee,
+            dailyRentalPrice: selectedProduct.dailyRentalPrice
+          }
         });
 
         productsList.push(productData);

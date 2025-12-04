@@ -322,6 +322,9 @@ const subOrderSchema = new mongoose.Schema(
         'PARTIALLY_CANCELLED_BY_OWNER', // Hủy một phần do owner không đến giao hàng
         'CANCELLED_BY_RENTER_NO_SHOW', // Hủy do không liên lạc được với renter
         'PARTIALLY_CONFIRMED', // Owner xác nhận một phần
+        'PENDING_RENTER_DECISION', // Chờ người thuê quyết định (hủy hoặc tiếp tục) khi xác nhận một phần
+        'RENTER_REJECTED', // Renter từ chối đơn partial (chọn hủy)
+        'RENTER_ACCEPTED_PARTIAL', // Renter chấp nhận đơn partial (chọn tiếp tục)
         'RENTER_REJECTED', // Renter từ chối đơn partial
         'RETURN_FAILED', // Trả hàng thất bại
 
@@ -357,6 +360,32 @@ const subOrderSchema = new mongoose.Schema(
     renterRejection: {
       rejectedAt: Date,
       reason: String
+    },
+
+    // Thông tin quyết định của người thuê khi owner xác nhận một phần
+    renterDecision: {
+      status: {
+        type: String,
+        enum: ['PENDING', 'ACCEPTED', 'REJECTED'],
+        default: 'PENDING'
+      },
+      decidedAt: Date,
+      choice: {
+        type: String,
+        enum: ['CANCEL_ALL', 'CONTINUE_PARTIAL'], // Hủy toàn bộ hoặc tiếp tục với phần được xác nhận
+        default: null
+      },
+      refundProcessed: {
+        type: Boolean,
+        default: false
+      },
+      refundDetails: {
+        depositRefund: { type: Number, default: 0 },
+        rentalRefund: { type: Number, default: 0 },
+        shippingRefund: { type: Number, default: 0 },
+        totalRefund: { type: Number, default: 0 },
+        processedAt: Date
+      }
     },
 
     // Hợp đồng
@@ -487,6 +516,13 @@ subOrderSchema.pre('save', function (next) {
 subOrderSchema.virtual('canConfirmDelivery').get(function () {
   // Renter can confirm delivery only if status is not DELIVERED yet
   return this.status !== 'DELIVERED';
+});
+
+// Virtual: shipments - get all shipments for this subOrder
+subOrderSchema.virtual('shipments', {
+  ref: 'Shipment',
+  localField: '_id',
+  foreignField: 'subOrder'
 });
 
 // Ensure virtuals are included when converting to JSON or Object

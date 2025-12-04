@@ -15,7 +15,19 @@ const transactionSchema = new mongoose.Schema(
     },
     type: {
       type: String,
-      enum: ['deposit', 'withdrawal', 'payment', 'refund', 'penalty', 'order_payment', 'PROMOTION_REVENUE', 'TRANSFER_IN', 'TRANSFER_OUT', 'DEPOSIT', 'WITHDRAWAL'],
+      enum: [
+        'deposit',
+        'withdrawal',
+        'payment',
+        'refund',
+        'penalty',
+        'order_payment',
+        'PROMOTION_REVENUE',
+        'TRANSFER_IN',
+        'TRANSFER_OUT',
+        'DEPOSIT',
+        'WITHDRAWAL'
+      ],
       required: true,
       index: true
     },
@@ -41,7 +53,14 @@ const transactionSchema = new mongoose.Schema(
       default: 'payos'
     },
     orderCode: String, // For PayOS orders
-    metadata: { type: mongoose.Schema.Types.Mixed, default: {} },
+    metadata: {
+      type: mongoose.Schema.Types.Mixed,
+      default: {}
+      // metadata có thể chứa:
+      // - feeBreakdown: { deposit, rental, shipping }
+      // - orderInfo, subOrderInfo
+      // - refundBreakdown: { depositRefund, rentalRefund, shippingRefund }
+    },
 
     // System wallet interaction tracking
     fromWallet: {
@@ -51,7 +70,7 @@ const transactionSchema = new mongoose.Schema(
     },
     toWallet: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: 'Wallet', 
+      ref: 'Wallet',
       required: false
     },
     fromSystemWallet: {
@@ -64,7 +83,15 @@ const transactionSchema = new mongoose.Schema(
     },
     systemWalletAction: {
       type: String,
-      enum: ['revenue', 'refund', 'fee_collection', 'penalty', 'transfer_in', 'transfer_out', 'manual_adjustment'],
+      enum: [
+        'revenue',
+        'refund',
+        'fee_collection',
+        'penalty',
+        'transfer_in',
+        'transfer_out',
+        'manual_adjustment'
+      ],
       required: false
     },
 
