@@ -1,6 +1,10 @@
 const mongoose = require('mongoose');
 const Dispute = require('../models/Dispute');
 const User = require('../models/User');
+const Wallet = require('../models/Wallet');
+const SystemWallet = require('../models/SystemWallet');
+const Transaction = require('../models/Transaction');
+const SubOrder = require('../models/SubOrder');
 const notificationService = require('./notification.service');
 
 class NegotiationService {
@@ -443,7 +447,9 @@ class NegotiationService {
    * @returns {Promise<Dispute>}
    */
   async adminFinalizeNegotiation(disputeId, adminId) {
-    const dispute = await Dispute.findOne(this._buildDisputeQuery(disputeId));
+    const dispute = await Dispute.findOne(this._buildDisputeQuery(disputeId))
+      .populate('complainant')
+      .populate('respondent');
     if (!dispute) {
       throw new Error('Dispute không tồn tại');
     }
@@ -452,30 +458,235 @@ class NegotiationService {
       throw new Error('Chưa có thỏa thuận được cả 2 bên đồng ý');
     }
 
-    // Chốt resolution
-    dispute.status = 'RESOLVED';
-    dispute.resolution = {
-      resolvedBy: adminId,
-      resolvedAt: new Date(),
-      resolutionText: dispute.negotiationRoom.finalAgreement.proposalText,
-      resolutionSource: 'NEGOTIATION',
-      financialImpact: {
-        compensationAmount: dispute.negotiationRoom.finalAgreement.proposalAmount,
-        paidBy: dispute.respondent,
-        paidTo: dispute.complainant,
-        status: 'PENDING'
+    const session = await mongoose.startSession();
+    session.startTransaction();
+
+    try {
+      // Chốt resolution
+      dispute.status = 'RESOLVED';
+      dispute.resolution = {
+        resolvedBy: adminId,
+        resolvedAt: new Date(),
+        resolutionText: dispute.negotiationRoom.finalAgreement.proposalText || dispute.negotiationRoom.finalAgreement.ownerDecision,
+        resolutionSource: 'NEGOTIATION'
+      };
+
+      // Xử lý tiền dựa trên ownerDecision
+      const isProductDispute = ['PRODUCT_NOT_AS_DESCRIBED', 'MISSING_ITEMS'].includes(dispute.type);
+      
+      if (isProductDispute) {
+        const ownerDecision = dispute.negotiationRoom.finalAgreement.ownerDecision;
+        let whoIsRight = null;
+        
+        // Parse owner decision để xác định ai đúng
+        if (ownerDecision) {
+          if (ownerDecision.toLowerCase().includes('renter') && ownerDecision.toLowerCase().includes('đúng')) {
+            whoIsRight = 'COMPLAINANT_RIGHT';
+          } else if (ownerDecision.toLowerCase().includes('renter') && ownerDecision.toLowerCase().includes('sai')) {
+            whoIsRight = 'RESPONDENT_RIGHT';
+          }
+        }
+
+        if (whoIsRight) {
+          // Sử dụng logic tương tự _processDisputeFinancials
+          const subOrder = await SubOrder.findById(dispute.subOrder).session(session);
+          if (!subOrder) {
+            throw new Error('SubOrder không tồn tại');
+          }
+
+          const product = subOrder.products[dispute.productIndex];
+          const depositAmount = product.totalDeposit || 0;
+          const rentalAmount = product.totalRental || 0;
+          const totalAmount = depositAmount + rentalAmount;
+
+          const renter = await User.findById(dispute.complainant).populate('wallet').session(session);
+          const owner = await User.findById(dispute.respondent).populate('wallet').session(session);
+
+          let renterWallet = await Wallet.findById(renter.wallet?._id).session(session);
+          let ownerWallet = await Wallet.findById(owner.wallet?._id).session(session);
+          const systemWallet = await SystemWallet.findOne({}).session(session);
+
+          if (!systemWallet) {
+            throw new Error('Không tìm thấy system wallet');
+          }
+
+          if (!renterWallet) {
+            renterWallet = new Wallet({
+              user: renter._id,
+              balance: { available: 0, frozen: 0, pending: 0, display: 0 },
+              currency: 'VND',
+              status: 'ACTIVE'
+            });
+            await renterWallet.save({ session });
+          }
+
+          if (!ownerWallet) {
+            ownerWallet = new Wallet({
+              user: owner._id,
+              balance: { available: 0, frozen: 0, pending: 0, display: 0 },
+              currency: 'VND',
+              status: 'ACTIVE'
+            });
+            await ownerWallet.save({ session });
+          }
+
+          if (whoIsRight === 'COMPLAINANT_RIGHT') {
+            // Renter đúng -> Hoàn 100%
+            if (depositAmount > 0) {
+              systemWallet.balance.available -= depositAmount;
+              await systemWallet.save({ session });
+              renterWallet.balance.available += depositAmount;
+            }
+
+            if (rentalAmount > 0) {
+              ownerWallet.balance.available -= rentalAmount;
+              renterWallet.balance.available += rentalAmount;
+            }
+
+            renterWallet.balance.display = renterWallet.balance.available + renterWallet.balance.frozen + renterWallet.balance.pending;
+            ownerWallet.balance.display = ownerWallet.balance.available + ownerWallet.balance.frozen + ownerWallet.balance.pending;
+            
+            await renterWallet.save({ session });
+            await ownerWallet.save({ session });
+
+            const depositRefundTx = new Transaction({
+              user: renter._id,
+              wallet: renterWallet._id,
+              type: 'refund',
+              amount: depositAmount,
+              status: 'success',
+              description: `Hoàn tiền cọc từ negotiation ${dispute.disputeId} - Renter đúng`,
+              reference: dispute._id.toString(),
+              paymentMethod: 'system_wallet',
+              fromSystemWallet: true,
+              toWallet: renterWallet._id,
+              metadata: { disputeId: dispute.disputeId, type: 'negotiation_deposit_refund' }
+            });
+            await depositRefundTx.save({ session });
+
+            const rentalRefundTx = new Transaction({
+              user: renter._id,
+              wallet: renterWallet._id,
+              type: 'refund',
+              amount: rentalAmount,
+              status: 'success',
+              description: `Hoàn phí thuê từ negotiation ${dispute.disputeId} - Renter đúng`,
+              reference: dispute._id.toString(),
+              paymentMethod: 'wallet',
+              fromWallet: ownerWallet._id,
+              toWallet: renterWallet._id,
+              metadata: { disputeId: dispute.disputeId, type: 'negotiation_rental_refund' }
+            });
+            await rentalRefundTx.save({ session });
+
+            dispute.resolution.financialImpact = {
+              refundAmount: totalAmount,
+              status: 'COMPLETED',
+              notes: `Hoàn 100% deposit + phí thuê. Tổng: ${totalAmount.toLocaleString('vi-VN')}đ`
+            };
+
+          } else if (whoIsRight === 'RESPONDENT_RIGHT') {
+            // Renter sai -> Phạt 1 ngày
+            const dailyRate = rentalAmount / (product.rentalDays || 1);
+            const penaltyAmount = dailyRate;
+            const refundRental = rentalAmount - penaltyAmount;
+            const refundAmount = depositAmount + refundRental;
+
+            if (depositAmount > 0) {
+              systemWallet.balance.available -= depositAmount;
+              await systemWallet.save({ session });
+              renterWallet.balance.available += depositAmount;
+            }
+
+            if (refundRental > 0) {
+              ownerWallet.balance.available -= refundRental;
+              renterWallet.balance.available += refundRental;
+            }
+
+            renterWallet.balance.display = renterWallet.balance.available + renterWallet.balance.frozen + renterWallet.balance.pending;
+            ownerWallet.balance.display = ownerWallet.balance.available + ownerWallet.balance.frozen + ownerWallet.balance.pending;
+            
+            await renterWallet.save({ session });
+            await ownerWallet.save({ session });
+
+            const depositRefundTx = new Transaction({
+              user: renter._id,
+              wallet: renterWallet._id,
+              type: 'refund',
+              amount: depositAmount,
+              status: 'success',
+              description: `Hoàn tiền cọc từ negotiation ${dispute.disputeId} - Owner đúng`,
+              reference: dispute._id.toString(),
+              paymentMethod: 'system_wallet',
+              fromSystemWallet: true,
+              toWallet: renterWallet._id,
+              metadata: { disputeId: dispute.disputeId, type: 'negotiation_deposit_refund' }
+            });
+            await depositRefundTx.save({ session });
+
+            const partialRefundTx = new Transaction({
+              user: renter._id,
+              wallet: renterWallet._id,
+              type: 'refund',
+              amount: refundRental,
+              status: 'success',
+              description: `Hoàn phí thuê từ negotiation ${dispute.disputeId} - Phạt 1 ngày`,
+              reference: dispute._id.toString(),
+              paymentMethod: 'wallet',
+              fromWallet: ownerWallet._id,
+              toWallet: renterWallet._id,
+              metadata: { disputeId: dispute.disputeId, type: 'negotiation_partial_refund' }
+            });
+            await partialRefundTx.save({ session });
+
+            const penaltyTx = new Transaction({
+              user: owner._id,
+              wallet: ownerWallet._id,
+              type: 'PROMOTION_REVENUE',
+              amount: penaltyAmount,
+              status: 'success',
+              description: `Nhận phí phạt từ negotiation ${dispute.disputeId}`,
+              reference: dispute._id.toString(),
+              paymentMethod: 'wallet',
+              metadata: { disputeId: dispute.disputeId, type: 'negotiation_penalty' }
+            });
+            await penaltyTx.save({ session });
+
+            dispute.resolution.financialImpact = {
+              refundAmount: refundAmount,
+              penaltyAmount: penaltyAmount,
+              status: 'COMPLETED',
+              notes: `Hoàn deposit + rental phạt 1 ngày. Tổng hoàn: ${refundAmount.toLocaleString('vi-VN')}đ`
+            };
+          }
+        }
+      } else {
+        // Dispute khác - giữ logic cũ
+        dispute.resolution.financialImpact = {
+          compensationAmount: dispute.negotiationRoom.finalAgreement.proposalAmount,
+          paidBy: dispute.respondent,
+          paidTo: dispute.complainant,
+          status: 'PENDING'
+        };
       }
-    };
 
-    dispute.timeline.push({
-      action: 'NEGOTIATION_FINALIZED',
-      performedBy: adminId,
-      details: 'Admin đã chốt thỏa thuận từ đàm phán',
-      timestamp: new Date()
-    });
+      dispute.timeline.push({
+        action: 'NEGOTIATION_FINALIZED',
+        performedBy: adminId,
+        details: 'Admin đã chốt thỏa thuận từ đàm phán',
+        timestamp: new Date()
+      });
 
-    await dispute.save();
-    return dispute.populate(['complainant', 'respondent', 'assignedAdmin']);
+      await dispute.save({ session });
+      await session.commitTransaction();
+      session.endSession();
+      
+      return dispute.populate(['complainant', 'respondent', 'assignedAdmin']);
+    } catch (error) {
+      await session.abortTransaction();
+      session.endSession();
+      throw error;
+    }
   }
 
   /**
