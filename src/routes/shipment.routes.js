@@ -42,6 +42,41 @@ router.post('/:id/deliver', [
 // Renter confirm delivery
 router.post('/:id/confirm', [param('id').isMongoId().withMessage('Invalid ID'), validateRequest], ShipmentController.renterConfirm);
 
+// Cancel shipment pickup - ONLY SHIPPER
+router.post('/:id/cancel-pickup', [
+  param('id').isMongoId().withMessage('Invalid ID'), 
+  validateRequest,
+  authMiddleware.checkUserRole(['SHIPPER'])
+], ShipmentController.cancelShipmentPickup);
+
+// Reject delivery - renter doesn't accept goods - ONLY SHIPPER
+router.post('/:id/reject-delivery', [
+  param('id').isMongoId().withMessage('Invalid ID'), 
+  validateRequest,
+  authMiddleware.checkUserRole(['SHIPPER'])
+], ShipmentController.rejectDelivery);
+
+// Owner no-show - shipper confirms owner is not available - ONLY SHIPPER
+router.post('/:id/owner-no-show', [
+  param('id').isMongoId().withMessage('Invalid ID'), 
+  validateRequest,
+  authMiddleware.checkUserRole(['SHIPPER'])
+], ShipmentController.ownerNoShow);
+
+// Renter no-show - shipper cannot contact renter during delivery - ONLY SHIPPER
+router.post('/:id/renter-no-show', [
+  param('id').isMongoId().withMessage('Invalid ID'), 
+  validateRequest,
+  authMiddleware.checkUserRole(['SHIPPER'])
+], ShipmentController.renterNoShow);
+
+// Return failed - shipper cannot contact renter during return - ONLY SHIPPER
+router.post('/:id/return-failed', [
+  param('id').isMongoId().withMessage('Invalid ID'), 
+  validateRequest,
+  authMiddleware.checkUserRole(['SHIPPER'])
+], ShipmentController.returnFailed);
+
 // Upload delivery proof (pickup & delivered images)
 router.post('/:shipmentId/proof', [param('shipmentId').isMongoId().withMessage('Invalid Shipment ID'), validateRequest], upload.array('images', 2), ShipmentController.uploadProof);
 

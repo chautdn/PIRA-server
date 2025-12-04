@@ -3345,6 +3345,17 @@ class RentalOrderService {
           <li>Nếu trả trễ, bên thuê phải chịu phí phạt theo quy định.</li>
           <li>Nếu sản phẩm bị hư hỏng, bên thuê phải bồi thường theo giá trị thực tế.</li>
         </ol>
+        <h3>ĐIỀU KHOẢN GIA HẠN</h3>
+        <ol>
+          <li>Bên Thuê phải hoàn thành đầy đủ các nghĩa vụ trong hợp đồng gốc để được xét duyệt gia hạn, bao gồm việc thanh toán đầy đủ các khoản phí đã phát sinh.</li>
+          <li>Thời hạn gia hạn được tính bắt đầu ngay sau khi thời hạn thuê cũ kết thúc, trừ khi hai bên có thỏa thuận khác.</li>
+          <li>Phí gia hạn được áp dụng theo đơn giá thuê tại thời điểm gia hạn hoặc theo thỏa thuận riêng giữa hai bên.</li>
+          <li>Gia hạn chỉ có hiệu lực sau khi Bên Thuê thanh toán đầy đủ chi phí gia hạn và nhận được xác nhận từ Bên Cho Thuê hoặc hệ thống.</li>
+          <li>Các quyền và nghĩa vụ của hai bên trong thời gian gia hạn tiếp tục được áp dụng như hợp đồng gốc, trừ khi có sửa đổi được ghi rõ trong phụ lục.</li>
+          <li>Mọi thiệt hại, mất mát hoặc hư hỏng tài sản xảy ra trong thời gian gia hạn đều do Bên Thuê chịu trách nhiệm.</li>
+          <li>Phụ lục gia hạn là một phần không tách rời của hợp đồng và có hiệu lực pháp lý tương đương hợp đồng gốc.</li>
+        </ol>
+
 
         ${
           editableTerms?.additionalTerms && editableTerms.additionalTerms.length > 0

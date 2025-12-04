@@ -133,11 +133,12 @@ const subOrderSchema = new mongoose.Schema(
             'REJECTED', // Owner từ chối
 
             // Delivery Phase         // Chờ shipper nhận hàng giao
+            'OWNER_NO_SHOW', // Owner không đến giao hàng
             'SHIPPER_CONFIRMED', // Shipper đã xác nhận nhận hàng
             'IN_TRANSIT', // Đang vận chuyển đến người thuê
             'DELIVERED', // Đã giao cho người thuê
             'DELIVERY_FAILED', // Giao hàng thất bại
-
+            'RENTER_NO_SHOW', // Người thuê không nhận hàng
             // Active Rental Phase
             'ACTIVE', // Đang trong thời gian thuê
             'DISPUTED', // Có tranh chấp
@@ -147,6 +148,7 @@ const subOrderSchema = new mongoose.Schema(
             'EARLY_RETURN_REQUESTED', // Yêu cầu trả sớm (cần approval)
             'RETURN_SHIPPER_CONFIRMED', // Shipper xác nhận nhận hàng trả
             'RETURNING', // Đang trả hàng về owner
+            'RETURN_FAILED', // Trả hàng thất bại - không liên lạc được renter
             'RETURNED', // Đã trả về cho owner
             'RETURN_FAILED', // Trả hàng thất bại
 
@@ -316,17 +318,23 @@ const subOrderSchema = new mongoose.Schema(
         // Confirmation Results
         'OWNER_CONFIRMED', // Owner xác nhận tất cả
         'OWNER_REJECTED', // Owner từ chối tất cả
+        'CANCELLED_BY_OWNER_NO_SHOW', // Hủy do owner không đến giao hàng
+        'PARTIALLY_CANCELLED_BY_OWNER', // Hủy một phần do owner không đến giao hàng
+        'CANCELLED_BY_RENTER_NO_SHOW', // Hủy do không liên lạc được với renter
         'PARTIALLY_CONFIRMED', // Owner xác nhận một phần
         'PENDING_RENTER_DECISION', // Chờ người thuê quyết định (hủy hoặc tiếp tục) khi xác nhận một phần
         'RENTER_REJECTED', // Renter từ chối đơn partial (chọn hủy)
         'RENTER_ACCEPTED_PARTIAL', // Renter chấp nhận đơn partial (chọn tiếp tục)
+        'RENTER_REJECTED', // Renter từ chối đơn partial
+        'RETURN_FAILED', // Trả hàng thất bại
 
         // Contract & Payment
         'READY_FOR_CONTRACT', // Sẵn sàng ký hợp đồng
         'CONTRACT_SIGNED', // Đã ký hợp đồng
 
         // Delivery / Renter confirmation
-        'DELIVERED', // Renter đã xác nhận đã nhận hàng (kích hoạt chuyển tiền)
+        'DELIVERED', // Shipper đã giao hàng
+        'ACTIVE', // Rental đang hoạt động (sau khi hàng đã giao)
 
         // Final States
         'COMPLETED', // Hoàn thành
@@ -508,6 +516,13 @@ subOrderSchema.pre('save', function (next) {
 subOrderSchema.virtual('canConfirmDelivery').get(function () {
   // Renter can confirm delivery only if status is not DELIVERED yet
   return this.status !== 'DELIVERED';
+});
+
+// Virtual: shipments - get all shipments for this subOrder
+subOrderSchema.virtual('shipments', {
+  ref: 'Shipment',
+  localField: '_id',
+  foreignField: 'subOrder'
 });
 
 // Ensure virtuals are included when converting to JSON or Object

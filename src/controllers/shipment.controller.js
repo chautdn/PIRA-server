@@ -350,26 +350,34 @@ class ShipmentController {
       const files = req.files || [];
 
       // Verify shipment exists and belongs to shipper
-      const shipment = await Shipment.findById(shipmentId);
+      let shipment = await Shipment.findById(shipmentId);
       if (!shipment) return res.status(404).json({ status: 'error', message: 'Shipment not found' });
       
       if (String(shipment.shipper) !== String(req.user._id)) {
         return res.status(403).json({ status: 'error', message: 'Only assigned shipper can upload proof' });
       }
 
+      // Auto-accept if shipment is still PENDING
+      if (shipment.status === 'PENDING') {
+        console.log(`⚠️ Shipment is PENDING, auto-accepting shipment ${shipmentId}...`);
+        shipment.status = 'SHIPPER_CONFIRMED';
+        await shipment.save();
+      }
+
       if (files.length === 0) {
         return res.status(400).json({ status: 'error', message: 'At least one image is required' });
       }
 
-      // Upload all files to Cloudinary
+      // Upload all files to Cloudinary in parallel
       const imageUrls = [];
       try {
         console.log(`📤 Uploading ${files.length} image(s) to Cloudinary for shipment ${shipmentId}...`);
-        for (const file of files) {
-          const uploadResult = await CloudinaryService.uploadImage(file.buffer);
+        const uploadPromises = files.map(file => CloudinaryService.uploadImage(file.buffer));
+        const uploadResults = await Promise.all(uploadPromises);
+        uploadResults.forEach((uploadResult) => {
           imageUrls.push(uploadResult.secure_url);
           console.log(`✅ Image uploaded: ${uploadResult.secure_url}`);
-        }
+        });
       } catch (uploadErr) {
         console.error(`❌ Cloudinary upload failed:`, uploadErr.message);
         return res.status(400).json({ status: 'error', message: 'Image upload to Cloudinary failed: ' + uploadErr.message });
@@ -388,19 +396,25 @@ class ShipmentController {
 
       // Update based on shipment status
       if (shipment.status === 'SHIPPER_CONFIRMED') {
-        // Pickup phase - save as before delivery images
+        // Pickup/Confirm phase - save as before delivery images (before pickup from renter for RETURN)
         proof.imagesBeforeDelivery = imageUrls;
         // Also keep first image in imageBeforeDelivery for backward compatibility
         proof.imageBeforeDelivery = imageUrls[0];
-        console.log(`✅ Updated imagesBeforeDelivery with ${imageUrls.length} image(s)`);
+        console.log(`✅ Updated imagesBeforeDelivery with ${imageUrls.length} image(s) for shipment type: ${shipment.type}`);
       } else if (shipment.status === 'IN_TRANSIT') {
-        // Deliver phase - save as after delivery images
+        // In transit phase - for DELIVERY: after pickup; for RETURN: after pickup from renter, on way to owner
         proof.imagesAfterDelivery = imageUrls;
         // Also keep first image in imageAfterDelivery for backward compatibility
         proof.imageAfterDelivery = imageUrls[0];
-        console.log(`✅ Updated imagesAfterDelivery with ${imageUrls.length} image(s)`);
+        console.log(`✅ Updated imagesAfterDelivery with ${imageUrls.length} image(s) for shipment type: ${shipment.type}`);
+      } else if (shipment.status === 'DELIVERED') {
+        // Already delivered - might need to upload additional proof
+        proof.imagesAfterDelivery = imageUrls;
+        proof.imageAfterDelivery = imageUrls[0];
+        console.log(`✅ Updated imagesAfterDelivery (final) with ${imageUrls.length} image(s)`);
       } else {
-        return res.status(400).json({ status: 'error', message: 'Shipment must be in SHIPPER_CONFIRMED or IN_TRANSIT status' });
+        console.log(`❌ Invalid shipment status for proof upload: ${shipment.status}`);
+        return res.status(400).json({ status: 'error', message: `Shipment status "${shipment.status}" does not allow proof upload. Must be SHIPPER_CONFIRMED, IN_TRANSIT, or DELIVERED.` });
       }
 
       // Add geolocation if provided
@@ -433,6 +447,158 @@ class ShipmentController {
       return res.json({ status: 'success', data: proof });
     } catch (err) {
       console.error('getProof error', err.message);
+      return res.status(400).json({ status: 'error', message: err.message });
+    }
+  }
+
+  async cancelShipmentPickup(req, res) {
+    try {
+      // Only SHIPPER can cancel
+      if (req.user.role !== 'SHIPPER') {
+        return res.status(403).json({ 
+          status: 'error', 
+          message: 'Only shippers can cancel shipment pickup' 
+        });
+      }
+
+      const shipmentId = req.params.id;
+      console.log(`\n📥 POST /shipments/${shipmentId}/cancel-pickup`);
+      console.log(`👤 User ID: ${req.user._id}`);
+      console.log(`👤 User Role: ${req.user.role}`);
+
+      const shipment = await ShipmentService.cancelShipmentPickup(shipmentId);
+      
+      return res.json({ 
+        status: 'success', 
+        message: 'Shipment cancellation processed',
+        data: shipment 
+      });
+    } catch (err) {
+      console.error('cancelShipmentPickup error', err.message);
+      return res.status(400).json({ status: 'error', message: err.message });
+    }
+  }
+
+  async rejectDelivery(req, res) {
+    try {
+      // Only SHIPPER can reject
+      if (req.user.role !== 'SHIPPER') {
+        return res.status(403).json({ 
+          status: 'error', 
+          message: 'Only shippers can reject delivery' 
+        });
+      }
+
+      const shipmentId = req.params.id;
+      const { reason, notes } = req.body;
+
+      console.log(`\n📥 POST /shipments/${shipmentId}/reject-delivery`);
+      console.log(`👤 User ID: ${req.user._id}`);
+      console.log(`👤 User Role: ${req.user.role}`);
+      console.log(`📝 Reason: ${reason}`);
+
+      const shipment = await ShipmentService.rejectDelivery(shipmentId, { reason, notes });
+      
+      return res.json({ 
+        status: 'success', 
+        message: 'Delivery rejection processed',
+        data: shipment 
+      });
+    } catch (err) {
+      console.error('rejectDelivery error', err.message);
+      return res.status(400).json({ status: 'error', message: err.message });
+    }
+  }
+
+  async ownerNoShow(req, res) {
+    try {
+      // Only SHIPPER can report owner no-show
+      if (req.user.role !== 'SHIPPER') {
+        return res.status(403).json({ 
+          status: 'error', 
+          message: 'Only shippers can report owner no-show' 
+        });
+      }
+
+      const shipmentId = req.params.id;
+      const { notes } = req.body;
+
+      console.log(`\n📥 POST /shipments/${shipmentId}/owner-no-show`);
+      console.log(`👤 User ID: ${req.user._id}`);
+      console.log(`👤 User Role: ${req.user.role}`);
+      console.log(`📝 Notes: ${notes}`);
+
+      const shipment = await ShipmentService.ownerNoShow(shipmentId, { notes });
+      
+      return res.json({ 
+        status: 'success', 
+        message: 'Owner no-show processed',
+        data: shipment 
+      });
+    } catch (err) {
+      console.error('ownerNoShow error', err.message);
+      return res.status(400).json({ status: 'error', message: err.message });
+    }
+  }
+
+  async renterNoShow(req, res) {
+    try {
+      // Only SHIPPER can report renter no-show
+      if (req.user.role !== 'SHIPPER') {
+        return res.status(403).json({ 
+          status: 'error', 
+          message: 'Only shippers can report renter no-show' 
+        });
+      }
+
+      const shipmentId = req.params.id;
+      const { notes } = req.body;
+
+      console.log(`\n📥 POST /shipments/${shipmentId}/renter-no-show`);
+      console.log(`👤 User ID: ${req.user._id}`);
+      console.log(`👤 User Role: ${req.user.role}`);
+      console.log(`📝 Notes: ${notes}`);
+
+      const shipment = await ShipmentService.renterNoShow(shipmentId, { notes });
+      
+      return res.json({ 
+        status: 'success', 
+        message: 'Renter no-show processed',
+        data: shipment 
+      });
+    } catch (err) {
+      console.error('renterNoShow error', err.message);
+      return res.status(400).json({ status: 'error', message: err.message });
+    }
+  }
+
+  async returnFailed(req, res) {
+    try {
+      // Only SHIPPER can report return failed
+      if (req.user.role !== 'SHIPPER') {
+        return res.status(403).json({ 
+          status: 'error', 
+          message: 'Only shippers can report return failed' 
+        });
+      }
+
+      const shipmentId = req.params.id;
+      const { notes } = req.body;
+
+      console.log(`\n📥 POST /shipments/${shipmentId}/return-failed`);
+      console.log(`👤 User ID: ${req.user._id}`);
+      console.log(`👤 User Role: ${req.user.role}`);
+      console.log(`📝 Notes: ${notes}`);
+
+      const shipment = await ShipmentService.returnFailed(shipmentId, { notes });
+      
+      return res.json({ 
+        status: 'success', 
+        message: 'Return failed processed',
+        data: shipment 
+      });
+    } catch (err) {
+      console.error('returnFailed error', err.message);
       return res.status(400).json({ status: 'error', message: err.message });
     }
   }

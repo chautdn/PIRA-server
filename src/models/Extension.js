@@ -6,7 +6,8 @@ const extensionSchema = new mongoose.Schema(
     masterOrder: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'MasterOrder',
-      required: true
+      required: true,
+      index: true
     },
 
     subOrder: {
@@ -18,76 +19,110 @@ const extensionSchema = new mongoose.Schema(
     renter: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'User',
-      required: true
+      required: true,
+      index: true
     },
 
-    owner: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: 'User',
-      required: true
-    },
+    // Selected products with their owners
+    products: [
+      {
+        productId: {
+          type: mongoose.Schema.Types.ObjectId,
+          required: true
+        },
+        owner: {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: 'User',
+          required: true
+        },
+        productName: String,
+        currentEndDate: {
+          type: Date,
+          required: true
+        },
+        newEndDate: {
+          type: Date,
+          required: true
+        },
+        extensionDays: {
+          type: Number,
+          required: true,
+          min: 1,
+          max: 365
+        },
+        dailyRentalPrice: {
+          type: Number,
+          required: true,
+          min: 0
+        },
+        extensionFee: {
+          type: Number,
+          required: true,
+          min: 0
+        },
+        status: {
+          type: String,
+          enum: ['PENDING', 'APPROVED', 'REJECTED', 'CANCELLED'],
+          default: 'PENDING'
+        },
+        approvedAt: Date,
+        rejectedAt: Date,
+        rejectionReason: String
+      }
+    ],
 
-    // Extension details
-    extendDays: {
+    // Total extension info
+    extensionDays: {
       type: Number,
       required: true,
       min: 1,
       max: 365
     },
 
-    extensionFee: {
+    totalExtensionFee: {
       type: Number,
       required: true,
       min: 0
     },
 
-    notes: {
+    notes: String,
+
+    // Payment info
+    paymentMethod: {
       type: String,
-      default: null
+      enum: ['WALLET', 'PAYOS', 'COD'],
+      default: 'WALLET'
     },
 
-    // Dates
-    currentEndDate: {
-      type: Date,
-      required: true
-    },
-
-    newEndDate: {
-      type: Date,
-      required: true
-    },
-
-    // Status tracking
-    status: {
+    paymentStatus: {
       type: String,
-      enum: ['PENDING', 'APPROVED', 'REJECTED', 'CANCELLED'],
+      enum: ['PENDING', 'PAID', 'FAILED'],
       default: 'PENDING'
     },
 
+    paymentInfo: mongoose.Schema.Types.Mixed,
+
+    // Overall status
+    status: {
+      type: String,
+      enum: ['PENDING', 'APPROVED', 'REJECTED', 'CANCELLED', 'PARTIALLY_APPROVED'],
+      default: 'PENDING',
+      index: true
+    },
+
+    // Timestamps
+    requestedAt: {
+      type: Date,
+      default: Date.now,
+      index: true
+    },
     approvedAt: Date,
-    approvedBy: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: 'User'
-    },
-
     rejectedAt: Date,
-    rejectedBy: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: 'User'
-    },
-
-    rejectionReason: String,
-
     cancelledAt: Date,
-    cancelledBy: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: 'User'
-    }
+    deletedAt: Date
   },
   {
-    timestamps: true,
-    toJSON: { virtuals: true },
-    toObject: { virtuals: true }
+    timestamps: true
   }
 );
 

@@ -61,4 +61,66 @@ const sendMail = async ({ email, subject, html }) => {
   }
 };
 
+/**
+ * Send shipper notification email about new shipment
+ */
+const sendShipperNotificationEmail = async (shipper, shipment, product, renterInfo, orderDetails) => {
+  try {
+    const emailTemplates = require('./emailTemplates');
+    
+    if (!shipper.email) {
+      console.warn('⚠️ Shipper email not found:', shipper._id);
+      return null;
+    }
+
+    const shipperName = `${shipper.profile?.firstName || ''} ${shipper.profile?.lastName || ''}`.trim() || shipper.email;
+    const shipmentType = shipment.type === 'DELIVERY' ? 'Giao hàng' : 'Nhận trả';
+    const scheduledDate = new Date(shipment.scheduledAt).toLocaleDateString('vi-VN', {
+      weekday: 'long',
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric'
+    });
+
+    const html = emailTemplates.shipperNotificationEmail(
+      shipperName,
+      shipment.shipmentId,
+      shipment.type,
+      product?.name || 'Sản phẩm',
+      {
+        name: renterInfo?.name || shipment.contactInfo?.name,
+        phone: renterInfo?.phone || shipment.contactInfo?.phone,
+        email: renterInfo?.email || ''
+      },
+      scheduledDate,
+      {
+        rentalStartDate: orderDetails?.rentalStartDate || 'N/A',
+        rentalEndDate: orderDetails?.rentalEndDate || 'N/A',
+        notes: shipment.contactInfo?.notes || ''
+      }
+    );
+
+    const subject = `[PIRA] Đơn hàng vận chuyển mới #${shipment.shipmentId} - ${shipmentType}`;
+
+    console.log(`📧 Sending shipper notification email to ${shipper.email}:`);
+    console.log(`   Shipper: ${shipperName}`);
+    console.log(`   Shipment ID: ${shipment.shipmentId}`);
+    console.log(`   Type: ${shipmentType}`);
+    console.log(`   Scheduled: ${scheduledDate}`);
+
+    const result = await sendMail({
+      email: shipper.email,
+      subject,
+      html
+    });
+
+    console.log(`✅ Shipper notification email sent successfully to ${shipper.email}`);
+    return result;
+  } catch (error) {
+    console.error('❌ Error sending shipper notification email:', error.message);
+    throw error;
+  }
+};
+
 module.exports = sendMail;
+module.exports.sendShipperNotificationEmail = sendShipperNotificationEmail;

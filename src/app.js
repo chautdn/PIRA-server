@@ -55,9 +55,11 @@ startPartialConfirmationCron();
 console.log('✅ Partial confirmation cron job initialized');
 
 // Initialize shipment cron job
-const { startShipmentCronJob } = require('./scripts/shipmentCron');
+const { startShipmentCronJob, startShipperNotificationEmailCronJob } = require('./scripts/shipmentCron');
 startShipmentCronJob();
+startShipperNotificationEmailCronJob();
 console.log('✅ Shipment cron job initialized');
+console.log('✅ Shipper notification email cron job initialized');
 
 // Initialize frozen balance unlock cron job (every minute)
 const { startFrozenBalanceUnlockCron } = require('./scripts/frozenBalanceUnlockCron');
