@@ -444,9 +444,16 @@ class NegotiationService {
    * Admin chốt thỏa thuận từ negotiation
    * @param {String} disputeId - ID của dispute
    * @param {String} adminId - ID của admin
+   * @param {Object} finalDecision - Quyết định cuối cùng từ admin
    * @returns {Promise<Dispute>}
    */
-  async adminFinalizeNegotiation(disputeId, adminId) {
+  async adminFinalizeNegotiation(disputeId, adminId, finalDecision = {}) {
+    const { decision, reasoning } = finalDecision;
+
+    console.log('🚀 adminFinalizeNegotiation called');
+    console.log('   decision from admin:', decision);
+    console.log('   reasoning:', reasoning);
+
     const dispute = await Dispute.findOne(this._buildDisputeQuery(disputeId))
       .populate('complainant')
       .populate('respondent');
@@ -467,27 +474,20 @@ class NegotiationService {
       dispute.resolution = {
         resolvedBy: adminId,
         resolvedAt: new Date(),
-        resolutionText: dispute.negotiationRoom.finalAgreement.proposalText || dispute.negotiationRoom.finalAgreement.ownerDecision,
+        resolutionText: reasoning || dispute.negotiationRoom.finalAgreement.proposalText || dispute.negotiationRoom.finalAgreement.ownerDecision,
         resolutionSource: 'NEGOTIATION'
       };
 
-      // Xử lý tiền dựa trên ownerDecision
+      // Xử lý tiền dựa trên decision từ admin
       const isProductDispute = ['PRODUCT_NOT_AS_DESCRIBED', 'MISSING_ITEMS'].includes(dispute.type);
-      
-      if (isProductDispute) {
-        const ownerDecision = dispute.negotiationRoom.finalAgreement.ownerDecision;
-        let whoIsRight = null;
-        
-        // Parse owner decision để xác định ai đúng
-        if (ownerDecision) {
-          if (ownerDecision.toLowerCase().includes('renter') && ownerDecision.toLowerCase().includes('đúng')) {
-            whoIsRight = 'COMPLAINANT_RIGHT';
-          } else if (ownerDecision.toLowerCase().includes('renter') && ownerDecision.toLowerCase().includes('sai')) {
-            whoIsRight = 'RESPONDENT_RIGHT';
-          }
-        }
+      const whoIsRight = decision; // Admin chọn rõ ràng
 
-        if (whoIsRight) {
+      console.log('🔍 Processing financials for negotiation');
+      console.log('   Dispute type:', dispute.type);
+      console.log('   whoIsRight:', whoIsRight);
+      
+      if (isProductDispute && whoIsRight) {
+        console.log('✅ Starting financial processing for negotiation resolution');
           // Sử dụng logic tương tự _processDisputeFinancials
           const subOrder = await SubOrder.findById(dispute.subOrder).session(session);
           if (!subOrder) {
@@ -659,16 +659,7 @@ class NegotiationService {
               notes: `Hoàn deposit + rental phạt 1 ngày. Tổng hoàn: ${refundAmount.toLocaleString('vi-VN')}đ`
             };
           }
-        }
-      } else {
-        // Dispute khác - giữ logic cũ
-        dispute.resolution.financialImpact = {
-          compensationAmount: dispute.negotiationRoom.finalAgreement.proposalAmount,
-          paidBy: dispute.respondent,
-          paidTo: dispute.complainant,
-          status: 'PENDING'
-        };
-      }
+      } // end if (isProductDispute && whoIsRight)
 
       dispute.timeline.push({
         action: 'NEGOTIATION_FINALIZED',
@@ -680,6 +671,8 @@ class NegotiationService {
       await dispute.save({ session });
       await session.commitTransaction();
       session.endSession();
+
+      console.log('✅ Negotiation financial processing completed successfully');
       
       return dispute.populate(['complainant', 'respondent', 'assignedAdmin']);
     } catch (error) {
