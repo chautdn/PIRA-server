@@ -122,17 +122,6 @@ app.get('/debug', (req, res) => {
   res.sendFile(path.join(__dirname, '../../frontend-chat-debug.html'));
 });
 
-// For React Router - serve index.html for all non-API routes in production
-if (process.env.NODE_ENV === 'production') {
-  // Serve static files from React build
-  app.use(express.static(path.join(__dirname, '../../build')));
-
-  // Handle React routing, return all requests to React app
-  app.get('*', (req, res) => {
-    res.sendFile(path.join(__dirname, '../../build/index.html'));
-  });
-}
-
 // Global error handler
 app.use(handleError);
 
