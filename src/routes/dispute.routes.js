@@ -205,6 +205,20 @@ router.patch('/:disputeId/admin/assign', authenticate, requireAdmin, adminDisput
  */
 router.post('/:disputeId/admin/share-shipper-info', authenticate, requireAdmin, adminDisputeController.shareShipperInfo);
 
+/**
+ * @route   POST /api/disputes/:disputeId/admin-process-payment
+ * @desc    Admin xử lý thanh toán từ ví + tiền cọc
+ * @access  Private (Admin)
+ */
+router.post('/:disputeId/admin-process-payment', authenticate, requireAdmin, disputeController.adminProcessPayment);
+
+/**
+ * @route   POST /api/disputes/:disputeId/admin-final-decision-owner-dispute
+ * @desc    Admin quyết định cuối cùng cho owner dispute dựa trên kết quả bên thứ 3
+ * @access  Private (Admin)
+ */
+router.post('/:disputeId/admin-final-decision-owner-dispute', authenticate, requireAdmin, disputeController.adminFinalDecisionOwnerDispute);
+
 // ========== THIRD PARTY ROUTES ==========
 
 /**

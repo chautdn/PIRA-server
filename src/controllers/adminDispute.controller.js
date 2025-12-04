@@ -32,13 +32,17 @@ class AdminDisputeController {
   async reviewDispute(req, res) {
     try {
       const { disputeId } = req.params;
-      const { decisionText, reasoning, shipperEvidence } = req.body;
+      const { decisionText, reasoning, shipperEvidence, whoIsRight } = req.body;
       const adminId = req.user._id;
+
+      // Nếu frontend gửi decisionText thay vì whoIsRight, convert nó
+      const finalWhoIsRight = whoIsRight || decisionText;
 
       const dispute = await disputeService.adminReview(disputeId, adminId, {
         decisionText,
         reasoning,
-        shipperEvidence
+        shipperEvidence,
+        whoIsRight: finalWhoIsRight // 'COMPLAINANT_RIGHT' hoặc 'RESPONDENT_RIGHT'
       });
 
       return responseUtils.success(res, {
@@ -79,9 +83,13 @@ class AdminDisputeController {
   async finalizeNegotiation(req, res) {
     try {
       const { disputeId } = req.params;
+      const { decision, reasoning } = req.body;
       const adminId = req.user._id;
 
-      const dispute = await negotiationService.adminFinalizeNegotiation(disputeId, adminId);
+      const dispute = await negotiationService.adminFinalizeNegotiation(disputeId, adminId, {
+        decision,
+        reasoning
+      });
 
       return responseUtils.success(res, {
         dispute,
@@ -126,12 +134,22 @@ class AdminDisputeController {
   async makeFinalDecision(req, res) {
     try {
       const { disputeId } = req.params;
-      const { resolutionText, financialImpact } = req.body;
+      const { resolutionText, whoIsRight, decisionText, decision } = req.body;
       const adminId = req.user._id;
+
+      // Nếu frontend gửi decisionText, decision hoặc không gửi whoIsRight, convert nó
+      const finalWhoIsRight = whoIsRight || decisionText || decision;
+
+      console.log('🔍 makeFinalDecision controller');
+      console.log('   Request body:', req.body);
+      console.log('   whoIsRight from body:', whoIsRight);
+      console.log('   decisionText from body:', decisionText);
+      console.log('   decision from body:', decision);
+      console.log('   finalWhoIsRight:', finalWhoIsRight);
 
       const dispute = await thirdPartyService.adminFinalDecision(disputeId, adminId, {
         resolutionText,
-        financialImpact
+        whoIsRight: finalWhoIsRight // 'COMPLAINANT_RIGHT' hoặc 'RESPONDENT_RIGHT'
       });
 
       return responseUtils.success(res, {
@@ -279,25 +297,45 @@ class AdminDisputeController {
   async processFinalAgreement(req, res) {
     try {
       const { disputeId } = req.params;
-      const { decision, reasoning } = req.body;
+      const { decision, reasoning, financialImpact } = req.body;
       const adminId = req.user._id;
+
+      console.log('🔍 processFinalAgreement called');
+      console.log('   Request body:', req.body);
 
       if (!decision || !reasoning) {
         return responseUtils.error(res, 'Quyết định và lý do là bắt buộc', 400);
       }
 
-      if (!['APPROVE_AGREEMENT', 'REJECT_AGREEMENT'].includes(decision)) {
+      // Support both old format (APPROVE_AGREEMENT/REJECT_AGREEMENT) 
+      // and new format (COMPLAINANT_RIGHT/RESPONDENT_RIGHT)
+      const isNewFormat = ['COMPLAINANT_RIGHT', 'RESPONDENT_RIGHT'].includes(decision);
+      const isOldFormat = ['APPROVE_AGREEMENT', 'REJECT_AGREEMENT'].includes(decision);
+
+      if (!isNewFormat && !isOldFormat) {
         return responseUtils.error(res, 'Quyết định không hợp lệ', 400);
       }
 
-      const dispute = await negotiationService.processFinalAgreement(disputeId, adminId, {
-        decision,
-        reasoning
-      });
+      let dispute;
+      if (isNewFormat) {
+        // New format - call adminFinalizeNegotiation with whoIsRight
+        dispute = await negotiationService.adminFinalizeNegotiation(disputeId, adminId, {
+          decision,
+          reasoning
+        });
+      } else {
+        // Old format - call processFinalAgreement
+        dispute = await negotiationService.processFinalAgreement(disputeId, adminId, {
+          decision,
+          reasoning
+        });
+      }
 
-      const message = decision === 'APPROVE_AGREEMENT' 
-        ? 'Đã phê duyệt thỏa thuận - Tranh chấp được giải quyết'
-        : 'Đã từ chối thỏa thuận - Yêu cầu đàm phán lại';
+      const message = isNewFormat
+        ? 'Đã xử lý thỏa thuận thành công'
+        : decision === 'APPROVE_AGREEMENT' 
+          ? 'Đã phê duyệt thỏa thuận - Tranh chấp được giải quyết'
+          : 'Đã từ chối thỏa thuận - Yêu cầu đàm phán lại';
 
       return responseUtils.success(res, { dispute, message });
     } catch (error) {
