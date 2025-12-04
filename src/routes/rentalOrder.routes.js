@@ -432,6 +432,31 @@ router.post(
 );
 
 /**
+ * Người thuê quyết định HỦY TOÀN BỘ đơn khi owner xác nhận một phần
+ * POST /api/rental-orders/suborders/:subOrderId/renter-cancel-partial
+ * Body: { reason?: string }
+ */
+router.post(
+  '/suborders/:subOrderId/renter-cancel-partial',
+  [
+    param('subOrderId').isMongoId().withMessage('ID SubOrder không hợp lệ'),
+    body('reason').optional().isString().withMessage('Lý do phải là chuỗi'),
+    validateRequest
+  ],
+  RentalOrderController.renterCancelPartialOrder
+);
+
+/**
+ * Người thuê quyết định TIẾP TỤC (ký hợp đồng) khi owner xác nhận một phần
+ * POST /api/rental-orders/suborders/:subOrderId/renter-accept-partial
+ */
+router.post(
+  '/suborders/:subOrderId/renter-accept-partial',
+  [param('subOrderId').isMongoId().withMessage('ID SubOrder không hợp lệ'), validateRequest],
+  RentalOrderController.renterAcceptPartialOrder
+);
+
+/**
  * Lấy danh sách SubOrder cần xác nhận của owner
  * GET /api/rental-orders/owner/pending-confirmation
  */
