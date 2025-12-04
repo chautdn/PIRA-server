@@ -32,13 +32,17 @@ class AdminDisputeController {
   async reviewDispute(req, res) {
     try {
       const { disputeId } = req.params;
-      const { decisionText, reasoning, shipperEvidence } = req.body;
+      const { decisionText, reasoning, shipperEvidence, whoIsRight } = req.body;
       const adminId = req.user._id;
+
+      // Nếu frontend gửi decisionText thay vì whoIsRight, convert nó
+      const finalWhoIsRight = whoIsRight || decisionText;
 
       const dispute = await disputeService.adminReview(disputeId, adminId, {
         decisionText,
         reasoning,
-        shipperEvidence
+        shipperEvidence,
+        whoIsRight: finalWhoIsRight // 'COMPLAINANT_RIGHT' hoặc 'RESPONDENT_RIGHT'
       });
 
       return responseUtils.success(res, {
@@ -126,12 +130,22 @@ class AdminDisputeController {
   async makeFinalDecision(req, res) {
     try {
       const { disputeId } = req.params;
-      const { resolutionText, financialImpact } = req.body;
+      const { resolutionText, whoIsRight, decisionText, decision } = req.body;
       const adminId = req.user._id;
+
+      // Nếu frontend gửi decisionText, decision hoặc không gửi whoIsRight, convert nó
+      const finalWhoIsRight = whoIsRight || decisionText || decision;
+
+      console.log('🔍 makeFinalDecision controller');
+      console.log('   Request body:', req.body);
+      console.log('   whoIsRight from body:', whoIsRight);
+      console.log('   decisionText from body:', decisionText);
+      console.log('   decision from body:', decision);
+      console.log('   finalWhoIsRight:', finalWhoIsRight);
 
       const dispute = await thirdPartyService.adminFinalDecision(disputeId, adminId, {
         resolutionText,
-        financialImpact
+        whoIsRight: finalWhoIsRight // 'COMPLAINANT_RIGHT' hoặc 'RESPONDENT_RIGHT'
       });
 
       return responseUtils.success(res, {
