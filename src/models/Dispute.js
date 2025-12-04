@@ -157,6 +157,12 @@ const disputeSchema = new mongoose.Schema(
         type: mongoose.Schema.Types.ObjectId,
         ref: 'User'
       },
+      // Ai đúng ai sai - dùng để xử lý tiền
+      whoIsRight: {
+        type: String,
+        enum: ['COMPLAINANT_RIGHT', 'RESPONDENT_RIGHT', null],
+        default: null
+      },
       // Evidence từ shipper
       shipperEvidence: {
         photos: [String], // Ảnh chụp khi giao/nhận hàng
