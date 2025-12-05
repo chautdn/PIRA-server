@@ -40,10 +40,38 @@ const kycController = {
     }
   },
 
-  // Lấy ảnh CCCD
+  // Lấy ảnh CCCD - yêu cầu password verification
   getCCCDImages: async (req, res) => {
     try {
       const userId = req.user.id;
+      const { password } = req.body;
+
+      // Lấy thông tin user để kiểm tra authProvider
+      const User = require('../models/User');
+      const user = await User.findById(userId);
+
+      if (!user) {
+        return responseUtils.error(res, 'User not found', 404);
+      }
+
+      // Nếu user đăng nhập bằng OAuth (Google/Facebook), skip password verification
+      if (user.authProvider && user.authProvider !== 'local') {
+        console.log('🔓 OAuth user - skipping password verification');
+        const images = await getCCCDImages(userId);
+        return SuccessResponse.ok(res, images, 'Lấy ảnh CCCD thành công');
+      }
+
+      // User đăng nhập bằng email/password - yêu cầu password
+      if (!password) {
+        return responseUtils.error(res, 'Vui lòng nhập mật khẩu để xem ảnh CCCD', 400);
+      }
+
+      // Verify password
+      const bcrypt = require('bcrypt');
+      const isPasswordValid = await bcrypt.compare(password, user.password);
+      if (!isPasswordValid) {
+        return responseUtils.error(res, 'Mật khẩu không đúng', 401);
+      }
 
       const images = await getCCCDImages(userId);
       return SuccessResponse.ok(res, images, 'Lấy ảnh CCCD thành công');

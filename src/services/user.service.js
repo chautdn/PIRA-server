@@ -1,7 +1,53 @@
 const User = require('../models/User');
 const bcrypt = require('bcrypt');
+const cloudinary = require('../config/cloudinary');
 const { NotFoundError, ValidationError, DatabaseError } = require('../core/error');
 const { encryptCCCDNumber, validateNationalIdFormat } = require('./kyc.service');
+
+// Hàm chuẩn hóa địa chỉ từ IN HOA sang Title Case
+const normalizeAddress = (address) => {
+  if (!address || typeof address !== 'string') {
+    return address;
+  }
+
+  const specialWords = {
+    THÔN: 'Thôn',
+    XÃ: 'Xã',
+    PHƯỜNG: 'Phường',
+    'THỊ TRẤN': 'Thị Trấn',
+    QUẬN: 'Quận',
+    HUYỆN: 'Huyện',
+    'THÀNH PHỐ': 'Thành Phố',
+    TỈNH: 'Tỉnh',
+    TP: 'TP',
+    TT: 'TT',
+    TỔ: 'Tổ'
+  };
+
+  return address
+    .split(',')
+    .map((part) => {
+      const trimmed = part.trim();
+      for (const [upper, proper] of Object.entries(specialWords)) {
+        if (trimmed.toUpperCase().startsWith(upper)) {
+          const rest = trimmed.substring(upper.length).trim();
+          if (rest) {
+            const normalizedRest = rest
+              .split(' ')
+              .map((word) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+              .join(' ');
+            return `${proper} ${normalizedRest}`;
+          }
+          return proper;
+        }
+      }
+      return trimmed
+        .split(' ')
+        .map((word) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+        .join(' ');
+    })
+    .join(', ');
+};
 
 const getAllUsers = async () => {
   const users = await User.find();
@@ -114,14 +160,25 @@ const updateProfileByKyc = async (id) => {
       updates['profile.dateOfBirth'] = cccdData.dateOfBirth;
     }
 
-    // Cập nhật giới tính từ CCCD
+    // Cập nhật giới tính từ CCCD (chuẩn hóa NAM -> MALE, NỮ -> FEMALE)
     if (cccdData.gender) {
-      updates['profile.gender'] = cccdData.gender;
+      const genderUpper = cccdData.gender.toUpperCase();
+      const genderMap = {
+        NAM: 'MALE',
+        MALE: 'MALE',
+        NỮ: 'FEMALE',
+        NU: 'FEMALE',
+        FEMALE: 'FEMALE',
+        KHÁC: 'OTHER',
+        KHAC: 'OTHER',
+        OTHER: 'OTHER'
+      };
+      updates['profile.gender'] = genderMap[genderUpper] || cccdData.gender;
     }
 
-    // Cập nhật địa chỉ từ CCCD
+    // Cập nhật địa chỉ từ CCCD (chuẩn hóa từ IN HOA sang Title Case)
     if (cccdData.address) {
-      updates['address.streetAddress'] = cccdData.address;
+      updates['address.streetAddress'] = normalizeAddress(cccdData.address);
     }
 
     console.log('📝 Updates to apply:', updates);
@@ -204,7 +261,11 @@ const addBankAccount = async (userId, bankData) => {
   };
 
   // Clean invalid gender value if exists
-  if (user.profile && user.profile.gender && !['MALE', 'FEMALE', 'OTHER'].includes(user.profile.gender)) {
+  if (
+    user.profile &&
+    user.profile.gender &&
+    !['MALE', 'FEMALE', 'OTHER'].includes(user.profile.gender)
+  ) {
     user.profile.gender = undefined;
   }
 
@@ -228,9 +289,9 @@ const updateBankAccount = async (userId, bankData) => {
   if (bankData.bankCode || bankData.accountNumber) {
     const bankCode = bankData.bankCode || user.bankAccount.bankCode;
     const accountNumber = bankData.accountNumber || user.bankAccount.accountNumber;
-    
+
     const { bankName, cleanNumber } = validateBankAccount(bankCode, accountNumber);
-    
+
     user.bankAccount.bankCode = bankCode;
     user.bankAccount.bankName = bankName;
     user.bankAccount.accountNumber = cleanNumber;
@@ -257,7 +318,11 @@ const updateBankAccount = async (userId, bankData) => {
   }
 
   // Clean invalid gender value if exists
-  if (user.profile && user.profile.gender && !['MALE', 'FEMALE', 'OTHER'].includes(user.profile.gender)) {
+  if (
+    user.profile &&
+    user.profile.gender &&
+    !['MALE', 'FEMALE', 'OTHER'].includes(user.profile.gender)
+  ) {
     user.profile.gender = undefined;
   }
 
@@ -286,6 +351,55 @@ const getBankAccount = async (userId) => {
   return user.bankAccount || null;
 };
 
+// Verify password - dùng để xác thực trước khi xem thông tin nhạy cảm
+const verifyPassword = async (id, password) => {
+  const user = await User.findById(id);
+  if (!user) {
+    throw new NotFoundError('User not found');
+  }
+
+  const isPasswordValid = await bcrypt.compare(password, user.password);
+  if (!isPasswordValid) {
+    throw new ValidationError('Mật khẩu không đúng');
+  }
+
+  return { verified: true };
+};
+
+// Upload avatar to Cloudinary
+const uploadAvatar = async (userId, buffer) => {
+  return new Promise((resolve, reject) => {
+    const uploadStream = cloudinary.uploader.upload_stream(
+      {
+        folder: `avatars/${userId}`,
+        resource_type: 'image',
+        transformation: [
+          { width: 500, height: 500, crop: 'fill', gravity: 'face' },
+          { quality: 'auto', fetch_format: 'auto' }
+        ]
+      },
+      async (error, result) => {
+        if (error) {
+          console.error('Cloudinary upload error:', error);
+          reject(new Error(`Cloudinary upload failed: ${error.message}`));
+        } else {
+          try {
+            // Update user avatar URL
+            await User.findByIdAndUpdate(userId, {
+              $set: { 'profile.avatar': result.secure_url }
+            });
+            resolve(result.secure_url);
+          } catch (dbError) {
+            console.error('Database update error:', dbError);
+            reject(new Error('Failed to update avatar in database'));
+          }
+        }
+      }
+    );
+    uploadStream.end(buffer);
+  });
+};
+
 module.exports = {
   getAllUsers,
   createUser,
@@ -294,6 +408,8 @@ module.exports = {
   updateProfile,
   updateProfileByKyc,
   changePassword,
+  verifyPassword,
+  uploadAvatar,
   addBankAccount,
   updateBankAccount,
   removeBankAccount,

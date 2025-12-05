@@ -172,6 +172,7 @@ const authService = {
 
         user = new User({
           email,
+          authProvider: 'google',
           profile: profileData,
           role: 'RENTER',
           status: 'ACTIVE',

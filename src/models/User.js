@@ -21,6 +21,15 @@ const userSchema = new mongoose.Schema(
       type: String,
       required: true
     },
+    authProvider: {
+      type: String,
+      enum: ['local', 'google', 'facebook'],
+      default: 'local'
+    },
+    googleId: {
+      type: String,
+      sparse: true // Cho phép null, chỉ có khi đăng nhập bằng Google
+    },
 
     // Role & Status
     role: {
@@ -78,9 +87,10 @@ const userSchema = new mongoose.Schema(
 
     // KYC/CCCD Information
     cccd: {
+      id: String, // ID unique của CCCD để track verification (cccdNumber đã hash)
       frontImageHash: String, // URL ảnh mặt trước đã mã hóa
       backImageHash: String, // URL ảnh mặt sau đã mã hóa
-      cccdNumber: String, // Số CCCD
+      cccdNumber: String, // Số CCCD (encrypted)
       fullName: String, // Họ tên trên CCCD
       dateOfBirth: Date, // Ngày sinh
       address: String, // Địa chỉ trên CCCD
