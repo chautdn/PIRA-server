@@ -350,18 +350,11 @@ class ShipmentController {
       const files = req.files || [];
 
       // Verify shipment exists and belongs to shipper
-      let shipment = await Shipment.findById(shipmentId);
+      const shipment = await Shipment.findById(shipmentId);
       if (!shipment) return res.status(404).json({ status: 'error', message: 'Shipment not found' });
       
       if (String(shipment.shipper) !== String(req.user._id)) {
         return res.status(403).json({ status: 'error', message: 'Only assigned shipper can upload proof' });
-      }
-
-      // Auto-accept if shipment is still PENDING
-      if (shipment.status === 'PENDING') {
-        console.log(`⚠️ Shipment is PENDING, auto-accepting shipment ${shipmentId}...`);
-        shipment.status = 'SHIPPER_CONFIRMED';
-        await shipment.save();
       }
 
       if (files.length === 0) {
@@ -396,25 +389,19 @@ class ShipmentController {
 
       // Update based on shipment status
       if (shipment.status === 'SHIPPER_CONFIRMED') {
-        // Pickup/Confirm phase - save as before delivery images (before pickup from renter for RETURN)
+        // Pickup phase - save as before delivery images
         proof.imagesBeforeDelivery = imageUrls;
         // Also keep first image in imageBeforeDelivery for backward compatibility
         proof.imageBeforeDelivery = imageUrls[0];
-        console.log(`✅ Updated imagesBeforeDelivery with ${imageUrls.length} image(s) for shipment type: ${shipment.type}`);
+        console.log(`✅ Updated imagesBeforeDelivery with ${imageUrls.length} image(s)`);
       } else if (shipment.status === 'IN_TRANSIT') {
-        // In transit phase - for DELIVERY: after pickup; for RETURN: after pickup from renter, on way to owner
+        // Deliver phase - save as after delivery images
         proof.imagesAfterDelivery = imageUrls;
         // Also keep first image in imageAfterDelivery for backward compatibility
         proof.imageAfterDelivery = imageUrls[0];
-        console.log(`✅ Updated imagesAfterDelivery with ${imageUrls.length} image(s) for shipment type: ${shipment.type}`);
-      } else if (shipment.status === 'DELIVERED') {
-        // Already delivered - might need to upload additional proof
-        proof.imagesAfterDelivery = imageUrls;
-        proof.imageAfterDelivery = imageUrls[0];
-        console.log(`✅ Updated imagesAfterDelivery (final) with ${imageUrls.length} image(s)`);
+        console.log(`✅ Updated imagesAfterDelivery with ${imageUrls.length} image(s)`);
       } else {
-        console.log(`❌ Invalid shipment status for proof upload: ${shipment.status}`);
-        return res.status(400).json({ status: 'error', message: `Shipment status "${shipment.status}" does not allow proof upload. Must be SHIPPER_CONFIRMED, IN_TRANSIT, or DELIVERED.` });
+        return res.status(400).json({ status: 'error', message: 'Shipment must be in SHIPPER_CONFIRMED or IN_TRANSIT status' });
       }
 
       // Add geolocation if provided

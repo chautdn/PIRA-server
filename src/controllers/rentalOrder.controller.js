@@ -527,15 +527,6 @@ class RentalOrderController {
         throw new ForbiddenError('Không có quyền xem đơn hàng này');
       }
 
-      // Populate shipments for each subOrder separately
-      const Shipment = require('../models/Shipment');
-      for (let subOrder of masterOrder.subOrders) {
-        const shipments = await Shipment.find({ subOrder: subOrder._id })
-          .select('shipmentNumber type status shipper estimatedDeliveryDate actualDeliveryDate fromAddress toAddress contactInfo')
-          .populate('shipper', 'name email phone profile');
-        subOrder.shipments = shipments;
-      }
-
       return new SuccessResponse(
         {
           masterOrder

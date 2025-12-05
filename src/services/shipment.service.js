@@ -611,12 +611,21 @@ class ShipmentService {
     return { processed: shipments.length };
   }
 
-  async createDeliveryAndReturnShipments(masterOrderId, shipperId) {
+  /**
+   * ✅ MODIFIED: Tạo shipments cho SubOrder(s) của MasterOrder
+   * @param {string} masterOrderId - MasterOrder ID
+   * @param {string} shipperId - Optional shipper ID
+   * @param {string} subOrderId - Optional: chỉ tạo cho SubOrder này (thay vì tất cả)
+   */
+  async createDeliveryAndReturnShipments(masterOrderId, shipperId, subOrderId = null) {
     try {
       const MasterOrder = require('../models/MasterOrder');
       const SubOrder = require('../models/SubOrder');
 
       console.log(`\n📦 Creating shipments for master order: ${masterOrderId}`);
+      if (subOrderId) {
+        console.log(`   Filtering for SubOrder: ${subOrderId}`);
+      }
       if (shipperId) {
         console.log(`   Assigning to shipper: ${shipperId}`);
       }
@@ -640,14 +649,19 @@ class ShipmentService {
         renter: masterOrder.renter ? `${masterOrder.renter._id}` : 'NOT POPULATED'
       });
 
-      // Get subOrders separately with full population
-      const subOrders = await SubOrder.find({ masterOrder: masterOrderId })
+      // ✅ MODIFIED: Lọc SubOrder nếu subOrderId được cung cấp
+      let subOrderFilter = { masterOrder: masterOrderId };
+      if (subOrderId) {
+        subOrderFilter._id = subOrderId;
+      }
+
+      const subOrders = await SubOrder.find(subOrderFilter)
         .select('_id subOrderNumber status rentalPeriod owner pricing products masterOrder')
         .populate('owner', '_id profile email phone address')
         .populate('products.product', '_id name');
 
       if (!subOrders || subOrders.length === 0) {
-        console.warn(`⚠️ No subOrders found for master order`);
+        console.warn(`⚠️ No subOrders found for master order${subOrderId ? ` (filtered by ${subOrderId})` : ''}`);
         return { count: 0, pairs: 0 };
       }
 
