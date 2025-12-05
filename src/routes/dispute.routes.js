@@ -178,6 +178,13 @@ router.post('/:disputeId/admin/process-final-agreement', authenticate, requireAd
 router.post('/:disputeId/admin/third-party/final-decision', authenticate, requireAdmin, adminDisputeController.makeFinalDecision);
 
 /**
+ * @route   POST /api/disputes/:disputeId/admin/third-party/reject-evidence
+ * @desc    Admin từ chối bằng chứng bên thứ 3 (fake/không hợp lệ)
+ * @access  Private (Admin)
+ */
+router.post('/:disputeId/admin/third-party/reject-evidence', authenticate, requireAdmin, adminDisputeController.rejectThirdPartyEvidence);
+
+/**
  * @route   POST /api/disputes/:disputeId/admin/process-final-agreement
  * @desc    Admin xử lý kết quả đàm phán cuối cùng
  * @access  Private (Admin)

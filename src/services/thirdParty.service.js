@@ -279,6 +279,100 @@ class ThirdPartyService {
   }
 
   /**
+   * Admin từ chối bằng chứng bên thứ 3 (fake hoặc không hợp lệ)
+   * @param {String} disputeId - ID của dispute
+   * @param {String} adminId - ID của admin
+   * @param {String} reason - Lý do từ chối
+   * @returns {Promise<Dispute>}
+   */
+  async rejectThirdPartyEvidence(disputeId, adminId, reason) {
+    const dispute = await Dispute.findOne(this._buildDisputeQuery(disputeId))
+      .populate('complainant')
+      .populate('respondent');
+      
+    if (!dispute) {
+      throw new Error('Dispute không tồn tại');
+    }
+
+    if (dispute.status !== 'THIRD_PARTY_EVIDENCE_UPLOADED') {
+      throw new Error('Chỉ có thể từ chối khi đã có bằng chứng được upload');
+    }
+
+    // Kiểm tra admin role
+    const admin = await User.findById(adminId);
+    if (!admin || admin.role !== 'ADMIN') {
+      throw new Error('Chỉ admin mới có quyền từ chối bằng chứng');
+    }
+
+    // Quay lại trạng thái THIRD_PARTY_ESCALATED
+    dispute.status = 'THIRD_PARTY_ESCALATED';
+    
+    // Xóa bằng chứng đã upload (reset)
+    dispute.thirdPartyResolution.evidence = {
+      documents: [],
+      photos: [],
+      videos: [],
+      officialDecision: '',
+      uploadedBy: null,
+      uploadedAt: null
+    };
+
+    // Cập nhật deadline mới (thêm 7 ngày nữa)
+    const newDeadline = new Date();
+    newDeadline.setDate(newDeadline.getDate() + 7);
+    dispute.thirdPartyResolution.evidenceDeadline = newDeadline;
+
+    // Thêm timeline
+    dispute.timeline.push({
+      action: 'THIRD_PARTY_EVIDENCE_REJECTED',
+      performedBy: adminId,
+      details: `Admin từ chối bằng chứng: ${reason}. Yêu cầu upload lại.`,
+      timestamp: new Date()
+    });
+
+    await dispute.save();
+
+    // Gửi notification cho cả 2 bên
+    try {
+      const notificationData = {
+        type: 'DISPUTE',
+        category: 'WARNING',
+        title: 'Bằng chứng bên thứ 3 bị từ chối',
+        message: `Admin đã từ chối bằng chứng vì: ${reason}. Vui lòng upload lại bằng chứng hợp lệ trước ${newDeadline.toLocaleDateString('vi-VN')}.`,
+        relatedDispute: dispute._id,
+        actions: [{
+          label: 'Upload lại bằng chứng',
+          url: `/disputes/${dispute._id}`,
+          action: 'UPLOAD_EVIDENCE'
+        }],
+        data: {
+          disputeId: dispute.disputeId,
+          rejectionReason: reason,
+          newDeadline: newDeadline.toISOString()
+        },
+        status: 'SENT'
+      };
+
+      // Gửi cho complainant
+      await notificationService.createNotification({
+        ...notificationData,
+        recipient: dispute.complainant
+      });
+
+      // Gửi cho respondent
+      await notificationService.createNotification({
+        ...notificationData,
+        recipient: dispute.respondent
+      });
+
+    } catch (error) {
+      console.error('Failed to create rejection notification:', error);
+    }
+
+    return dispute;
+  }
+
+  /**
    * Admin đưa ra quyết định cuối cùng dựa trên kết quả bên thứ 3
    * @param {String} disputeId - ID của dispute
    * @param {String} adminId - ID của admin
