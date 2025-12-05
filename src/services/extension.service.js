@@ -93,15 +93,6 @@ class ExtensionService {
       const extensionCost = Math.round(rentalRate * extensionDays);
       const totalCost = Math.round(extensionCost); // Có thể thêm deposits sau
 
-      console.log(' Calculation:', {
-        currentEndDate: currentEnd,
-        newEndDate: newEnd,
-        extensionDays,
-        rentalRate,
-        extensionCost,
-        totalCost
-      });
-
       // Đảm bảo ownerId lấy đúng từ subOrder và luôn là ObjectId
       let ownerId = subOrder.owner?._id || subOrder.owner;
       if (!ownerId) {
@@ -312,12 +303,6 @@ class ExtensionService {
         buyerAddress: `${renter.address?.streetAddress || 'N/A'}`
       };
 
-      console.log('📤 Creating PayOS payment link for extension:', {
-        orderCode,
-        amount: Math.round(amount),
-        renter: renterId
-      });
-
       // Create payment link
       const paymentLink = await payos.paymentRequests.create(paymentRequest);
 
@@ -345,12 +330,6 @@ class ExtensionService {
       });
 
       await transaction.save();
-
-      console.log('✅ PayOS payment link created for extension:', {
-        transactionId: transaction._id,
-        orderCode,
-        checkoutUrl: paymentLink.checkoutUrl
-      });
 
       return {
         transactionId: transaction._id.toString(),
