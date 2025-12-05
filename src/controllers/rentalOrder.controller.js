@@ -103,7 +103,9 @@ class RentalOrderController {
         depositPaymentMethod,
         depositTransactionId,
         // Selected items from frontend
-        selectedItems
+        selectedItems,
+        // Shipping data calculated from frontend
+        shippingData
       } = req.body;
 
       console.log('📥 POST /api/rental-orders/create-paid');
@@ -123,7 +125,9 @@ class RentalOrderController {
         depositPaymentMethod,
         depositTransactionId,
         // Pass selected items to service
-        selectedItems
+        selectedItems,
+        // Pass shipping data to service
+        shippingData
       });
 
       if (!masterOrder) {
@@ -506,7 +510,7 @@ class RentalOrderController {
           path: 'subOrders',
           populate: [
             { path: 'owner', select: 'profile email phone' },
-            { 
+            {
               path: 'products.product',
               select: 'title images sku category description condition pricing'
             },
@@ -531,7 +535,9 @@ class RentalOrderController {
       const Shipment = require('../models/Shipment');
       for (let subOrder of masterOrder.subOrders) {
         const shipments = await Shipment.find({ subOrder: subOrder._id })
-          .select('shipmentNumber type status shipper estimatedDeliveryDate actualDeliveryDate fromAddress toAddress contactInfo')
+          .select(
+            'shipmentNumber type status shipper estimatedDeliveryDate actualDeliveryDate fromAddress toAddress contactInfo'
+          )
           .populate('shipper', 'name email phone profile');
         subOrder.shipments = shipments;
       }

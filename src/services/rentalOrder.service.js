@@ -25,7 +25,8 @@ class RentalOrderService {
    */
   async createDraftOrderFromCart(renterId, orderData) {
     try {
-      const { rentalPeriod, deliveryAddress, deliveryMethod, selectedItems } = orderData;
+      const { rentalPeriod, deliveryAddress, deliveryMethod, selectedItems, shippingData } =
+        orderData;
 
       // Lấy thông tin giỏ hàng
       const cart = await Cart.findOne({ user: renterId }).populate({
@@ -170,123 +171,93 @@ class RentalOrderService {
           status: 'DRAFT'
         });
 
-        // Tính phí shipping - Always calculate for DELIVERY since PICKUP is not used
-        if (deliveryMethod === 'DELIVERY' && owner.address) {
-          const ownerLocation = {
-            latitude: owner.address?.coordinates?.latitude || owner.address?.latitude,
-            longitude: owner.address?.coordinates?.longitude || owner.address?.longitude
-          };
+        // Use shipping data from frontend (already calculated with promotion applied)
+        if (deliveryMethod === 'DELIVERY' && shippingData && shippingData.groupedShipping) {
+          const ownerShippingData = shippingData.groupedShipping[ownerId];
 
-          const userLocation = {
-            latitude: deliveryAddress.latitude,
-            longitude: deliveryAddress.longitude
-          };
+          if (ownerShippingData) {
+            // Calculate total original shipping for this SubOrder
+            const ownerShippingFee = ownerShippingData.shippingFee || 0;
 
-          // Kiểm tra tọa độ
-          if (!ownerLocation.latitude || !ownerLocation.longitude) {
-            throw new Error(`Chủ sản phẩm chưa có tọa độ địa chỉ`);
-          }
+            // Calculate promotion discount proportionally for each product
+            // Frontend already allocated shipping per product based on delivery batches
+            const totalShippingBeforeDiscount = shippingData.totalShipping || 0;
+            const totalPromotionDiscount = shippingData.promotionDiscount || 0;
 
-          if (!userLocation.latitude || !userLocation.longitude) {
-            throw new Error('Địa chỉ giao hàng chưa có tọa độ');
-          }
+            // Calculate this SubOrder's share of the total discount
+            const ownerDiscountShare =
+              totalShippingBeforeDiscount > 0
+                ? Math.round(
+                    (ownerShippingFee / totalShippingBeforeDiscount) * totalPromotionDiscount
+                  )
+                : 0;
 
-          // Tính khoảng cách và phí ship với VietMap
-          const distanceResult = await VietMapService.calculateDistance(
-            ownerLocation.longitude,
-            ownerLocation.latitude,
-            userLocation.longitude,
-            userLocation.latitude
-          );
+            let subOrderFinalShipping = 0;
 
-          if (!distanceResult.success) {
-            throw new Error('Không thể tính khoảng cách từ VietMap API');
-          }
+            // Update each product's shipping fee with proportional discount
+            ownerShippingData.products.forEach((productShipping) => {
+              const product = subOrder.products.find(
+                (p) => p.product.toString() === productShipping.productId.toString()
+              );
+              if (product) {
+                const productOriginalShipping = productShipping.totalShippingFee || 0;
 
-          const distanceKm = distanceResult.distanceKm;
+                // Calculate this product's share of the SubOrder discount
+                // Based on its proportion of the SubOrder's total shipping
+                const productDiscountShare =
+                  ownerShippingFee > 0
+                    ? Math.round((productOriginalShipping / ownerShippingFee) * ownerDiscountShare)
+                    : 0;
 
-          // Tính phí ship cho toàn SubOrder với delivery batches
-          const shippingCalculation = VietMapService.calculateProductShippingFees(
-            processedProducts,
-            distanceKm
-          );
+                const productFinalShipping = productOriginalShipping - productDiscountShare;
 
-          // Cập nhật shipping cho SubOrder level
-          subOrder.shipping = {
-            method: deliveryMethod,
-            fee: {
-              baseFee: 15000,
-              pricePerKm: 5000,
-              totalFee: shippingCalculation.totalShippingFee
-            },
-            distance: distanceKm,
-            estimatedTime: distanceResult.durationMinutes,
-            vietmapResponse: {
-              distance: distanceKm,
-              distanceMeters: distanceResult.distanceMeters,
-              estimatedTime: distanceResult.durationMinutes,
-              fee: shippingCalculation.totalShippingFee,
-              shippingDetails: {
-                distanceKm,
-                baseFee: 15000,
-                distanceFee: Math.round(distanceKm) * 5000,
-                finalFee: shippingCalculation.totalShippingFee,
-                note: `Phí ship = 15.000 + ${Math.round(distanceKm)}km × 5.000 = ${shippingCalculation.totalShippingFee.toLocaleString()}đ`
-              },
-              success: true
-            }
-          };
+                product.totalShippingFee = productFinalShipping;
+                product.shipping = {
+                  distance: ownerShippingData.deliveryInfo?.distance || 0,
+                  fee: {
+                    baseFee: 15000,
+                    pricePerKm: 5000,
+                    totalFee: productFinalShipping
+                  },
+                  method: 'DELIVERY',
+                  deliveryInfo: {
+                    deliveryDate: productShipping.deliveryDate
+                  }
+                };
 
-          // Cập nhật shipping cho từng product theo delivery batch
-          // IMPORTANT: Update subOrder.products directly, not processedProducts
-          shippingCalculation.productFees.forEach((productFee) => {
-            const product = subOrder.products[productFee.productIndex];
-            if (product) {
-              product.shipping = {
-                distance: distanceKm,
-                fee: {
-                  baseFee: 15000,
-                  pricePerKm: 5000,
-                  totalFee: productFee.allocatedFee
-                },
-                method: 'DELIVERY', // Always set to DELIVERY when in delivery mode
-                deliveryInfo: {
-                  deliveryDate: productFee.deliveryDate,
-                  deliveryBatch: productFee.deliveryBatch,
-                  batchSize: productFee.batchSize,
-                  batchQuantity: product.quantity,
-                  sharedDeliveryFee: productFee.batchTotalFee
-                }
-              };
-              product.totalShippingFee = productFee.allocatedFee;
-            }
-          });
-
-          subOrder.pricing.shippingFee = shippingCalculation.totalShippingFee;
-          subOrder.pricing.shippingDistance = distanceKm;
-
-          // ✅ Apply system promotion discount to shipping fee
-          const discountResult = await systemPromotionService.calculateShippingDiscount(subOrder);
-
-          if (discountResult.promotion) {
-            // Update shipping fees with discount
-            subOrder.shipping.fee.discount = discountResult.discount;
-            subOrder.shipping.fee.finalFee = discountResult.finalFee;
-            subOrder.pricing.shippingFee = discountResult.finalFee;
-
-            // Add to appliedPromotions
-            subOrder.appliedPromotions = [
-              {
-                promotion: discountResult.promotion._id,
-                promotionType: 'SYSTEM',
-                discountAmount: discountResult.discount,
-                appliedTo: 'SHIPPING'
+                subOrderFinalShipping += productFinalShipping;
               }
-            ];
+            });
 
-            console.log(
-              `✅ Applied system promotion ${discountResult.promotion.code}: -${discountResult.discount} VND`
-            );
+            // Set SubOrder level shipping (sum of all products' final shipping)
+            subOrder.pricing.shippingFee = subOrderFinalShipping;
+
+            // Set shipping object with delivery info from frontend
+            subOrder.shipping = {
+              method: deliveryMethod,
+              fee: {
+                baseFee: 15000,
+                pricePerKm: 5000,
+                totalFee: ownerShippingFee,
+                discount: ownerDiscountShare,
+                finalFee: subOrderFinalShipping
+              },
+              distance: ownerShippingData.deliveryInfo?.distance || 0,
+              estimatedTime: ownerShippingData.deliveryInfo?.estimatedTime || 0,
+              deliveryInfo: ownerShippingData.deliveryInfo || null
+            };
+
+            // Apply promotion if exists (already calculated in frontend)
+            if (shippingData.activePromotion) {
+              subOrder.appliedPromotions = [
+                {
+                  promotion: shippingData.activePromotion._id,
+                  promotionType: 'SYSTEM',
+                  discountAmount: shippingData.promotionDiscount || 0,
+                  appliedTo: 'SHIPPING'
+                }
+              ];
+            }
           }
         }
 
@@ -348,16 +319,19 @@ class RentalOrderService {
       depositPaymentMethod,
       depositTransactionId,
       // Selected items from frontend
-      selectedItems
+      selectedItems,
+      // Shipping data calculated from frontend
+      shippingData
     } = orderData;
 
     try {
-      // First create draft order using existing method, pass selectedItems
+      // First create draft order using existing method, pass selectedItems and shippingData
       const draftOrder = await this.createDraftOrderFromCart(renterId, {
         rentalPeriod,
         deliveryAddress,
         deliveryMethod,
-        selectedItems
+        selectedItems,
+        shippingData
       });
 
       if (!draftOrder || !draftOrder._id) {
