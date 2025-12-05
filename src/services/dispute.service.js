@@ -91,8 +91,6 @@ class DisputeService {
           { session }
         );
       }
-
-      console.log(`✅ Updated scores - Winner: +${winner?.creditScore < 100 ? 5 : 0} credit, +5 loyalty | Loser: -30 credit, +5 loyalty`);
     } catch (error) {
       console.error('Error updating user scores:', error);
       // Không throw error để không ảnh hưởng đến resolve dispute
@@ -386,14 +384,6 @@ class DisputeService {
       }
     }
 
-    // Log để debug
-    console.log('🔍 Checking canOpenDispute:', {
-      productStatus: product.productStatus,
-      shipmentType,
-      complainantId: complainantId.toString(),
-      ownerId: subOrder.owner._id.toString()
-    });
-
     // Kiểm tra xem có thể mở dispute không
     const canOpen = Dispute.schema.methods.canOpenDispute.call(
       {},
@@ -402,8 +392,6 @@ class DisputeService {
       complainantId,
       subOrder.owner._id
     );
-
-    console.log('🔍 canOpenDispute result:', canOpen);
 
     if (!canOpen.allowed) {
       throw new Error(canOpen.reason);
@@ -791,16 +779,11 @@ class DisputeService {
    */
   async adminReview(disputeId, adminId, decision) {
     const { decisionText, reasoning, shipperEvidence, whoIsRight } = decision;
-    
-    console.log('🔍 adminReview called with whoIsRight:', whoIsRight);
-    console.log('🔍 Full decision object:', decision);
 
     const dispute = await Dispute.findOne(this._buildDisputeQuery(disputeId));
     if (!dispute) {
       throw new Error('Dispute không tồn tại');
     }
-    
-    console.log('🔍 Dispute type:', dispute.type);
 
     if (dispute.status !== 'RESPONDENT_REJECTED') {
       throw new Error('Dispute phải ở trạng thái RESPONDENT_REJECTED');
@@ -881,20 +864,10 @@ class DisputeService {
    * @returns {Promise<Dispute>}
    */
   async respondToAdminDecision(disputeId, userId, accepted) {
-    console.log('🚀 respondToAdminDecision called');
-    console.log('   disputeId:', disputeId);
-    console.log('   userId:', userId);
-    console.log('   accepted:', accepted);
-    
     const dispute = await Dispute.findOne(this._buildDisputeQuery(disputeId));
     if (!dispute) {
       throw new Error('Dispute không tồn tại');
     }
-
-    console.log('✅ Dispute found:', dispute.disputeId);
-    console.log('   Status:', dispute.status);
-    console.log('   Type:', dispute.type);
-    console.log('   adminDecision.whoIsRight:', dispute.adminDecision?.whoIsRight);
 
     if (dispute.status !== 'ADMIN_DECISION_MADE') {
       throw new Error('Admin chưa đưa ra quyết định');
@@ -903,16 +876,12 @@ class DisputeService {
     const isComplainant = dispute.complainant.toString() === userId.toString();
     const isRespondent = dispute.respondent.toString() === userId.toString();
 
-    console.log('   isComplainant:', isComplainant);
-    console.log('   isRespondent:', isRespondent);
-
     if (!isComplainant && !isRespondent) {
       throw new Error('Không có quyền phản hồi quyết định này');
     }
 
     // Cập nhật acceptance
     if (isComplainant) {
-      console.log('📝 Updating complainantAccepted to:', accepted);
       dispute.adminDecision.complainantAccepted = accepted;
       dispute.timeline.push({
         action: accepted ? 'COMPLAINANT_ACCEPTED_ADMIN_DECISION' : 'COMPLAINANT_REJECTED_ADMIN_DECISION',
@@ -921,7 +890,6 @@ class DisputeService {
         timestamp: new Date()
       });
     } else {
-      console.log('📝 Updating respondentAccepted to:', accepted);
       dispute.adminDecision.respondentAccepted = accepted;
       dispute.timeline.push({
         action: accepted ? 'RESPONDENT_ACCEPTED_ADMIN_DECISION' : 'RESPONDENT_REJECTED_ADMIN_DECISION',
@@ -931,14 +899,9 @@ class DisputeService {
       });
     }
 
-    console.log('📊 Current acceptance status:');
-    console.log('   complainantAccepted:', dispute.adminDecision.complainantAccepted);
-    console.log('   respondentAccepted:', dispute.adminDecision.respondentAccepted);
-
     // Kiểm tra xem cả 2 bên đã phản hồi chưa
     if (dispute.adminDecision.complainantAccepted !== null && 
         dispute.adminDecision.respondentAccepted !== null) {
-      console.log('✅ Cả 2 bên đã phản hồi!');
       
       if (dispute.adminDecision.complainantAccepted && 
           dispute.adminDecision.respondentAccepted) {
@@ -958,18 +921,12 @@ class DisputeService {
         try {
           // Lấy whoIsRight từ adminDecision
           const whoIsRight = dispute.adminDecision.whoIsRight;
-          console.log('🔍 Processing financials - whoIsRight:', whoIsRight);
-          console.log('🔍 Dispute type:', dispute.type);
 
           if (whoIsRight) {
-            console.log('✅ Calling _processDisputeFinancials...');
             const financialDetails = await this._processDisputeFinancials(dispute, whoIsRight, session);
-            console.log('💰 Financial details:', financialDetails);
             if (financialDetails) {
               dispute.resolution.financialImpact = financialDetails;
             }
-          } else {
-            console.log('⚠️ whoIsRight is null or undefined - skipping financial processing');
           }
         
           dispute.timeline.push({

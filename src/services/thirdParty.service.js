@@ -382,21 +382,12 @@ class ThirdPartyService {
   async adminFinalDecision(disputeId, adminId, finalDecision) {
     const { resolutionText, whoIsRight } = finalDecision;
 
-    console.log('🚀 adminFinalDecision called');
-    console.log('   disputeId:', disputeId);
-    console.log('   resolutionText:', resolutionText);
-    console.log('   whoIsRight:', whoIsRight);
-
     const dispute = await Dispute.findOne(this._buildDisputeQuery(disputeId))
       .populate('complainant')
       .populate('respondent');
     if (!dispute) {
       throw new Error('Dispute không tồn tại');
     }
-
-    console.log('✅ Dispute found:', dispute.disputeId);
-    console.log('   Status:', dispute.status);
-    console.log('   Type:', dispute.type);
 
     if (dispute.status !== 'THIRD_PARTY_EVIDENCE_UPLOADED') {
       throw new Error('Chưa có bằng chứng từ bên thứ 3');
@@ -424,12 +415,7 @@ class ThirdPartyService {
       // Xử lý tiền cho dispute PRODUCT_NOT_AS_DESCRIBED và MISSING_ITEMS
       const isProductDispute = ['PRODUCT_NOT_AS_DESCRIBED', 'MISSING_ITEMS'].includes(dispute.type);
       
-      console.log('🔍 Processing financials - whoIsRight:', whoIsRight);
-      console.log('🔍 Dispute type:', dispute.type);
-      console.log('🔍 Is product dispute:', isProductDispute);
-      
       if (isProductDispute && whoIsRight) {
-        console.log('✅ Starting financial processing for third party resolution');
         // Sử dụng logic tương tự _processDisputeFinancials
         const subOrder = await SubOrder.findById(dispute.subOrder).session(session);
         if (!subOrder) {
@@ -474,8 +460,6 @@ class ThirdPartyService {
 
         if (whoIsRight === 'COMPLAINANT_RIGHT') {
           // Renter đúng -> Hoàn 100%
-          console.log('💰 COMPLAINANT_RIGHT - Hoàn 100%');
-          console.log('   Deposit:', depositAmount, '| Rental:', rentalAmount);
           
           if (depositAmount > 0) {
             systemWallet.balance.available -= depositAmount;
@@ -536,13 +520,6 @@ class ThirdPartyService {
           const penaltyAmount = dailyRate;
           const refundRental = rentalAmount - penaltyAmount;
           const refundAmount = depositAmount + refundRental;
-
-          console.log('⚠️ RESPONDENT_RIGHT - Phạt 1 ngày');
-          console.log('   Deposit:', depositAmount);
-          console.log('   Rental:', rentalAmount);
-          console.log('   Penalty:', penaltyAmount);
-          console.log('   Refund rental:', refundRental);
-          console.log('   Total refund:', refundAmount);
 
           if (depositAmount > 0) {
             systemWallet.balance.available -= depositAmount;
@@ -631,8 +608,6 @@ class ThirdPartyService {
       await dispute.save({ session });
       await session.commitTransaction();
       session.endSession();
-
-      console.log('✅ Third party financial processing completed successfully');
 
       // Gửi notification cho cả 2 bên
       try {
