@@ -6,6 +6,7 @@ const Cart = require('../models/Cart');
 const Contract = require('../models/Contract');
 const VietMapService = require('./vietmap.service');
 const systemPromotionService = require('./systemPromotion.service');
+const voucherService = require('./voucher.service');
 const mongoose = require('mongoose');
 const { PayOS } = require('@payos/node');
 const Wallet = require('../models/Wallet');
@@ -270,9 +271,32 @@ class RentalOrderService {
 
           if (discountResult.promotion) {
             // Update shipping fees with discount
+            subOrder.shipping.fee.promotionDiscount = discountResult.discount;
             subOrder.shipping.fee.discount = discountResult.discount;
             subOrder.shipping.fee.finalFee = discountResult.finalFee;
             subOrder.pricing.shippingFee = discountResult.finalFee;
+
+            // 🔥 Update individual product shipping fees proportionally after promotion
+            const originalTotal = shippingCalculation.totalShippingFee;
+            const discountedTotal = discountResult.finalFee;
+            const discountRatio = discountedTotal / originalTotal;
+
+            subOrder.products.forEach((product) => {
+              if (product.shipping && product.shipping.fee) {
+                const originalProductFee = product.shipping.fee.totalFee;
+                const discountedProductFee = Math.round(originalProductFee * discountRatio);
+                const promotionDiscountForProduct = originalProductFee - discountedProductFee;
+
+                // Store original fee for display purposes
+                if (!product.shipping.fee.originalFee) {
+                  product.shipping.fee.originalFee = originalProductFee;
+                }
+
+                product.shipping.fee.promotionDiscount = promotionDiscountForProduct;
+                product.shipping.fee.totalFee = discountedProductFee;
+                product.totalShippingFee = discountedProductFee;
+              }
+            });
 
             // Add to appliedPromotions
             subOrder.appliedPromotions = [
@@ -348,10 +372,16 @@ class RentalOrderService {
       depositPaymentMethod,
       depositTransactionId,
       // Selected items from frontend
-      selectedItems
+      selectedItems,
+      // Voucher code for shipping discount
+      voucherCode
     } = orderData;
 
     try {
+      console.log(
+        `🔍 createPaidOrderFromCart received voucherCode: "${voucherCode}" (type: ${typeof voucherCode})`
+      );
+
       // First create draft order using existing method, pass selectedItems
       const draftOrder = await this.createDraftOrderFromCart(renterId, {
         rentalPeriod,
@@ -362,6 +392,132 @@ class RentalOrderService {
 
       if (!draftOrder || !draftOrder._id) {
         throw new Error('Không thể tạo đơn hàng draft');
+      }
+
+      // ✅ Apply voucher discount to all SubOrders if voucherCode is provided
+      if (voucherCode && voucherCode.trim()) {
+        console.log(`🎫 Applying voucher ${voucherCode} to SubOrders...`);
+
+        // Get all SubOrders for this master order
+        const subOrders = await SubOrder.find({ masterOrder: draftOrder._id });
+        console.log(`📦 Found ${subOrders.length} SubOrders for master order ${draftOrder._id}`);
+
+        // Validate voucher once before applying to all SubOrders
+        const Voucher = require('../models/Voucher');
+        const voucherDoc = await Voucher.findOne({ code: voucherCode.toUpperCase() });
+
+        if (!voucherDoc) {
+          console.error(`❌ Voucher ${voucherCode} not found in database`);
+        } else {
+          console.log(
+            `✓ Voucher found: ${voucherDoc.code}, ${voucherDoc.discountPercent}%, Status: ${voucherDoc.status}`
+          );
+          const validation = voucherDoc.isValid();
+          if (!validation.valid) {
+            console.error(`❌ Voucher ${voucherCode} is not valid: ${validation.reason}`);
+          } else {
+            console.log(`✓ Voucher is valid, applying to ${subOrders.length} SubOrders...`);
+            // Apply voucher to each SubOrder with the same voucher document
+            let voucherAppliedCount = 0;
+            for (const subOrder of subOrders) {
+              try {
+                // Get the current shipping fee (after promotion discount if any)
+                const currentShippingFee =
+                  subOrder.shipping.fee.finalFee || subOrder.pricing.shippingFee;
+
+                console.log(
+                  `  SubOrder ${subOrder.subOrderNumber}: Current shipping fee = ${currentShippingFee}`
+                );
+
+                // Calculate voucher discount for this SubOrder
+                const voucherDiscount = Math.round(
+                  (currentShippingFee * voucherDoc.discountPercent) / 100
+                );
+                const finalFee = Math.max(0, currentShippingFee - voucherDiscount);
+
+                console.log(`  Voucher discount: ${voucherDiscount}, Final fee: ${finalFee}`);
+
+                // Update SubOrder with voucher discount
+                subOrder.appliedVoucher = {
+                  voucher: voucherDoc._id,
+                  voucherCode: voucherDoc.code,
+                  discountPercent: voucherDoc.discountPercent,
+                  discountAmount: voucherDiscount,
+                  appliedTo: 'SHIPPING'
+                };
+
+                // Update shipping fees
+                subOrder.shipping.fee.voucherDiscount = voucherDiscount;
+                const totalDiscount =
+                  (subOrder.shipping.fee.promotionDiscount || 0) + voucherDiscount;
+                subOrder.shipping.fee.discount = totalDiscount;
+                subOrder.shipping.fee.finalFee = finalFee;
+                subOrder.pricing.shippingFee = finalFee;
+
+                // 🔥 Update individual product shipping fees proportionally after voucher
+                subOrder.products.forEach((product) => {
+                  if (product.shipping && product.shipping.fee) {
+                    // Ensure originalFee is set before any discount calculation
+                    if (!product.shipping.fee.originalFee) {
+                      product.shipping.fee.originalFee = product.shipping.fee.totalFee;
+                    }
+                    
+                    const originalFeeBeforeVoucher = product.shipping.fee.totalFee;
+                    const voucherDiscountForProduct = Math.round(
+                      (originalFeeBeforeVoucher * voucherDoc.discountPercent) / 100
+                    );
+                    const discountedProductFee = Math.max(
+                      0,
+                      originalFeeBeforeVoucher - voucherDiscountForProduct
+                    );
+
+                    product.shipping.fee.voucherDiscount = voucherDiscountForProduct;
+                    product.shipping.fee.totalFee = discountedProductFee;
+                    product.totalShippingFee = discountedProductFee;
+                  }
+                });
+
+                await subOrder.save();
+                voucherAppliedCount++;
+
+                console.log(
+                  `✅ Applied voucher ${voucherCode} (${voucherDoc.discountPercent}%) to SubOrder ${subOrder.subOrderNumber}: -${voucherDiscount} VND`
+                );
+              } catch (voucherError) {
+                console.error(
+                  `⚠️ Failed to apply voucher to SubOrder ${subOrder.subOrderNumber}:`,
+                  voucherError.message
+                );
+                console.error(voucherError.stack);
+              }
+            }
+
+            // Mark voucher as used only once after applying to all SubOrders
+            if (voucherAppliedCount > 0) {
+              voucherDoc.status = 'USED';
+              voucherDoc.isUsed = true;
+              voucherDoc.usedBy = renterId;
+              voucherDoc.usedAt = new Date();
+              voucherDoc.usedInOrder = draftOrder._id;
+              await voucherDoc.save();
+              console.log(
+                `✅ Voucher ${voucherCode} marked as USED after applying to ${voucherAppliedCount} SubOrders`
+              );
+            }
+          }
+        }
+
+        // Recalculate master order totals after voucher application
+        const updatedSubOrders = await SubOrder.find({ masterOrder: draftOrder._id });
+        let newTotalShipping = 0;
+        updatedSubOrders.forEach((so) => {
+          newTotalShipping += so.pricing.shippingFee;
+        });
+
+        draftOrder.totalShippingFee = newTotalShipping;
+        await draftOrder.save();
+
+        console.log(`✅ Updated master order shipping fee after voucher: ${newTotalShipping}`);
       }
 
       // Process payment based on method
@@ -2024,7 +2180,8 @@ class RentalOrderService {
       const discountResult = await systemPromotionService.calculateShippingDiscount(subOrder);
 
       if (discountResult.promotion) {
-        // Update shipping fees with discount
+        // Update shipping fees with promotion discount
+        subOrder.shipping.fee.promotionDiscount = discountResult.discount;
         subOrder.shipping.fee.discount = discountResult.discount;
         subOrder.shipping.fee.finalFee = discountResult.finalFee;
         subOrder.pricing.shippingFee = discountResult.finalFee;

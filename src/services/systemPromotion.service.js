@@ -370,8 +370,9 @@ const systemPromotionService = {
     const discountResult = await this.calculateShippingDiscount(subOrder);
 
     if (discountResult.promotion) {
-      // Update shipping fees
-      subOrder.shipping.fee.discount = discountResult.discount;
+      // Update shipping fees with promotion discount
+      subOrder.shipping.fee.promotionDiscount = discountResult.discount;
+      subOrder.shipping.fee.discount = discountResult.discount; // Will be updated if voucher is also applied
       subOrder.shipping.fee.finalFee = discountResult.finalFee;
 
       // Add to appliedPromotions

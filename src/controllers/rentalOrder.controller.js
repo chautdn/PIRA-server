@@ -103,7 +103,9 @@ class RentalOrderController {
         depositPaymentMethod,
         depositTransactionId,
         // Selected items from frontend
-        selectedItems
+        selectedItems,
+        // Voucher code for shipping discount
+        voucherCode
       } = req.body;
 
       console.log('📥 POST /api/rental-orders/create-paid');
@@ -123,7 +125,9 @@ class RentalOrderController {
         depositPaymentMethod,
         depositTransactionId,
         // Pass selected items to service
-        selectedItems
+        selectedItems,
+        // Pass voucher code
+        voucherCode
       });
 
       if (!masterOrder) {
@@ -165,7 +169,7 @@ class RentalOrderController {
         }
       }).send(res);
     } catch (error) {
-      throw new BadRequest(error.message);
+      throw error;
     }
   }
 
@@ -198,7 +202,7 @@ class RentalOrderController {
         }
       }).send(res);
     } catch (error) {
-      throw new BadRequest(error.message);
+      throw error;
     }
   }
 
@@ -233,7 +237,7 @@ class RentalOrderController {
         }
       }).send(res);
     } catch (error) {
-      throw new BadRequest(error.message);
+      throw error;
     }
   }
 
@@ -254,7 +258,7 @@ class RentalOrderController {
         }
       }).send(res);
     } catch (error) {
-      throw new BadRequest(error.message);
+      throw error;
     }
   }
 
@@ -281,7 +285,7 @@ class RentalOrderController {
         }
       }).send(res);
     } catch (error) {
-      throw new BadRequest(error.message);
+      throw error;
     }
   }
 
@@ -442,7 +446,7 @@ class RentalOrderController {
       }).send(res);
     } catch (error) {
       console.error('❌ getMyOrders error:', error);
-      throw new BadRequest(error.message);
+      throw error;
     }
   }
 
@@ -487,7 +491,7 @@ class RentalOrderController {
         }
       }).send(res);
     } catch (error) {
-      throw new BadRequest(error.message);
+      throw error;
     }
   }
 
@@ -506,7 +510,7 @@ class RentalOrderController {
           path: 'subOrders',
           populate: [
             { path: 'owner', select: 'profile email phone' },
-            { 
+            {
               path: 'products.product',
               select: 'title images sku category description condition pricing'
             },
@@ -531,7 +535,9 @@ class RentalOrderController {
       const Shipment = require('../models/Shipment');
       for (let subOrder of masterOrder.subOrders) {
         const shipments = await Shipment.find({ subOrder: subOrder._id })
-          .select('shipmentNumber type status shipper estimatedDeliveryDate actualDeliveryDate fromAddress toAddress contactInfo')
+          .select(
+            'shipmentNumber type status shipper estimatedDeliveryDate actualDeliveryDate fromAddress toAddress contactInfo'
+          )
           .populate('shipper', 'name email phone profile');
         subOrder.shipments = shipments;
       }
@@ -543,7 +549,7 @@ class RentalOrderController {
         'Lấy chi tiết đơn hàng thành công'
       ).send(res);
     } catch (error) {
-      throw new BadRequest(error.message);
+      throw error;
     }
   }
 
@@ -632,7 +638,7 @@ class RentalOrderController {
         }
       }).send(res);
     } catch (error) {
-      throw new BadRequest(error.message);
+      throw error;
     }
   }
 
@@ -675,7 +681,7 @@ class RentalOrderController {
         'Tính phí ship thành công'
       ).send(res);
     } catch (error) {
-      throw new BadRequest(error.message);
+      throw error;
     }
   }
 
@@ -726,7 +732,7 @@ class RentalOrderController {
       }).send(res);
     } catch (error) {
       console.error('❌ Error calculating product shipping:', error);
-      throw new BadRequest(error.message);
+      throw error;
     }
   }
 
@@ -767,7 +773,7 @@ class RentalOrderController {
       }).send(res);
     } catch (error) {
       console.error('❌ Error updating suborder shipping:', error);
-      throw new BadRequest(error.message);
+      throw error;
     }
   }
 

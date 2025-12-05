@@ -36,8 +36,16 @@ class AuthorizationError extends AppError {
 }
 
 class NotFoundError extends AppError {
-  constructor(resource = 'Resource') {
-    super(`${resource} not found`, 404);
+  constructor(message = 'Resource not found') {
+    // If message already contains "not found", use it as is
+    // Otherwise, append "not found" for backward compatibility
+    const finalMessage =
+      message.toLowerCase().includes('not found') ||
+      message.toLowerCase().includes('không tìm thấy') ||
+      message.toLowerCase().includes('tìm thấy')
+        ? message
+        : `${message} not found`;
+    super(finalMessage, 404);
     this.name = 'NotFoundError';
   }
 }
@@ -79,6 +87,7 @@ module.exports = {
   ValidationError,
   AuthenticationError,
   AuthorizationError,
+  ForbiddenError: AuthorizationError, // Alias for backward compatibility
   NotFoundError,
   DatabaseError,
   BadRequest,

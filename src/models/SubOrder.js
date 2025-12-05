@@ -270,6 +270,22 @@ const subOrderSchema = new mongoose.Schema(
       }
     ],
 
+    // Applied Voucher (for shipping discount)
+    appliedVoucher: {
+      voucher: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'Voucher'
+      },
+      voucherCode: String,
+      discountPercent: Number,
+      discountAmount: Number,
+      appliedTo: {
+        type: String,
+        enum: ['SHIPPING'],
+        default: 'SHIPPING'
+      }
+    },
+
     // Thông tin vận chuyển
     shipping: {
       method: {
@@ -290,6 +306,17 @@ const subOrderSchema = new mongoose.Schema(
           type: Number,
           default: 0
         },
+        // System promotion discount
+        promotionDiscount: {
+          type: Number,
+          default: 0
+        },
+        // Voucher discount (applied after promotion)
+        voucherDiscount: {
+          type: Number,
+          default: 0
+        },
+        // Legacy field - now represents total discount
         discount: {
           type: Number,
           default: 0

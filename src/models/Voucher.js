@@ -61,6 +61,13 @@ const voucherSchema = new mongoose.Schema(
       default: null
     },
 
+    // Reference to order where voucher was used (for tracking)
+    usedInOrder: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'MasterOrder',
+      default: null
+    },
+
     // Thời gian sử dụng
     usedAt: {
       type: Date,

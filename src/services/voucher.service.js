@@ -134,7 +134,9 @@ class VoucherService {
           code: voucher.code,
           discountPercent: voucher.discountPercent,
           type: voucher.type,
-          expiresAt: voucher.expiresAt
+          expiresAt: voucher.expiresAt,
+          redeemedBy: voucher.redeemedBy, // ✅ Include redeemedBy for ownership check
+          status: voucher.status
         }
       };
     } catch (error) {
@@ -242,6 +244,82 @@ class VoucherService {
       discountAmount: discount,
       finalFee
     };
+  }
+
+  /**
+   * Apply voucher discount to SubOrder
+   * This is called AFTER system promotion discount has been applied
+   * @param {Object} subOrder - SubOrder document
+   * @param {String} voucherCode - Voucher code to apply
+   * @param {String} userId - User ID who is using the voucher
+   * @returns {Object} - Discount result with updated fees
+   */
+  async applyVoucherToSubOrder(subOrder, voucherCode, userId) {
+    try {
+      // Get full voucher document from database
+      const voucherDoc = await Voucher.findOne({ code: voucherCode.toUpperCase() });
+
+      if (!voucherDoc) {
+        throw new Error('Voucher không tồn tại');
+      }
+
+      // Check if voucher is valid (not used and not expired)
+      const validation = voucherDoc.isValid();
+      if (!validation.valid) {
+        throw new Error(validation.reason);
+      }
+
+      // ✅ Voucher can be used by anyone who has the code (no ownership check)
+      // It's a one-time use code that works for whoever uses it first
+
+      // Get the current shipping fee (after promotion discount if any)
+      const currentShippingFee = subOrder.shipping.fee.finalFee || subOrder.pricing.shippingFee;
+
+      // Calculate voucher discount
+      const voucherDiscount = Math.round((currentShippingFee * voucherDoc.discountPercent) / 100);
+      const finalFee = Math.max(0, currentShippingFee - voucherDiscount);
+
+      // Update SubOrder with voucher discount
+      subOrder.appliedVoucher = {
+        voucher: voucherDoc._id,
+        voucherCode: voucherDoc.code,
+        discountPercent: voucherDoc.discountPercent,
+        discountAmount: voucherDiscount,
+        appliedTo: 'SHIPPING'
+      };
+
+      // Update shipping fees
+      subOrder.shipping.fee.voucherDiscount = voucherDiscount;
+      const totalDiscount = (subOrder.shipping.fee.promotionDiscount || 0) + voucherDiscount;
+      subOrder.shipping.fee.discount = totalDiscount;
+      subOrder.shipping.fee.finalFee = finalFee;
+      subOrder.pricing.shippingFee = finalFee;
+
+      // Save SubOrder first
+      await subOrder.save();
+
+      // Mark voucher as used by this user
+      voucherDoc.status = 'USED';
+      voucherDoc.isUsed = true;
+      voucherDoc.usedBy = userId;
+      voucherDoc.usedAt = new Date();
+      voucherDoc.usedInOrder = subOrder.masterOrder;
+      await voucherDoc.save();
+
+      console.log(
+        `✅ Applied voucher ${voucherCode} (${voucherDoc.discountPercent}%): -${voucherDiscount} VND to SubOrder`
+      );
+
+      return {
+        voucherDiscount,
+        finalFee,
+        voucher: voucherDoc,
+        success: true
+      };
+    } catch (error) {
+      console.error('❌ Error applying voucher to SubOrder:', error);
+      throw error;
+    }
   }
 }
 
