@@ -162,64 +162,41 @@ class DisputeService {
 
     if (decision === 'COMPLAINANT_RIGHT') {
       // Renter đúng -> Hoàn 100% deposit + rental fee
-      // Deposit đang nằm trong system wallet, rental fee đã thanh toán cho owner
+      // Cả deposit và rental đều nằm trong system wallet vì renter chưa nhận hàng (DELIVERY dispute)
       
-      // 1. Hoàn deposit từ system wallet cho renter
-      if (depositAmount > 0) {
-        if (systemWallet.balance.available < depositAmount) {
-          throw new Error(`System wallet không đủ tiền cọc. Available: ${systemWallet.balance.available}, Cần: ${depositAmount}`);
-        }
-        systemWallet.balance.available -= depositAmount;
-        await systemWallet.save({ session });
-        
-        renterWallet.balance.available += depositAmount;
+      // Hoàn cả deposit + rental từ system wallet cho renter
+      if (systemWallet.balance.available < totalAmount) {
+        throw new Error(`System wallet không đủ tiền để hoàn. Available: ${systemWallet.balance.available.toLocaleString('vi-VN')}đ, Cần: ${totalAmount.toLocaleString('vi-VN')}đ`);
       }
-
-      // 2. Hoàn rental fee từ owner về renter
-      if (rentalAmount > 0) {
-        if (ownerWallet.balance.available < rentalAmount) {
-          throw new Error(`Owner wallet không đủ tiền thuê để hoàn. Available: ${ownerWallet.balance.available}, Cần: ${rentalAmount}`);
-        }
-        ownerWallet.balance.available -= rentalAmount;
-        renterWallet.balance.available += rentalAmount;
-      }
+      
+      systemWallet.balance.available -= totalAmount;
+      await systemWallet.save({ session });
+      
+      renterWallet.balance.available += totalAmount;
 
       renterWallet.balance.display = renterWallet.balance.available + renterWallet.balance.frozen + renterWallet.balance.pending;
-      ownerWallet.balance.display = ownerWallet.balance.available + ownerWallet.balance.frozen + ownerWallet.balance.pending;
-      
       await renterWallet.save({ session });
-      await ownerWallet.save({ session });
 
-      // Tạo transaction records
-      const depositRefundTx = new Transaction({
+      // Tạo transaction record - Hoàn toàn bộ từ system wallet
+      const fullRefundTx = new Transaction({
         user: renter._id,
         wallet: renterWallet._id,
         type: 'refund',
-        amount: depositAmount,
+        amount: totalAmount,
         status: 'success',
-        description: `Hoàn tiền cọc từ dispute ${dispute.disputeId} - Renter đúng`,
+        description: `Hoàn 100% (cọc + phí thuê) từ dispute ${dispute.disputeId} - Renter đúng`,
         reference: dispute._id.toString(),
         paymentMethod: 'system_wallet',
         fromSystemWallet: true,
         toWallet: renterWallet._id,
-        metadata: { disputeId: dispute.disputeId, type: 'deposit_refund' }
+        metadata: { 
+          disputeId: dispute.disputeId, 
+          type: 'full_refund',
+          depositAmount,
+          rentalAmount
+        }
       });
-      await depositRefundTx.save({ session });
-
-      const rentalRefundTx = new Transaction({
-        user: renter._id,
-        wallet: renterWallet._id,
-        type: 'refund',
-        amount: rentalAmount,
-        status: 'success',
-        description: `Hoàn phí thuê từ dispute ${dispute.disputeId} - Renter đúng`,
-        reference: dispute._id.toString(),
-        paymentMethod: 'wallet',
-        fromWallet: ownerWallet._id,
-        toWallet: renterWallet._id,
-        metadata: { disputeId: dispute.disputeId, type: 'rental_refund' }
-      });
-      await rentalRefundTx.save({ session });
+      await fullRefundTx.save({ session });
 
       financialDetails = {
         refundAmount: totalAmount,
@@ -234,32 +211,27 @@ class DisputeService {
       };
 
     } else if (decision === 'RESPONDENT_RIGHT') {
-      // Renter sai -> Hoàn 100% deposit, phạt 1 ngày phí thuê chuyển cho owner
+      // Renter sai -> Hoàn deposit + rental (trừ 1 ngày phạt), chuyển 1 ngày cho owner
       const dailyRate = rentalAmount / (product.rentalDays || 1);
       const penaltyAmount = dailyRate; // Phạt 1 ngày
-      const refundAmount = depositAmount + rentalAmount - penaltyAmount;
-
-      // 1. Hoàn deposit từ system wallet
-      if (depositAmount > 0) {
-        if (systemWallet.balance.available < depositAmount) {
-          throw new Error(`System wallet không đủ tiền cọc. Available: ${systemWallet.balance.available}, Cần: ${depositAmount}`);
-        }
-        systemWallet.balance.available -= depositAmount;
-        await systemWallet.save({ session });
-        
-        renterWallet.balance.available += depositAmount;
-      }
-
-      // 2. Hoàn rental fee trừ đi 1 ngày phạt
       const refundRental = rentalAmount - penaltyAmount;
-      if (refundRental > 0) {
-        if (ownerWallet.balance.available < refundRental) {
-          throw new Error(`Owner wallet không đủ tiền để hoàn. Available: ${ownerWallet.balance.available}, Cần: ${refundRental}`);
-        }
-        ownerWallet.balance.available -= refundRental;
-        renterWallet.balance.available += refundRental;
+      const totalRefund = depositAmount + refundRental;
+      const totalSystemAmount = depositAmount + rentalAmount; // System wallet giữ cả deposit + rental
+
+      // Kiểm tra system wallet có đủ tiền không
+      if (systemWallet.balance.available < totalSystemAmount) {
+        throw new Error(`System wallet không đủ tiền. Available: ${systemWallet.balance.available.toLocaleString('vi-VN')}đ, Cần: ${totalSystemAmount.toLocaleString('vi-VN')}đ`);
       }
-      // Owner giữ lại penaltyAmount (1 ngày phí thuê)
+
+      // 1. Hoàn deposit + rental (trừ phạt) từ system wallet cho renter
+      systemWallet.balance.available -= totalRefund;
+      renterWallet.balance.available += totalRefund;
+
+      // 2. Chuyển phạt 1 ngày từ system wallet cho owner
+      systemWallet.balance.available -= penaltyAmount;
+      ownerWallet.balance.available += penaltyAmount;
+
+      await systemWallet.save({ session });
 
       renterWallet.balance.display = renterWallet.balance.available + renterWallet.balance.frozen + renterWallet.balance.pending;
       ownerWallet.balance.display = ownerWallet.balance.available + ownerWallet.balance.frozen + ownerWallet.balance.pending;
@@ -268,35 +240,25 @@ class DisputeService {
       await ownerWallet.save({ session });
 
       // Tạo transaction records
-      const depositRefundTx = new Transaction({
+      const refundTx = new Transaction({
         user: renter._id,
         wallet: renterWallet._id,
         type: 'refund',
-        amount: depositAmount,
+        amount: totalRefund,
         status: 'success',
-        description: `Hoàn tiền cọc từ dispute ${dispute.disputeId} - Owner đúng`,
+        description: `Hoàn deposit + rental (trừ phạt 1 ngày ${penaltyAmount.toLocaleString('vi-VN')}đ) từ dispute ${dispute.disputeId} - Owner đúng`,
         reference: dispute._id.toString(),
         paymentMethod: 'system_wallet',
         fromSystemWallet: true,
         toWallet: renterWallet._id,
-        metadata: { disputeId: dispute.disputeId, type: 'deposit_refund' }
+        metadata: { 
+          disputeId: dispute.disputeId, 
+          type: 'dispute_refund',
+          depositRefund: depositAmount,
+          rentalRefund: refundRental
+        }
       });
-      await depositRefundTx.save({ session });
-
-      const partialRefundTx = new Transaction({
-        user: renter._id,
-        wallet: renterWallet._id,
-        type: 'refund',
-        amount: refundRental,
-        status: 'success',
-        description: `Hoàn phí thuê từ dispute ${dispute.disputeId} - Phạt 1 ngày (${penaltyAmount.toLocaleString('vi-VN')}đ)`,
-        reference: dispute._id.toString(),
-        paymentMethod: 'wallet',
-        fromWallet: ownerWallet._id,
-        toWallet: renterWallet._id,
-        metadata: { disputeId: dispute.disputeId, type: 'partial_rental_refund' }
-      });
-      await partialRefundTx.save({ session });
+      await refundTx.save({ session });
 
       const penaltyTx = new Transaction({
         user: owner._id,
@@ -304,15 +266,17 @@ class DisputeService {
         type: 'PROMOTION_REVENUE',
         amount: penaltyAmount,
         status: 'success',
-        description: `Nhận phí phạt từ dispute ${dispute.disputeId} - Renter sai (1 ngày)`,
+        description: `Nhận phí phạt 1 ngày từ dispute ${dispute.disputeId} - Renter sai`,
         reference: dispute._id.toString(),
-        paymentMethod: 'wallet',
+        paymentMethod: 'system_wallet',
+        fromSystemWallet: true,
+        toWallet: ownerWallet._id,
         metadata: { disputeId: dispute.disputeId, type: 'penalty_revenue' }
       });
       await penaltyTx.save({ session });
 
       financialDetails = {
-        refundAmount: refundAmount,
+        refundAmount: totalRefund,
         depositRefund: depositAmount,
         rentalRefund: refundRental,
         penaltyAmount: penaltyAmount,
@@ -322,7 +286,7 @@ class DisputeService {
         status: 'COMPLETED',
         notes: `Hoàn 100% deposit (${depositAmount.toLocaleString('vi-VN')}đ) + phí thuê trừ 1 ngày phạt (${refundRental.toLocaleString('vi-VN')}đ). ` +
                `Owner giữ phạt 1 ngày: ${penaltyAmount.toLocaleString('vi-VN')}đ. ` +
-               `Tổng hoàn cho renter: ${refundAmount.toLocaleString('vi-VN')}đ`
+               `Tổng hoàn cho renter: ${totalRefund.toLocaleString('vi-VN')}đ`
       };
     }
 
