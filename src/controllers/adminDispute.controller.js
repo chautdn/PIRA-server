@@ -163,6 +163,28 @@ class AdminDisputeController {
   }
 
   /**
+   * Admin từ chối bằng chứng bên thứ 3 (evidence fake/không hợp lệ)
+   * POST /api/admin/disputes/:disputeId/third-party/reject-evidence
+   */
+  async rejectThirdPartyEvidence(req, res) {
+    try {
+      const { disputeId } = req.params;
+      const { reason } = req.body;
+      const adminId = req.user._id;
+
+      const dispute = await thirdPartyService.rejectThirdPartyEvidence(disputeId, adminId, reason);
+
+      return responseUtils.success(res, {
+        dispute,
+        message: 'Đã từ chối bằng chứng bên thứ 3. Dispute quay lại trạng thái THIRD_PARTY_ESCALATED'
+      });
+    } catch (error) {
+      console.error('Reject third party evidence error:', error);
+      return responseUtils.error(res, error.message, 400);
+    }
+  }
+
+  /**
    * Kiểm tra negotiation timeout
    * POST /api/admin/disputes/:disputeId/negotiation/check-timeout
    */

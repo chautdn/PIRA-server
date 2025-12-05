@@ -70,10 +70,17 @@ router.post('/:disputeId/negotiation/respond', authenticate, disputeController.r
 
 /**
  * @route   POST /api/disputes/:disputeId/negotiation/owner-decision
- * @desc    Owner đưa ra quyết định cuối cùng
+ * @desc    Owner đưa ra quyết định cuối cùng (Renter tạo dispute DELIVERY)
  * @access  Private (Owner/Respondent)
  */
 router.post('/:disputeId/negotiation/owner-decision', authenticate, disputeController.submitOwnerFinalDecision);
+
+/**
+ * @route   POST /api/disputes/:disputeId/negotiation/owner-dispute-decision
+ * @desc    Owner đưa ra quyết định cuối cùng (Owner tạo dispute RETURN)
+ * @access  Private (Owner/Complainant)
+ */
+router.post('/:disputeId/negotiation/owner-dispute-decision', authenticate, disputeController.submitOwnerDisputeFinalDecision);
 
 /**
  * @route   POST /api/disputes/:disputeId/negotiation/respond-owner-decision
@@ -176,6 +183,13 @@ router.post('/:disputeId/admin/process-final-agreement', authenticate, requireAd
  * @access  Private (Admin)
  */
 router.post('/:disputeId/admin/third-party/final-decision', authenticate, requireAdmin, adminDisputeController.makeFinalDecision);
+
+/**
+ * @route   POST /api/disputes/:disputeId/admin/third-party/reject-evidence
+ * @desc    Admin từ chối bằng chứng bên thứ 3 (fake/không hợp lệ)
+ * @access  Private (Admin)
+ */
+router.post('/:disputeId/admin/third-party/reject-evidence', authenticate, requireAdmin, adminDisputeController.rejectThirdPartyEvidence);
 
 /**
  * @route   POST /api/disputes/:disputeId/admin/process-final-agreement

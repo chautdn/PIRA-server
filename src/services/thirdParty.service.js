@@ -16,6 +16,48 @@ class ThirdPartyService {
       ? { _id: disputeId }
       : { disputeId };
   }
+
+  /**
+   * Helper: Cập nhật credit score và loyalty points sau khi resolve dispute
+   * @param {ObjectId} winnerId - ID người thắng (đúng)
+   * @param {ObjectId} loserId - ID người thua (sai)
+   * @param {Session} session - MongoDB session
+   */
+  async _updateUserScoresAfterResolve(winnerId, loserId, session) {
+    try {
+      // Cập nhật người thua: -30 credit, +5 loyalty
+      await User.findByIdAndUpdate(
+        loserId,
+        { 
+          $inc: { 
+            creditScore: -30,
+            loyaltyPoints: 5
+          } 
+        },
+        { session }
+      );
+
+      // Cập nhật người thắng: +5 credit (nếu <100), +5 loyalty
+      const winner = await User.findById(winnerId).session(session);
+      if (winner) {
+        const creditIncrease = winner.creditScore < 100 ? 5 : 0;
+        await User.findByIdAndUpdate(
+          winnerId,
+          { 
+            $inc: { 
+              creditScore: creditIncrease,
+              loyaltyPoints: 5
+            } 
+          },
+          { session }
+        );
+      }
+    } catch (error) {
+      console.error('Error updating user scores in third party:', error);
+      // Không throw error để không ảnh hưởng đến resolve dispute
+    }
+  }
+
   /**
    * Chuyển dispute sang bên thứ 3
    * @param {String} disputeId - ID của dispute
@@ -279,6 +321,100 @@ class ThirdPartyService {
   }
 
   /**
+   * Admin từ chối bằng chứng bên thứ 3 (fake hoặc không hợp lệ)
+   * @param {String} disputeId - ID của dispute
+   * @param {String} adminId - ID của admin
+   * @param {String} reason - Lý do từ chối
+   * @returns {Promise<Dispute>}
+   */
+  async rejectThirdPartyEvidence(disputeId, adminId, reason) {
+    const dispute = await Dispute.findOne(this._buildDisputeQuery(disputeId))
+      .populate('complainant')
+      .populate('respondent');
+      
+    if (!dispute) {
+      throw new Error('Dispute không tồn tại');
+    }
+
+    if (dispute.status !== 'THIRD_PARTY_EVIDENCE_UPLOADED') {
+      throw new Error('Chỉ có thể từ chối khi đã có bằng chứng được upload');
+    }
+
+    // Kiểm tra admin role
+    const admin = await User.findById(adminId);
+    if (!admin || admin.role !== 'ADMIN') {
+      throw new Error('Chỉ admin mới có quyền từ chối bằng chứng');
+    }
+
+    // Quay lại trạng thái THIRD_PARTY_ESCALATED
+    dispute.status = 'THIRD_PARTY_ESCALATED';
+    
+    // Xóa bằng chứng đã upload (reset)
+    dispute.thirdPartyResolution.evidence = {
+      documents: [],
+      photos: [],
+      videos: [],
+      officialDecision: '',
+      uploadedBy: null,
+      uploadedAt: null
+    };
+
+    // Cập nhật deadline mới (thêm 7 ngày nữa)
+    const newDeadline = new Date();
+    newDeadline.setDate(newDeadline.getDate() + 7);
+    dispute.thirdPartyResolution.evidenceDeadline = newDeadline;
+
+    // Thêm timeline
+    dispute.timeline.push({
+      action: 'THIRD_PARTY_EVIDENCE_REJECTED',
+      performedBy: adminId,
+      details: `Admin từ chối bằng chứng: ${reason}. Yêu cầu upload lại.`,
+      timestamp: new Date()
+    });
+
+    await dispute.save();
+
+    // Gửi notification cho cả 2 bên
+    try {
+      const notificationData = {
+        type: 'DISPUTE',
+        category: 'WARNING',
+        title: 'Bằng chứng bên thứ 3 bị từ chối',
+        message: `Admin đã từ chối bằng chứng vì: ${reason}. Vui lòng upload lại bằng chứng hợp lệ trước ${newDeadline.toLocaleDateString('vi-VN')}.`,
+        relatedDispute: dispute._id,
+        actions: [{
+          label: 'Upload lại bằng chứng',
+          url: `/disputes/${dispute._id}`,
+          action: 'UPLOAD_EVIDENCE'
+        }],
+        data: {
+          disputeId: dispute.disputeId,
+          rejectionReason: reason,
+          newDeadline: newDeadline.toISOString()
+        },
+        status: 'SENT'
+      };
+
+      // Gửi cho complainant
+      await notificationService.createNotification({
+        ...notificationData,
+        recipient: dispute.complainant
+      });
+
+      // Gửi cho respondent
+      await notificationService.createNotification({
+        ...notificationData,
+        recipient: dispute.respondent
+      });
+
+    } catch (error) {
+      console.error('Failed to create rejection notification:', error);
+    }
+
+    return dispute;
+  }
+
+  /**
    * Admin đưa ra quyết định cuối cùng dựa trên kết quả bên thứ 3
    * @param {String} disputeId - ID của dispute
    * @param {String} adminId - ID của admin
@@ -288,21 +424,12 @@ class ThirdPartyService {
   async adminFinalDecision(disputeId, adminId, finalDecision) {
     const { resolutionText, whoIsRight } = finalDecision;
 
-    console.log('🚀 adminFinalDecision called');
-    console.log('   disputeId:', disputeId);
-    console.log('   resolutionText:', resolutionText);
-    console.log('   whoIsRight:', whoIsRight);
-
     const dispute = await Dispute.findOne(this._buildDisputeQuery(disputeId))
       .populate('complainant')
       .populate('respondent');
     if (!dispute) {
       throw new Error('Dispute không tồn tại');
     }
-
-    console.log('✅ Dispute found:', dispute.disputeId);
-    console.log('   Status:', dispute.status);
-    console.log('   Type:', dispute.type);
 
     if (dispute.status !== 'THIRD_PARTY_EVIDENCE_UPLOADED') {
       throw new Error('Chưa có bằng chứng từ bên thứ 3');
@@ -330,12 +457,7 @@ class ThirdPartyService {
       // Xử lý tiền cho dispute PRODUCT_NOT_AS_DESCRIBED và MISSING_ITEMS
       const isProductDispute = ['PRODUCT_NOT_AS_DESCRIBED', 'MISSING_ITEMS'].includes(dispute.type);
       
-      console.log('🔍 Processing financials - whoIsRight:', whoIsRight);
-      console.log('🔍 Dispute type:', dispute.type);
-      console.log('🔍 Is product dispute:', isProductDispute);
-      
       if (isProductDispute && whoIsRight) {
-        console.log('✅ Starting financial processing for third party resolution');
         // Sử dụng logic tương tự _processDisputeFinancials
         const subOrder = await SubOrder.findById(dispute.subOrder).session(session);
         if (!subOrder) {
@@ -379,56 +501,39 @@ class ThirdPartyService {
         }
 
         if (whoIsRight === 'COMPLAINANT_RIGHT') {
-          // Renter đúng -> Hoàn 100%
-          console.log('💰 COMPLAINANT_RIGHT - Hoàn 100%');
-          console.log('   Deposit:', depositAmount, '| Rental:', rentalAmount);
+          // Renter đúng -> Hoàn 100% từ system wallet
+          // Cả deposit và rental đều nằm trong system wallet vì renter chưa nhận hàng (DELIVERY dispute)
           
-          if (depositAmount > 0) {
-            systemWallet.balance.available -= depositAmount;
-            await systemWallet.save({ session });
-            renterWallet.balance.available += depositAmount;
+          if (systemWallet.balance.available < totalAmount) {
+            throw new Error(`System wallet không đủ tiền để hoàn. Available: ${systemWallet.balance.available.toLocaleString('vi-VN')}đ, Cần: ${totalAmount.toLocaleString('vi-VN')}đ`);
           }
 
-          if (rentalAmount > 0) {
-            ownerWallet.balance.available -= rentalAmount;
-            renterWallet.balance.available += rentalAmount;
-          }
-
+          systemWallet.balance.available -= totalAmount;
+          await systemWallet.save({ session });
+          
+          renterWallet.balance.available += totalAmount;
           renterWallet.balance.display = renterWallet.balance.available + renterWallet.balance.frozen + renterWallet.balance.pending;
-          ownerWallet.balance.display = ownerWallet.balance.available + ownerWallet.balance.frozen + ownerWallet.balance.pending;
-          
           await renterWallet.save({ session });
-          await ownerWallet.save({ session });
 
-          const depositRefundTx = new Transaction({
+          const fullRefundTx = new Transaction({
             user: renter._id,
             wallet: renterWallet._id,
             type: 'refund',
-            amount: depositAmount,
+            amount: totalAmount,
             status: 'success',
-            description: `Hoàn tiền cọc từ third party ${dispute.disputeId} - Renter đúng`,
+            description: `Hoàn 100% (cọc + phí thuê) từ third party ${dispute.disputeId} - Renter đúng`,
             reference: dispute._id.toString(),
             paymentMethod: 'system_wallet',
             fromSystemWallet: true,
             toWallet: renterWallet._id,
-            metadata: { disputeId: dispute.disputeId, type: 'third_party_deposit_refund' }
+            metadata: { 
+              disputeId: dispute.disputeId, 
+              type: 'third_party_full_refund',
+              depositAmount,
+              rentalAmount
+            }
           });
-          await depositRefundTx.save({ session });
-
-          const rentalRefundTx = new Transaction({
-            user: renter._id,
-            wallet: renterWallet._id,
-            type: 'refund',
-            amount: rentalAmount,
-            status: 'success',
-            description: `Hoàn phí thuê từ third party ${dispute.disputeId} - Renter đúng`,
-            reference: dispute._id.toString(),
-            paymentMethod: 'wallet',
-            fromWallet: ownerWallet._id,
-            toWallet: renterWallet._id,
-            metadata: { disputeId: dispute.disputeId, type: 'third_party_rental_refund' }
-          });
-          await rentalRefundTx.save({ session });
+          await fullRefundTx.save({ session });
 
           dispute.resolution.financialImpact = {
             refundAmount: totalAmount,
@@ -437,29 +542,27 @@ class ThirdPartyService {
           };
 
         } else if (whoIsRight === 'RESPONDENT_RIGHT') {
-          // Renter sai -> Phạt 1 ngày
+          // Renter sai -> Hoàn deposit + rental (trừ 1 ngày phạt), chuyển 1 ngày cho owner
           const dailyRate = rentalAmount / (product.rentalDays || 1);
           const penaltyAmount = dailyRate;
           const refundRental = rentalAmount - penaltyAmount;
-          const refundAmount = depositAmount + refundRental;
+          const totalRefund = depositAmount + refundRental;
+          const totalSystemAmount = depositAmount + rentalAmount;
 
-          console.log('⚠️ RESPONDENT_RIGHT - Phạt 1 ngày');
-          console.log('   Deposit:', depositAmount);
-          console.log('   Rental:', rentalAmount);
-          console.log('   Penalty:', penaltyAmount);
-          console.log('   Refund rental:', refundRental);
-          console.log('   Total refund:', refundAmount);
-
-          if (depositAmount > 0) {
-            systemWallet.balance.available -= depositAmount;
-            await systemWallet.save({ session });
-            renterWallet.balance.available += depositAmount;
+          // Kiểm tra system wallet có đủ tiền không
+          if (systemWallet.balance.available < totalSystemAmount) {
+            throw new Error(`System wallet không đủ tiền. Available: ${systemWallet.balance.available.toLocaleString('vi-VN')}đ, Cần: ${totalSystemAmount.toLocaleString('vi-VN')}đ`);
           }
 
-          if (refundRental > 0) {
-            ownerWallet.balance.available -= refundRental;
-            renterWallet.balance.available += refundRental;
-          }
+          // 1. Hoàn deposit + rental (trừ phạt) từ system wallet cho renter
+          systemWallet.balance.available -= totalRefund;
+          renterWallet.balance.available += totalRefund;
+
+          // 2. Chuyển phạt 1 ngày từ system wallet cho owner
+          systemWallet.balance.available -= penaltyAmount;
+          ownerWallet.balance.available += penaltyAmount;
+
+          await systemWallet.save({ session });
 
           renterWallet.balance.display = renterWallet.balance.available + renterWallet.balance.frozen + renterWallet.balance.pending;
           ownerWallet.balance.display = ownerWallet.balance.available + ownerWallet.balance.frozen + ownerWallet.balance.pending;
@@ -467,35 +570,25 @@ class ThirdPartyService {
           await renterWallet.save({ session });
           await ownerWallet.save({ session });
 
-          const depositRefundTx = new Transaction({
+          const refundTx = new Transaction({
             user: renter._id,
             wallet: renterWallet._id,
             type: 'refund',
-            amount: depositAmount,
+            amount: totalRefund,
             status: 'success',
-            description: `Hoàn tiền cọc từ third party ${dispute.disputeId} - Owner đúng`,
+            description: `Hoàn deposit + rental (trừ phạt 1 ngày ${penaltyAmount.toLocaleString('vi-VN')}đ) từ third party ${dispute.disputeId} - Owner đúng`,
             reference: dispute._id.toString(),
             paymentMethod: 'system_wallet',
             fromSystemWallet: true,
             toWallet: renterWallet._id,
-            metadata: { disputeId: dispute.disputeId, type: 'third_party_deposit_refund' }
+            metadata: { 
+              disputeId: dispute.disputeId, 
+              type: 'third_party_refund',
+              depositRefund: depositAmount,
+              rentalRefund: refundRental
+            }
           });
-          await depositRefundTx.save({ session });
-
-          const partialRefundTx = new Transaction({
-            user: renter._id,
-            wallet: renterWallet._id,
-            type: 'refund',
-            amount: refundRental,
-            status: 'success',
-            description: `Hoàn phí thuê từ third party ${dispute.disputeId} - Phạt 1 ngày`,
-            reference: dispute._id.toString(),
-            paymentMethod: 'wallet',
-            fromWallet: ownerWallet._id,
-            toWallet: renterWallet._id,
-            metadata: { disputeId: dispute.disputeId, type: 'third_party_partial_refund' }
-          });
-          await partialRefundTx.save({ session });
+          await refundTx.save({ session });
 
           const penaltyTx = new Transaction({
             user: owner._id,
@@ -503,18 +596,20 @@ class ThirdPartyService {
             type: 'PROMOTION_REVENUE',
             amount: penaltyAmount,
             status: 'success',
-            description: `Nhận phí phạt từ third party ${dispute.disputeId}`,
+            description: `Nhận phí phạt 1 ngày từ third party ${dispute.disputeId} - Renter sai`,
             reference: dispute._id.toString(),
-            paymentMethod: 'wallet',
+            paymentMethod: 'system_wallet',
+            fromSystemWallet: true,
+            toWallet: ownerWallet._id,
             metadata: { disputeId: dispute.disputeId, type: 'third_party_penalty' }
           });
           await penaltyTx.save({ session });
 
           dispute.resolution.financialImpact = {
-            refundAmount: refundAmount,
+            refundAmount: totalRefund,
             penaltyAmount: penaltyAmount,
             status: 'COMPLETED',
-            notes: `Hoàn deposit + rental phạt 1 ngày. Tổng hoàn: ${refundAmount.toLocaleString('vi-VN')}đ`
+            notes: `Hoàn deposit + rental phạt 1 ngày. Tổng hoàn: ${totalRefund.toLocaleString('vi-VN')}đ, Phạt: ${penaltyAmount.toLocaleString('vi-VN')}đ`
           };
         }
       } else {
@@ -534,11 +629,18 @@ class ThirdPartyService {
         timestamp: new Date()
       });
 
+      // Cập nhật credit/loyalty points dựa trên whoIsRight
+      if (whoIsRight === 'COMPLAINANT_RIGHT') {
+        // Renter (complainant) đúng, Owner (respondent) sai
+        await this._updateUserScoresAfterResolve(dispute.complainant, dispute.respondent, session);
+      } else if (whoIsRight === 'RESPONDENT_RIGHT') {
+        // Owner (respondent) đúng, Renter (complainant) sai
+        await this._updateUserScoresAfterResolve(dispute.respondent, dispute.complainant, session);
+      }
+
       await dispute.save({ session });
       await session.commitTransaction();
       session.endSession();
-
-      console.log('✅ Third party financial processing completed successfully');
 
       // Gửi notification cho cả 2 bên
       try {
