@@ -57,6 +57,49 @@ class DisputeService {
   }
 
   /**
+   * Helper: Cập nhật credit score và loyalty points sau khi resolve dispute
+   * @param {ObjectId} winnerId - ID người thắng (đúng)
+   * @param {ObjectId} loserId - ID người thua (sai)
+   * @param {Session} session - MongoDB session
+   */
+  async _updateUserScoresAfterResolve(winnerId, loserId, session) {
+    try {
+      // Cập nhật người thua: -30 credit
+      await User.findByIdAndUpdate(
+        loserId,
+        { 
+          $inc: { 
+            creditScore: -30,
+            loyaltyPoints: 5 // Cả 2 đều được +5 loyalty
+          } 
+        },
+        { session }
+      );
+
+      // Cập nhật người thắng: +5 credit (nếu <100), +5 loyalty
+      const winner = await User.findById(winnerId).session(session);
+      if (winner) {
+        const creditIncrease = winner.creditScore < 100 ? 5 : 0;
+        await User.findByIdAndUpdate(
+          winnerId,
+          { 
+            $inc: { 
+              creditScore: creditIncrease,
+              loyaltyPoints: 5
+            } 
+          },
+          { session }
+        );
+      }
+
+      console.log(`✅ Updated scores - Winner: +${winner?.creditScore < 100 ? 5 : 0} credit, +5 loyalty | Loser: -30 credit, +5 loyalty`);
+    } catch (error) {
+      console.error('Error updating user scores:', error);
+      // Không throw error để không ảnh hưởng đến resolve dispute
+    }
+  }
+
+  /**
    * Helper: Xử lý giao dịch tiền cho dispute PRODUCT_NOT_AS_DESCRIBED và MISSING_ITEMS
    * @param {Dispute} dispute - Dispute object
    * @param {String} decision - 'COMPLAINANT_RIGHT' (renter đúng) hoặc 'RESPONDENT_RIGHT' (renter sai)
@@ -589,6 +632,9 @@ class DisputeService {
           timestamp: new Date()
         });
 
+        // Cập nhật credit/loyalty: complainant thắng, respondent thua
+        await this._updateUserScoresAfterResolve(dispute.complainant, respondentId, session);
+
         await dispute.save({ session });
         await session.commitTransaction();
         session.endSession();
@@ -932,6 +978,13 @@ class DisputeService {
             details: 'Cả 2 bên đã chấp nhận quyết định admin' + (whoIsRight ? ` - Xử lý tiền: ${whoIsRight}` : ''),
             timestamp: new Date()
           });
+
+          // Cập nhật credit/loyalty dựa trên whoIsRight
+          if (whoIsRight === 'COMPLAINANT_RIGHT') {
+            await this._updateUserScoresAfterResolve(dispute.complainant, dispute.respondent, session);
+          } else if (whoIsRight === 'RESPONDENT_RIGHT') {
+            await this._updateUserScoresAfterResolve(dispute.respondent, dispute.complainant, session);
+          }
 
           await dispute.save({ session });
           await session.commitTransaction();
@@ -1384,6 +1437,9 @@ class DisputeService {
         timestamp: new Date()
       });
 
+      // Cập nhật credit/loyalty: Renter sai (phải trả repair cost)
+      await this._updateUserScoresAfterResolve(owner._id, renter._id, session);
+
       await dispute.save({ session });
 
       await session.commitTransaction();
@@ -1562,6 +1618,9 @@ class DisputeService {
           timestamp: new Date()
         });
 
+        // Cập nhật credit/loyalty: Owner đúng, renter sai
+        await this._updateUserScoresAfterResolve(dispute.complainant, dispute.respondent, session);
+
       } else if (decision === 'RESPONDENT_RIGHT') {
         // Renter đúng (owner không có lý do chính đáng) -> Chỉ hoàn tiền cọc
         // KHÔNG hoàn tiền thuê vì renter đã sử dụng sản phẩm
@@ -1610,6 +1669,15 @@ class DisputeService {
           details: `Admin quyết định: Renter đúng. Hoàn 100% tiền cọc ${depositAmount.toLocaleString('vi-VN')}đ cho renter.`,
           timestamp: new Date()
         });
+      }
+
+      // Cập nhật credit/loyalty dựa trên decision
+      if (decision === 'COMPLAINANT_RIGHT') {
+        // Owner đúng, renter sai
+        await this._updateUserScoresAfterResolve(dispute.complainant, dispute.respondent, session);
+      } else if (decision === 'RESPONDENT_RIGHT') {
+        // Renter đúng, owner sai
+        await this._updateUserScoresAfterResolve(dispute.respondent, dispute.complainant, session);
       }
 
       await dispute.save({ session });
