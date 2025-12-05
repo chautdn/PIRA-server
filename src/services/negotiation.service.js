@@ -375,9 +375,63 @@ class NegotiationService {
   }
 
   /**
+   * Owner đưa ra quyết định cuối cùng (Owner tạo dispute RETURN)
+   * @param {String} disputeId - ID của dispute
+   * @param {String} ownerId - ID của owner (complainant trong RETURN)
+   * @param {String} decision - Quyết định cuối cùng
+   * @returns {Promise<Dispute>}
+   */
+  async submitOwnerDisputeFinalDecision(disputeId, ownerId, decision) {
+    const dispute = await Dispute.findOne(this._buildDisputeQuery(disputeId));
+    if (!dispute) {
+      throw new Error('Dispute không tồn tại');
+    }
+
+    if (dispute.status !== 'IN_NEGOTIATION' && dispute.status !== 'NEGOTIATION_NEEDED') {
+      throw new Error('Dispute không ở trạng thái đàm phán');
+    }
+
+    // Kiểm tra quyền - Owner tạo dispute RETURN nên owner là complainant
+    if (dispute.complainant.toString() !== ownerId.toString()) {
+      throw new Error('Chỉ owner mới có quyền đưa ra quyết định cuối cùng');
+    }
+
+    // Kiểm tra shipmentType
+    if (dispute.shipmentType !== 'RETURN') {
+      throw new Error('API này chỉ dành cho dispute RETURN');
+    }
+
+    // Kiểm tra deadline
+    if (dispute.negotiationRoom && new Date() > dispute.negotiationRoom.deadline) {
+      throw new Error('Đã quá hạn đàm phán');
+    }
+
+    // Cập nhật owner decision - chờ renter đồng ý
+    dispute.negotiationRoom.finalAgreement = {
+      ownerDecision: decision,
+      decidedAt: new Date(),
+      complainantAccepted: true, // Owner (complainant) tự động đồng ý
+      respondentAccepted: null   // Chờ renter (respondent) phản hồi
+    };
+
+    // Vẫn ở trạng thái IN_NEGOTIATION, chờ renter đồng ý
+    dispute.status = 'IN_NEGOTIATION';
+
+    dispute.timeline.push({
+      action: 'OWNER_DECISION_SUBMITTED',
+      performedBy: ownerId,
+      details: `Owner đã đưa ra quyết định cuối cùng, chờ renter phản hồi`,
+      timestamp: new Date()
+    });
+
+    await dispute.save();
+    return dispute.populate(['complainant', 'respondent', 'negotiationRoom.chatRoomId']);
+  }
+
+  /**
    * Renter phản hồi quyết định cuối của owner
    * @param {String} disputeId - ID của dispute
-   * @param {String} renterId - ID của renter (complainant)
+   * @param {String} renterId - ID của renter
    * @param {Boolean} accepted - Có đồng ý không
    * @returns {Promise<Dispute>}
    */
@@ -391,8 +445,14 @@ class NegotiationService {
       throw new Error('Dispute không ở trạng thái đàm phán');
     }
 
-    // Kiểm tra quyền - chỉ renter (complainant) mới được phản hồi
-    if (dispute.complainant.toString() !== renterId.toString()) {
+    // Xác định renter dựa trên shipmentType
+    // DELIVERY: renter = complainant
+    // RETURN: renter = respondent
+    const isRenter = dispute.shipmentType === 'DELIVERY'
+      ? dispute.complainant.toString() === renterId.toString()
+      : dispute.respondent.toString() === renterId.toString();
+
+    if (!isRenter) {
       throw new Error('Chỉ renter mới có quyền phản hồi quyết định này');
     }
 
@@ -401,8 +461,12 @@ class NegotiationService {
       throw new Error('Owner chưa đưa ra quyết định cuối cùng');
     }
 
-    // Cập nhật phản hồi của renter
-    dispute.negotiationRoom.finalAgreement.complainantAccepted = accepted;
+    // Cập nhật phản hồi của renter - dựa trên shipmentType
+    if (dispute.shipmentType === 'DELIVERY') {
+      dispute.negotiationRoom.finalAgreement.complainantAccepted = accepted;
+    } else {
+      dispute.negotiationRoom.finalAgreement.respondentAccepted = accepted;
+    }
 
     if (accepted) {
       // Renter đồng ý -> gửi cho admin để xử lý cuối cùng

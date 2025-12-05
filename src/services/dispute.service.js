@@ -605,10 +605,18 @@ class DisputeService {
         // Owner khiếu nại, renter từ chối -> Đàm phán trực tiếp
         dispute.status = 'IN_NEGOTIATION';
         
-        // Khởi tạo phòng đàm phán
+        // Tạo chat room cho 2 bên
+        const Chat = require('../models/Chat');
+        const chatRoom = new Chat({
+          participants: [dispute.complainant, dispute.respondent]
+        });
+        await chatRoom.save();
+        
+        // Khởi tạo phòng đàm phán với chatRoomId
         dispute.negotiationRoom = {
           startedAt: new Date(),
           deadline: new Date(Date.now() + 3 * 24 * 60 * 60 * 1000), // 3 ngày
+          chatRoomId: chatRoom._id,
           messages: [],
           finalAgreement: null
         };
@@ -1450,8 +1458,9 @@ class DisputeService {
       throw new Error('Dispute không tồn tại');
     }
 
-    if (dispute.status !== 'THIRD_PARTY_EVIDENCE_UPLOADED') {
-      throw new Error('Dispute phải có kết quả từ bên thứ 3');
+    // Cho phép xử lý cả đàm phán và bên thứ 3
+    if (dispute.status !== 'THIRD_PARTY_EVIDENCE_UPLOADED' && dispute.status !== 'NEGOTIATION_AGREED') {
+      throw new Error('Dispute phải có kết quả từ bên thứ 3 hoặc đã thỏa thuận đàm phán');
     }
 
     if (dispute.shipmentType !== 'RETURN') {
@@ -1554,40 +1563,51 @@ class DisputeService {
         });
 
       } else if (decision === 'RESPONDENT_RIGHT') {
-        // Renter đúng (owner không có lý do chính đáng) -> Hoàn tiền cho renter
+        // Renter đúng (owner không có lý do chính đáng) -> Chỉ hoàn tiền cọc
+        // KHÔNG hoàn tiền thuê vì renter đã sử dụng sản phẩm
         const product = dispute.subOrder.products[dispute.productIndex];
         const depositAmount = product.totalDeposit || 0;
-        const rentalAmount = product.totalRental || 0;
-        const totalRefund = depositAmount + rentalAmount;
 
         const renterWallet = await Wallet.findById(dispute.respondent.wallet).session(session);
+        const systemWallet = await SystemWallet.findOne({}).session(session);
+
         if (!renterWallet) {
           throw new Error('Không tìm thấy ví của renter');
         }
 
-        // Hoàn tiền cho renter
-        renterWallet.balance.available += totalRefund;
+        if (!systemWallet) {
+          throw new Error('Không tìm thấy system wallet');
+        }
+
+        // Kiểm tra system wallet có đủ tiền cọc không
+        if (systemWallet.balance.available < depositAmount) {
+          throw new Error(`System wallet không đủ tiền cọc để hoàn. Available: ${systemWallet.balance.available.toLocaleString('vi-VN')}đ, Cần: ${depositAmount.toLocaleString('vi-VN')}đ`);
+        }
+
+        // Hoàn tiền cọc từ system wallet cho renter
+        systemWallet.balance.available -= depositAmount;
+        await systemWallet.save({ session });
+
+        renterWallet.balance.available += depositAmount;
         renterWallet.balance.display = (renterWallet.balance.available || 0) + (renterWallet.balance.frozen || 0) + (renterWallet.balance.pending || 0);
         await renterWallet.save({ session });
 
         dispute.status = 'RESOLVED';
         dispute.resolution = {
           decision: 'RESPONDENT_RIGHT',
-          resolutionSource: 'THIRD_PARTY',
+          resolutionSource: dispute.status === 'NEGOTIATION_AGREED' ? 'NEGOTIATION' : 'THIRD_PARTY',
           resolvedBy: adminId,
           resolvedAt: new Date(),
           notes: `Admin xác định renter đúng, owner không có lý do chính đáng.\n` +
-                 `Renter được hoàn:\n` +
-                 `- Tiền cọc: ${depositAmount.toLocaleString('vi-VN')}đ\n` +
-                 `- Tiền thuê: ${rentalAmount.toLocaleString('vi-VN')}đ\n` +
-                 `Tổng: ${totalRefund.toLocaleString('vi-VN')}đ\n` +
+                 `Renter được hoàn 100% tiền cọc: ${depositAmount.toLocaleString('vi-VN')}đ\n` +
+                 `(Tiền thuê không hoàn vì renter đã sử dụng sản phẩm)\n` +
                  `Lý do: ${reasoning}`
         };
 
         dispute.timeline.push({
           action: 'ADMIN_FINAL_DECISION',
           actor: adminId,
-          details: `Admin quyết định: Renter đúng. Hoàn ${totalRefund.toLocaleString('vi-VN')}đ cho renter.`,
+          details: `Admin quyết định: Renter đúng. Hoàn 100% tiền cọc ${depositAmount.toLocaleString('vi-VN')}đ cho renter.`,
           timestamp: new Date()
         });
       }

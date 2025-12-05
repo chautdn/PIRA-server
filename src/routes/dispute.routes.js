@@ -70,10 +70,17 @@ router.post('/:disputeId/negotiation/respond', authenticate, disputeController.r
 
 /**
  * @route   POST /api/disputes/:disputeId/negotiation/owner-decision
- * @desc    Owner đưa ra quyết định cuối cùng
+ * @desc    Owner đưa ra quyết định cuối cùng (Renter tạo dispute DELIVERY)
  * @access  Private (Owner/Respondent)
  */
 router.post('/:disputeId/negotiation/owner-decision', authenticate, disputeController.submitOwnerFinalDecision);
+
+/**
+ * @route   POST /api/disputes/:disputeId/negotiation/owner-dispute-decision
+ * @desc    Owner đưa ra quyết định cuối cùng (Owner tạo dispute RETURN)
+ * @access  Private (Owner/Complainant)
+ */
+router.post('/:disputeId/negotiation/owner-dispute-decision', authenticate, disputeController.submitOwnerDisputeFinalDecision);
 
 /**
  * @route   POST /api/disputes/:disputeId/negotiation/respond-owner-decision

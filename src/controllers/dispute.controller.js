@@ -216,6 +216,32 @@ class DisputeController {
   }
 
   /**
+   * Owner đưa ra quyết định cuối cùng (Owner tạo dispute RETURN)
+   * POST /api/disputes/:disputeId/negotiation/owner-dispute-decision
+   */
+  async submitOwnerDisputeFinalDecision(req, res) {
+    try {
+      const { disputeId } = req.params;
+      const { decision } = req.body;
+      const ownerId = req.user._id;
+
+      if (!decision || !decision.trim()) {
+        return responseUtils.error(res, 'Vui lòng nhập quyết định cuối cùng', 400);
+      }
+
+      const dispute = await negotiationService.submitOwnerDisputeFinalDecision(disputeId, ownerId, decision.trim());
+
+      return responseUtils.success(res, {
+        dispute,
+        message: 'Đã đưa ra quyết định cuối cùng, chờ renter phản hồi'
+      });
+    } catch (error) {
+      console.error('Submit owner dispute final decision error:', error);
+      return responseUtils.error(res, error.message, 400);
+    }
+  }
+
+  /**
    * Renter phản hồi quyết định của owner
    * POST /api/disputes/:disputeId/negotiation/respond-owner-decision
    */
