@@ -559,8 +559,8 @@ class RentalOrderService {
         orderCode,
         amount: amount,
         description: `Thanh toan don hang ${orderNumber}`.substring(0, 25), // Max 25 chars
-        returnUrl: `${process.env.CLIENT_URL || 'https://pira.asia'}/rental-orders?payment=success&orderCode=${orderCode}&orderId=${masterOrderId}`,
-        cancelUrl: `${process.env.CLIENT_URL || 'https://pira.asia'}/rental-orders?payment=cancel&orderCode=${orderCode}&orderId=${masterOrderId}`
+        returnUrl: `${process.env.CLIENT_URL || 'http://localhost:3000'}/rental-orders?payment=success&orderCode=${orderCode}&orderId=${masterOrderId}`,
+        cancelUrl: `${process.env.CLIENT_URL || 'http://localhost:3000'}/rental-orders?payment=cancel&orderCode=${orderCode}&orderId=${masterOrderId}`
       };
 
       const paymentLink = await payos.paymentRequests.create(paymentRequest);
@@ -951,9 +951,7 @@ class RentalOrderService {
     );
 
     if (confirmedSubOrders.length === 0) {
-      throw new Error(
-        `Chưa có owner nào xác nhận. Vui lòng chờ owner xác nhận đơn hàng.`
-      );
+      throw new Error(`Chưa có owner nào xác nhận. Vui lòng chờ owner xác nhận đơn hàng.`);
     }
 
     // ✅ MODIFIED: Update MasterOrder status nếu có ít nhất 1 confirmed (thay vì tất cả)
@@ -977,7 +975,7 @@ class RentalOrderService {
 
       const contract = new Contract({
         contractNumber,
-        subOrder: subOrder._id,  // Link với SubOrder cụ thể
+        subOrder: subOrder._id, // Link với SubOrder cụ thể
         masterOrder: masterOrder._id,
         owner: subOrder.owner._id,
         renter: masterOrder.renter._id,
@@ -1074,16 +1072,16 @@ class RentalOrderService {
       try {
         console.log('\n📦 Creating shipments for signed contract...');
         const ShipmentService = require('./shipment.service');
-        
+
         // Lấy shipper trong cùng area với owner
         const shipper = await ShipmentService.findShipperInSameArea(updatedSubOrder.owner.address);
         const shipperId = shipper ? shipper._id : null;
-        
+
         if (shipperId) {
           const result = await ShipmentService.createDeliveryAndReturnShipments(
             updatedSubOrder.masterOrder,
             shipperId,
-            updatedSubOrder._id  // Chỉ tạo shipments cho SubOrder này
+            updatedSubOrder._id // Chỉ tạo shipments cho SubOrder này
           );
           console.log(`✅ Shipments created for signed SubOrder: ${result.count} pairs`);
         } else {
@@ -1434,7 +1432,9 @@ class RentalOrderService {
 
         // ✅ MODIFIED: Shipments được tạo ngay khi SubOrder confirm (không cần chờ tất cả contracts signed)
         // Logic tạo shipments đã được di chuyển sang confirmSubOrder()
-        console.log(`✅ Shipments creation logic moved to confirmSubOrder - already created for confirmed suborders`);
+        console.log(
+          `✅ Shipments creation logic moved to confirmSubOrder - already created for confirmed suborders`
+        );
       }
     } catch (error) {
       console.error('❌ Error in checkAllContractsSigned:', error.message);
@@ -1762,7 +1762,7 @@ class RentalOrderService {
       // Create contract
       const contract = new Contract({
         contractNumber,
-        subOrder: populatedSubOrder._id,  // Link với SubOrder cụ thể
+        subOrder: populatedSubOrder._id, // Link với SubOrder cụ thể
         masterOrder: populatedSubOrder.masterOrder._id,
         owner: populatedSubOrder.owner._id,
         renter: populatedSubOrder.masterOrder.renter._id,
