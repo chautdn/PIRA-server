@@ -293,6 +293,16 @@ const ownerProductController = {
         data: product
       });
     } catch (error) {
+      // Handle quantity validation errors specially
+      if (error.validationDetails) {
+        return res.status(400).json({
+          success: false,
+          message: error.message,
+          errorType: 'QUANTITY_CONFLICT',
+          validationDetails: error.validationDetails
+        });
+      }
+
       if (!res.headersSent) {
         const statusCode = error.message.includes('not found') ? 404 : 500;
         return res.status(statusCode).json({
@@ -835,6 +845,85 @@ const ownerProductController = {
       });
     } catch (error) {
       return res.status(400).json({
+        success: false,
+        message: error.message
+      });
+    }
+  },
+
+  // GET /api/owner/products/:productId/quantity-validation
+  // Check if quantity can be changed and get impact analysis
+  validateQuantityChange: async (req, res) => {
+    try {
+      const { productId } = req.params;
+      const { newQuantity } = req.query;
+      const ownerId = req.user._id;
+
+      // Verify ownership
+      const product = await ownerProductService.getOwnerProductById(ownerId, productId);
+      if (!product) {
+        return res.status(404).json({
+          success: false,
+          message: 'Product not found or access denied'
+        });
+      }
+
+      // Validate new quantity
+      const quantity = parseInt(newQuantity);
+      if (isNaN(quantity) || quantity < 0) {
+        return res.status(400).json({
+          success: false,
+          message: 'Invalid quantity value. Must be a non-negative number.'
+        });
+      }
+
+      const ProductQuantityValidationService = require('../services/productQuantityValidation.service');
+      const validation = await ProductQuantityValidationService.validateQuantityChange(
+        productId,
+        quantity
+      );
+
+      return res.status(200).json({
+        success: true,
+        data: validation
+      });
+    } catch (error) {
+      return res.status(500).json({
+        success: false,
+        message: error.message
+      });
+    }
+  },
+
+  // GET /api/owner/products/:productId/quantity-timeline
+  // Get detailed timeline of quantity usage
+  getQuantityTimeline: async (req, res) => {
+    try {
+      const { productId } = req.params;
+      const { daysAhead = 90 } = req.query;
+      const ownerId = req.user._id;
+
+      // Verify ownership
+      const product = await ownerProductService.getOwnerProductById(ownerId, productId);
+      if (!product) {
+        return res.status(404).json({
+          success: false,
+          message: 'Product not found or access denied'
+        });
+      }
+
+      const ProductQuantityValidationService = require('../services/productQuantityValidation.service');
+      const timeline = await ProductQuantityValidationService.getQuantityTimeline(
+        productId,
+        parseInt(daysAhead)
+      );
+
+      return res.status(200).json({
+        success: true,
+        data: timeline
+      });
+    } catch (error) {
+      return res.status(500).json({
         success: false,
         message: error.message
       });

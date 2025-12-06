@@ -187,5 +187,30 @@ router.put(
   ownerProductController.updatePricing
 );
 
+// Validate quantity change before updating
+router.get(
+  '/:productId/quantity-validation',
+  [
+    param('productId').isMongoId().withMessage('Valid product ID is required'),
+    query('newQuantity')
+      .isInt({ min: 0 })
+      .withMessage('New quantity must be a non-negative integer')
+  ],
+  ownerProductController.validateQuantityChange
+);
+
+// Get quantity timeline (booking schedule)
+router.get(
+  '/:productId/quantity-timeline',
+  [
+    param('productId').isMongoId().withMessage('Valid product ID is required'),
+    query('daysAhead')
+      .optional()
+      .isInt({ min: 1, max: 365 })
+      .withMessage('Days ahead must be between 1 and 365')
+  ],
+  ownerProductController.getQuantityTimeline
+);
+
 registerRoute('/owner-products', router);
 module.exports = router;

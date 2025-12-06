@@ -5,6 +5,7 @@ const Category = require('../models/Category');
 const slugify = require('slugify');
 const ImageValidationService = require('./ai/imageValidation.service');
 const CloudinaryService = require('./cloudinary/cloudinary.service');
+const ProductQuantityValidationService = require('./productQuantityValidation.service');
 
 const ownerProductService = {
   /**
@@ -247,6 +248,40 @@ const ownerProductService = {
 
       if (!product) {
         throw new Error('Product not found or access denied');
+      }
+
+      // CRITICAL: Validate quantity changes before allowing update
+      if (
+        updateData.availability &&
+        updateData.availability.quantity !== undefined &&
+        updateData.availability.quantity !== product.availability.quantity
+      ) {
+        const newQuantity = parseInt(updateData.availability.quantity);
+
+        if (isNaN(newQuantity) || newQuantity < 0) {
+          throw new Error('Invalid quantity value');
+        }
+
+        // Validate if reducing quantity
+        if (newQuantity < product.availability.quantity) {
+          const validation = await ProductQuantityValidationService.validateQuantityChange(
+            productId,
+            newQuantity
+          );
+
+          if (!validation.canChange) {
+            const error = new Error(validation.message);
+            error.validationDetails = {
+              canChange: false,
+              currentQuantity: validation.currentQuantity,
+              requestedQuantity: newQuantity,
+              conflicts: validation.conflicts,
+              affectedOrders: validation.affectedOrders,
+              recommendation: validation.recommendation
+            };
+            throw error;
+          }
+        }
       }
 
       if (updateData.category && updateData.category !== product.category.toString()) {
@@ -771,6 +806,37 @@ const ownerProductService = {
 
       if (updateData.description) {
         safeFields.description = updateData.description;
+      }
+
+      // Handle quantity update (with validation already done in updateOwnerProduct)
+      if (updateData.availability && updateData.availability.quantity !== undefined) {
+        const newQuantity = parseInt(updateData.availability.quantity);
+
+        if (!isNaN(newQuantity) && newQuantity >= 0) {
+          // Validate quantity change
+          if (newQuantity !== product.availability.quantity) {
+            const validation = await ProductQuantityValidationService.validateQuantityChange(
+              productId,
+              newQuantity
+            );
+
+            if (!validation.canChange) {
+              const error = new Error(validation.message);
+              error.validationDetails = {
+                canChange: false,
+                currentQuantity: validation.currentQuantity,
+                requestedQuantity: newQuantity,
+                conflicts: validation.conflicts,
+                affectedOrders: validation.affectedOrders,
+                recommendation: validation.recommendation
+              };
+              throw error;
+            }
+          }
+
+          // Set quantity directly on the nested object
+          product.availability.quantity = newQuantity;
+        }
       }
 
       // Handle image updates with AI validation
