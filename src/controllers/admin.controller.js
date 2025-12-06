@@ -12,12 +12,32 @@ class AdminController {
     }
   }
 
+  async getRevenueStatistics(req, res) {
+    try {
+      const { period, startDate, endDate } = req.query;
+      const statistics = await adminService.getRevenueStatistics({ period, startDate, endDate });
+      return responseUtils.success(res, statistics, 'Lấy thống kê doanh thu thành công');
+    } catch (error) {
+      return responseUtils.error(res, error.message, 500);
+    }
+  }
+
+  async getProfitStatistics(req, res) {
+    try {
+      const { period, startDate, endDate } = req.query;
+      const statistics = await adminService.getProfitStatistics({ period, startDate, endDate });
+      return responseUtils.success(res, statistics, 'Lấy thống kê lợi nhuận thành công');
+    } catch (error) {
+      return responseUtils.error(res, error.message, 500);
+    }
+  }
+
   // ========== USER MANAGEMENT ==========
   async getAllUsers(req, res) {
     try {
       const { page = 1, limit = 10, search, role, status } = req.query;
       const filters = { page, limit, search, role, status };
-      
+
       const result = await adminService.getAllUsers(filters);
       return responseUtils.success(res, result, 'Lấy danh sách người dùng thành công');
     } catch (error) {
@@ -30,23 +50,23 @@ class AdminController {
     console.log('Request params:', req.params);
     console.log('Request URL:', req.originalUrl);
     console.log('Request method:', req.method);
-    
+
     try {
       const { userId } = req.params;
       console.log('Extracted userId from params:', userId);
       console.log('UserId type:', typeof userId);
       console.log('UserId length:', userId?.length);
-      
+
       const user = await adminService.getUserById(userId);
       console.log('Service returned user successfully');
-      
+
       return responseUtils.success(res, user, 'Lấy thông tin người dùng thành công');
     } catch (error) {
       console.error('=== Admin Controller ERROR ===');
       console.error('Error message:', error.message);
       console.error('Error stack:', error.stack);
       console.error('============================');
-      
+
       // Handle specific errors with appropriate status codes
       if (error.message === 'ID người dùng không hợp lệ') {
         return responseUtils.error(res, error.message, 400);
@@ -128,7 +148,11 @@ class AdminController {
       }
 
       const result = await adminService.bulkUpdateUsers(userIds, updateData, adminId);
-      return responseUtils.success(res, result, `Cập nhật ${result.modifiedCount} người dùng thành công`);
+      return responseUtils.success(
+        res,
+        result,
+        `Cập nhật ${result.modifiedCount} người dùng thành công`
+      );
     } catch (error) {
       return responseUtils.error(res, error.message, 500);
     }
@@ -169,7 +193,11 @@ class AdminController {
     try {
       const { userId } = req.params;
       const bankAccount = await adminService.getUserBankAccount(userId);
-      return responseUtils.success(res, bankAccount, 'Lấy thông tin ngân hàng của người dùng thành công');
+      return responseUtils.success(
+        res,
+        bankAccount,
+        'Lấy thông tin ngân hàng của người dùng thành công'
+      );
     } catch (error) {
       if (error.message === 'ID người dùng không hợp lệ') {
         return responseUtils.error(res, error.message, 400);
@@ -183,31 +211,31 @@ class AdminController {
   // ========== PRODUCT MANAGEMENT ==========
   async getAllProducts(req, res) {
     try {
-      const { 
-        page = 1, 
-        limit = 10, 
-        status, 
-        search, 
-        category, 
-        sortBy = 'createdAt', 
-        sortOrder = 'desc' 
+      const {
+        page = 1,
+        limit = 10,
+        status,
+        search,
+        category,
+        sortBy = 'createdAt',
+        sortOrder = 'desc'
       } = req.query;
-      
-      const filters = { 
-        page, 
-        limit, 
-        status, 
-        search, 
-        category, 
-        sortBy, 
-        sortOrder 
+
+      const filters = {
+        page,
+        limit,
+        status,
+        search,
+        category,
+        sortBy,
+        sortOrder
       };
-      
+
       console.log('Admin getAllProducts - filters:', filters);
-      
+
       const result = await adminService.getAllProducts(filters);
       console.log('Admin getAllProducts - result pagination:', result.pagination);
-      
+
       return responseUtils.success(res, result, 'Lấy danh sách sản phẩm thành công');
     } catch (error) {
       console.error('Admin getAllProducts - error:', error);
@@ -220,24 +248,24 @@ class AdminController {
     console.log('Request params:', req.params);
     console.log('Request URL:', req.originalUrl);
     console.log('Request method:', req.method);
-    
+
     try {
       const { productId } = req.params;
       console.log('Extracted productId from params:', productId);
       console.log('ProductId type:', typeof productId);
       console.log('ProductId length:', productId?.length);
-      
+
       const product = await adminService.getProductById(productId);
       console.log('Service returned product successfully');
       console.log('Product title:', product?.title);
-      
+
       return responseUtils.success(res, product, 'Lấy thông tin sản phẩm thành công');
     } catch (error) {
       console.error('=== Admin Controller getProductById ERROR ===');
       console.error('Error message:', error.message);
       console.error('Error stack:', error.stack);
       console.error('===========================================');
-      
+
       // Handle specific errors with appropriate status codes
       if (error.message === 'ID sản phẩm không hợp lệ') {
         return responseUtils.error(res, error.message, 400);
@@ -253,23 +281,23 @@ class AdminController {
     console.log('=== Admin Controller updateProductStatus ===');
     console.log('Request params:', req.params);
     console.log('Request body:', req.body);
-    
+
     try {
       const { productId } = req.params;
       const { status } = req.body;
       const adminId = req.user.id;
-      
+
       console.log('Updating product status:', { productId, status, adminId });
-      
+
       const product = await adminService.updateProductStatus(productId, status, adminId);
       console.log('Product status updated successfully');
-      
+
       return responseUtils.success(res, product, `Cập nhật trạng thái sản phẩm thành công`);
     } catch (error) {
       console.error('=== Admin Controller updateProductStatus ERROR ===');
       console.error('Error message:', error.message);
       console.error('===============================================');
-      
+
       if (error.message === 'ID sản phẩm không hợp lệ') {
         return responseUtils.error(res, error.message, 400);
       } else if (error.message === 'Không tìm thấy sản phẩm') {
@@ -307,14 +335,12 @@ class AdminController {
   //   }
   // }
 
- 
-
   // ========== ORDER MANAGEMENT ==========
   async getAllOrders(req, res) {
     try {
       const { page = 1, limit = 10, status, search } = req.query;
       const filters = { page, limit, status, search };
-      
+
       const result = await adminService.getAllOrders(filters);
       return responseUtils.success(res, result, 'Lấy danh sách đơn hàng thành công');
     } catch (error) {
@@ -417,8 +443,6 @@ class AdminController {
   //   }
   // }
 
-
-
   // ========== SYSTEM SETTINGS ==========
   async getSystemSettings(req, res) {
     try {
@@ -446,7 +470,7 @@ class AdminController {
     try {
       const { page = 1, limit = 10, search, reportType, status } = req.query;
       const filters = { page, limit, search, reportType, status };
-      
+
       const result = await adminService.getAllReports(filters);
       return responseUtils.success(res, result, 'Lấy danh sách báo cáo thành công');
     } catch (error) {
@@ -458,11 +482,11 @@ class AdminController {
     try {
       const { reportId } = req.params;
       const report = await adminService.getReportById(reportId);
-      
+
       if (!report) {
         return responseUtils.error(res, 'Không tìm thấy báo cáo', 404);
       }
-      
+
       return responseUtils.success(res, report, 'Lấy chi tiết báo cáo thành công');
     } catch (error) {
       return responseUtils.error(res, error.message, 500);
@@ -473,7 +497,7 @@ class AdminController {
     try {
       const { reportId } = req.params;
       const { status, adminNotes } = req.body;
-      
+
       const updatedReport = await adminService.updateReportStatus(reportId, status, adminNotes);
       return responseUtils.success(res, updatedReport, 'Cập nhật trạng thái báo cáo thành công');
     } catch (error) {
@@ -485,28 +509,36 @@ class AdminController {
     console.log('=== Admin Controller suspendReportedProduct ===');
     console.log('Request params:', req.params);
     console.log('Request body:', req.body);
-    
+
     try {
       const { reportId } = req.params;
       const { productId } = req.body;
       const adminId = req.user.id;
-      
+
       console.log('Suspending reported product:', { reportId, productId, adminId });
-      
+
       // Suspend the product
-      await adminService.suspendProduct(productId, adminId, 'Sản phẩm bị đình chỉ do vi phạm quy định');
-      
+      await adminService.suspendProduct(
+        productId,
+        adminId,
+        'Sản phẩm bị đình chỉ do vi phạm quy định'
+      );
+
       // Update report status to RESOLVED
-      await adminService.updateReportStatus(reportId, 'RESOLVED', 'Sản phẩm đã bị đình chỉ bởi admin');
-      
+      await adminService.updateReportStatus(
+        reportId,
+        'RESOLVED',
+        'Sản phẩm đã bị đình chỉ bởi admin'
+      );
+
       console.log('Product suspended and report updated successfully');
-      
+
       return responseUtils.success(res, null, 'Đình chỉ sản phẩm bị báo cáo thành công');
     } catch (error) {
       console.error('=== Admin Controller suspendReportedProduct ERROR ===');
       console.error('Error message:', error.message);
       console.error('=========================================');
-      
+
       if (error.message === 'ID sản phẩm không hợp lệ') {
         return responseUtils.error(res, error.message, 400);
       } else if (error.message === 'Không tìm thấy sản phẩm') {
@@ -522,7 +554,7 @@ class AdminController {
     try {
       const { page = 1, limit = 10, search, status, bankCode } = req.query;
       const filters = { page, limit, search, status, bankCode };
-      
+
       const result = await adminService.getAllBankAccounts(filters);
       return responseUtils.success(res, result, 'Lấy danh sách tài khoản ngân hàng thành công');
     } catch (error) {
@@ -534,11 +566,11 @@ class AdminController {
     try {
       const { userId } = req.params;
       const bankAccount = await adminService.getBankAccountById(userId);
-      
+
       if (!bankAccount) {
         return responseUtils.error(res, 'Không tìm thấy tài khoản ngân hàng', 404);
       }
-      
+
       return responseUtils.success(res, bankAccount, 'Lấy chi tiết tài khoản ngân hàng thành công');
     } catch (error) {
       return responseUtils.error(res, error.message, 500);
@@ -549,9 +581,9 @@ class AdminController {
     try {
       const { userId } = req.params;
       const { adminNote } = req.body;
-      
+
       console.log('Verifying bank account:', { userId, adminNote });
-      
+
       const updatedUser = await adminService.verifyBankAccount(userId, adminNote);
       return responseUtils.success(res, updatedUser, 'Xác minh tài khoản ngân hàng thành công');
     } catch (error) {
@@ -564,13 +596,17 @@ class AdminController {
     try {
       const { userId } = req.params;
       const { rejectionReason } = req.body;
-      
+
       if (!rejectionReason) {
         return responseUtils.error(res, 'Vui lòng nhập lý do từ chối', 400);
       }
-      
+
       const updatedUser = await adminService.rejectBankAccount(userId, rejectionReason);
-      return responseUtils.success(res, updatedUser, 'Từ chối xác minh tài khoản ngân hàng thành công');
+      return responseUtils.success(
+        res,
+        updatedUser,
+        'Từ chối xác minh tài khoản ngân hàng thành công'
+      );
     } catch (error) {
       return responseUtils.error(res, error.message, 500);
     }
@@ -580,13 +616,17 @@ class AdminController {
     try {
       const { userId } = req.params;
       const { status, note } = req.body;
-      
+
       if (!status) {
         return responseUtils.error(res, 'Vui lòng nhập trạng thái', 400);
       }
-      
+
       const updatedUser = await adminService.updateBankAccountStatus(userId, status, note);
-      return responseUtils.success(res, updatedUser, 'Cập nhật trạng thái tài khoản ngân hàng thành công');
+      return responseUtils.success(
+        res,
+        updatedUser,
+        'Cập nhật trạng thái tài khoản ngân hàng thành công'
+      );
     } catch (error) {
       return responseUtils.error(res, error.message, 500);
     }
@@ -595,34 +635,34 @@ class AdminController {
   // ========== TRANSACTION MANAGEMENT ==========
   async getAllTransactions(req, res) {
     try {
-      const { 
-        page = 1, 
-        limit = 10, 
-        search, 
-        type, 
-        status, 
-        startDate, 
+      const {
+        page = 1,
+        limit = 10,
+        search,
+        type,
+        status,
+        startDate,
         endDate,
         minAmount,
         maxAmount,
         sortBy = 'createdAt',
         sortOrder = 'desc'
       } = req.query;
-      
-      const filters = { 
-        page, 
-        limit, 
-        search, 
-        type, 
-        status, 
-        startDate, 
+
+      const filters = {
+        page,
+        limit,
+        search,
+        type,
+        status,
+        startDate,
         endDate,
         minAmount,
         maxAmount,
         sortBy,
         sortOrder
       };
-      
+
       const result = await adminService.getAllTransactions(filters);
       return responseUtils.success(res, result, 'Lấy danh sách giao dịch thành công');
     } catch (error) {
@@ -634,11 +674,11 @@ class AdminController {
     try {
       const { transactionId } = req.params;
       const transaction = await adminService.getTransactionById(transactionId);
-      
+
       if (!transaction) {
         return responseUtils.error(res, 'Không tìm thấy giao dịch', 404);
       }
-      
+
       return responseUtils.success(res, transaction, 'Lấy thông tin giao dịch thành công');
     } catch (error) {
       return responseUtils.error(res, error.message, 500);
@@ -657,25 +697,22 @@ class AdminController {
 
   async exportTransactions(req, res) {
     try {
-      const { 
-        type, 
-        status, 
-        startDate, 
-        endDate,
-        format = 'csv'
-      } = req.query;
-      
+      const { type, status, startDate, endDate, format = 'csv' } = req.query;
+
       const filters = { type, status, startDate, endDate };
       const exportData = await adminService.exportTransactions(filters, format);
-      
+
       if (format === 'csv') {
         res.setHeader('Content-Type', 'text/csv');
         res.setHeader('Content-Disposition', 'attachment; filename=transactions.csv');
       } else {
-        res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+        res.setHeader(
+          'Content-Type',
+          'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        );
         res.setHeader('Content-Disposition', 'attachment; filename=transactions.xlsx');
       }
-      
+
       return res.send(exportData);
     } catch (error) {
       return responseUtils.error(res, error.message, 500);
@@ -683,7 +720,7 @@ class AdminController {
   }
 
   // ========== WITHDRAWAL FINANCIAL ANALYSIS ==========
-  
+
   /**
    * Get detailed financial analysis for a withdrawal request
    * GET /api/admin/withdrawals/:withdrawalId/financial-analysis
@@ -691,11 +728,11 @@ class AdminController {
   async getWithdrawalFinancialAnalysis(req, res) {
     try {
       const { withdrawalId } = req.params;
-      
+
       if (!withdrawalId) {
         return responseUtils.error(res, 'Withdrawal ID is required', 400);
       }
-      
+
       const analysis = await adminService.getWithdrawalFinancialAnalysis(withdrawalId);
       return responseUtils.success(res, analysis, 'Financial analysis retrieved successfully');
     } catch (error) {
@@ -713,14 +750,14 @@ class AdminController {
   async getUserFinancialProfile(req, res) {
     try {
       const { userId } = req.params;
-      
+
       if (!userId) {
         return responseUtils.error(res, 'User ID is required', 400);
       }
 
       // Get user basic info
       const user = await adminService.getUserById(userId);
-      
+
       // Get comprehensive financial data
       const walletAnalysis = await adminService.getUserWalletAnalysis(userId);
       const transactionAnalysis = await adminService.getUserTransactionAnalysis(userId);
@@ -740,7 +777,11 @@ class AdminController {
         generatedAt: new Date()
       };
 
-      return responseUtils.success(res, financialProfile, 'User financial profile retrieved successfully');
+      return responseUtils.success(
+        res,
+        financialProfile,
+        'User financial profile retrieved successfully'
+      );
     } catch (error) {
       if (error.message.includes('not found')) {
         return responseUtils.error(res, error.message, 404);
@@ -804,8 +845,8 @@ class AdminController {
       );
 
       // Filter by risk level if specified
-      const filteredWithdrawals = riskLevel 
-        ? enhancedWithdrawals.filter(w => w.riskAssessment.level === riskLevel.toUpperCase())
+      const filteredWithdrawals = riskLevel
+        ? enhancedWithdrawals.filter((w) => w.riskAssessment.level === riskLevel.toUpperCase())
         : enhancedWithdrawals;
 
       // Sort if needed
@@ -822,21 +863,26 @@ class AdminController {
         summary: {
           total: filteredWithdrawals.length,
           byRisk: {
-            low: filteredWithdrawals.filter(w => w.riskAssessment.level === 'LOW').length,
-            medium: filteredWithdrawals.filter(w => w.riskAssessment.level === 'MEDIUM').length,
-            high: filteredWithdrawals.filter(w => w.riskAssessment.level === 'HIGH').length,
-            veryHigh: filteredWithdrawals.filter(w => w.riskAssessment.level === 'VERY_HIGH').length
+            low: filteredWithdrawals.filter((w) => w.riskAssessment.level === 'LOW').length,
+            medium: filteredWithdrawals.filter((w) => w.riskAssessment.level === 'MEDIUM').length,
+            high: filteredWithdrawals.filter((w) => w.riskAssessment.level === 'HIGH').length,
+            veryHigh: filteredWithdrawals.filter((w) => w.riskAssessment.level === 'VERY_HIGH')
+              .length
           },
           byStatus: {
-            pending: filteredWithdrawals.filter(w => w.status === 'pending').length,
-            processing: filteredWithdrawals.filter(w => w.status === 'processing').length,
-            completed: filteredWithdrawals.filter(w => w.status === 'completed').length,
-            rejected: filteredWithdrawals.filter(w => w.status === 'rejected').length
+            pending: filteredWithdrawals.filter((w) => w.status === 'pending').length,
+            processing: filteredWithdrawals.filter((w) => w.status === 'processing').length,
+            completed: filteredWithdrawals.filter((w) => w.status === 'completed').length,
+            rejected: filteredWithdrawals.filter((w) => w.status === 'rejected').length
           }
         }
       };
 
-      return responseUtils.success(res, result, 'Enhanced withdrawal requests retrieved successfully');
+      return responseUtils.success(
+        res,
+        result,
+        'Enhanced withdrawal requests retrieved successfully'
+      );
     } catch (error) {
       return responseUtils.error(res, error.message, 500);
     }
