@@ -88,6 +88,13 @@ const disputeSchema = new mongoose.Schema(
       maxlength: 2000
     },
 
+    // Chi phí sửa chữa/bồi thường (cho DAMAGED_ON_RETURN)
+    repairCost: {
+      type: Number,
+      default: 0,
+      min: 0
+    },
+
     // Evidence
     evidence: {
       photos: [String],
@@ -149,6 +156,12 @@ const disputeSchema = new mongoose.Schema(
       decidedBy: {
         type: mongoose.Schema.Types.ObjectId,
         ref: 'User'
+      },
+      // Ai đúng ai sai - dùng để xử lý tiền
+      whoIsRight: {
+        type: String,
+        enum: ['COMPLAINANT_RIGHT', 'RESPONDENT_RIGHT', null],
+        default: null
       },
       // Evidence từ shipper
       shipperEvidence: {
@@ -266,7 +279,7 @@ const disputeSchema = new mongoose.Schema(
       resolutionText: String,
       resolutionSource: {
         type: String,
-        enum: ['RESPONDENT_ACCEPTED', 'ADMIN_DECISION', 'NEGOTIATION', 'THIRD_PARTY']
+        enum: ['RESPONDENT_ACCEPTED', 'ADMIN_DECISION', 'NEGOTIATION', 'THIRD_PARTY', 'ADMIN_PROCESSED_PAYMENT']
       },
       // Financial Impact
       financialImpact: {

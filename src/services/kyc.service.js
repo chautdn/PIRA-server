@@ -67,13 +67,19 @@ const decryptCCCDNumber = (encryptedCCCD) => {
   }
 };
 
-// Kiểm tra CCCD đã tồn tại chưa
+// Tạo CCCD ID từ số CCCD (dùng để track verification)
+const generateCCCDId = (cccdNumber) => {
+  const crypto = require('crypto');
+  return crypto.createHash('sha256').update(cccdNumber).digest('hex');
+};
+
+// Kiểm tra CCCD đã được xác thực bởi user khác chưa
 const checkCCCDExists = async (cccdNumber, excludeUserId = null) => {
   try {
-    const encryptedCCCD = encryptCCCDNumber(cccdNumber);
+    const cccdId = generateCCCDId(cccdNumber);
 
     const query = {
-      'cccd.cccdNumber': encryptedCCCD,
+      'cccd.id': cccdId,
       'cccd.isVerified': true
     };
 
@@ -82,7 +88,13 @@ const checkCCCDExists = async (cccdNumber, excludeUserId = null) => {
     }
 
     const existingUser = await User.findOne(query);
-    return !!existingUser;
+
+    if (existingUser) {
+      console.log(`⚠️ CCCD ID ${cccdId} đã được xác thực bởi user ${existingUser.email}`);
+      return true;
+    }
+
+    return false;
   } catch (error) {
     console.error('Error checking CCCD exists:', error);
     return false;
@@ -230,6 +242,54 @@ const extractCCCDInfo = async (imageBuffer) => {
   }
 };
 
+// Hàm chuẩn hóa địa chỉ từ IN HOA sang Title Case
+const normalizeAddress = (address) => {
+  if (!address || typeof address !== 'string') {
+    return address;
+  }
+
+  // Danh sách các từ đặc biệt cần viết hoa đúng cách
+  const specialWords = {
+    THÔN: 'Thôn',
+    XÃ: 'Xã',
+    PHƯỜNG: 'Phường',
+    'THỊ TRẤN': 'Thị Trấn',
+    QUẬN: 'Quận',
+    HUYỆN: 'Huyện',
+    'THÀNH PHỐ': 'Thành Phố',
+    TỈNH: 'Tỉnh',
+    TP: 'TP',
+    TT: 'TT'
+  };
+
+  return address
+    .split(',')
+    .map((part) => {
+      const trimmed = part.trim();
+      // Tìm từ đặc biệt trong danh sách
+      for (const [upper, proper] of Object.entries(specialWords)) {
+        if (trimmed.toUpperCase().startsWith(upper)) {
+          const rest = trimmed.substring(upper.length).trim();
+          if (rest) {
+            // Capitalize từng từ trong phần còn lại
+            const normalizedRest = rest
+              .split(' ')
+              .map((word) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+              .join(' ');
+            return `${proper} ${normalizedRest}`;
+          }
+          return proper;
+        }
+      }
+      // Nếu không có từ đặc biệt, capitalize từng từ
+      return trimmed
+        .split(' ')
+        .map((word) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+        .join(' ');
+    })
+    .join(', ');
+};
+
 // Chuẩn hóa dữ liệu OCR
 const normalizeCCCDData = (ocrData) => {
   const normalized = { ...ocrData };
@@ -280,19 +340,25 @@ const normalizeCCCDData = (ocrData) => {
       .join(' ');
   }
 
+  // Chuẩn hóa địa chỉ
+  if (normalized.address) {
+    normalized.address = normalizeAddress(normalized.address);
+  }
+
   // Chuẩn hóa giới tính
   if (normalized.gender) {
+    const genderUpper = normalized.gender.toUpperCase();
     const genderMap = {
-      Nam: 'MALE',
-      Male: 'MALE',
-      nam: 'MALE',
-      Nữ: 'FEMALE',
-      Female: 'FEMALE',
-      nữ: 'FEMALE',
-      Khác: 'OTHER',
-      Other: 'OTHER'
+      NAM: 'MALE',
+      MALE: 'MALE',
+      NỮ: 'FEMALE',
+      NU: 'FEMALE',
+      FEMALE: 'FEMALE',
+      KHÁC: 'OTHER',
+      KHAC: 'OTHER',
+      OTHER: 'OTHER'
     };
-    normalized.gender = genderMap[normalized.gender] || normalized.gender;
+    normalized.gender = genderMap[genderUpper] || 'OTHER';
   }
 
   return normalized;
@@ -381,7 +447,10 @@ const uploadCCCD = async (userId, files) => {
     }
 
     // **LƯU THÔNG TIN VÀO CÁC FIELD CHÍNH CỦA CCCD**
-    const cccdData = user.cccd || {};
+    // Reset CCCD data khi upload ảnh mới để tránh giữ lại data cũ
+    const cccdData = {
+      uploadedAt: new Date()
+    };
 
     // Lưu ảnh
     if (frontImageUrl) {
@@ -395,7 +464,11 @@ const uploadCCCD = async (userId, files) => {
     if (extractedInfo) {
       // Lưu thông tin trực tiếp vào các field chính
       if (extractedInfo.cccdNumber && validateNationalIdFormat(extractedInfo.cccdNumber)) {
+        // Tạo CCCD ID để track verification
+        cccdData.id = generateCCCDId(extractedInfo.cccdNumber);
         cccdData.cccdNumber = encryptCCCDNumber(extractedInfo.cccdNumber);
+
+        console.log(`📝 Generated CCCD ID: ${cccdData.id} for verification tracking`);
       }
       if (extractedInfo.fullName) {
         cccdData.fullName = extractedInfo.fullName;
@@ -422,10 +495,22 @@ const uploadCCCD = async (userId, files) => {
       cccdData.verifiedAt = new Date();
       cccdData.verificationSource = 'FPT.AI Auto-verification';
 
-      console.log('✅ Đã lưu thông tin OCR vào CCCD fields');
-    }
+      // Cập nhật profile.gender nếu có gender từ OCR
+      if (extractedInfo.gender) {
+        if (!user.profile) {
+          user.profile = {};
+        }
+        user.profile.gender = extractedInfo.gender;
+      }
 
-    cccdData.uploadedAt = new Date();
+      console.log('✅ Đã lưu thông tin OCR vào CCCD fields và profile');
+    } else {
+      // Nếu không có OCR data, đánh dấu là chưa xác thực
+      cccdData.isVerified = false;
+      cccdData.verifiedAt = null;
+      cccdData.verificationSource = null;
+      console.log('⚠️ Không có thông tin OCR, CCCD chưa được xác thực');
+    }
 
     user.cccd = cccdData;
     await user.save();
@@ -502,15 +587,28 @@ const updateCCCDInfo = async (userId, cccdInfo) => {
       throw new ValidationError('Số CCCD này đã được sử dụng bởi tài khoản khác');
     }
 
+    // Chuẩn hóa address và gender trước khi lưu
+    const normalizedAddress = address ? normalizeAddress(address) : user.cccd.address;
+    const normalizedGender = gender || user.cccd.gender;
+
     // Cập nhật thông tin CCCD - CHỈ CÁC FIELD CÓ TRONG MODEL
+    user.cccd.id = generateCCCDId(cccdNumber); // Tạo CCCD ID
     user.cccd.cccdNumber = encryptCCCDNumber(cccdNumber); // Mã hóa CCCD
     user.cccd.fullName = fullName;
     user.cccd.dateOfBirth = new Date(dateOfBirth);
-    user.cccd.address = address || user.cccd.address;
-    user.cccd.gender = gender || user.cccd.gender;
+    user.cccd.address = normalizedAddress;
+    user.cccd.gender = normalizedGender;
     user.cccd.isVerified = true;
     user.cccd.verifiedAt = new Date();
     user.cccd.verificationSource = 'Manual Update';
+
+    // Cập nhật profile.gender nếu có gender từ CCCD
+    if (normalizedGender) {
+      if (!user.profile) {
+        user.profile = {};
+      }
+      user.profile.gender = normalizedGender;
+    }
 
     await user.save();
 
@@ -571,12 +669,31 @@ const getUserCCCD = async (userId) => {
       ? decryptCCCDNumber(user.cccd.cccdNumber)
       : null;
 
+    // Chuẩn hóa address và gender trước khi trả về
+    const normalizedAddress = user.cccd.address ? normalizeAddress(user.cccd.address) : null;
+
+    let normalizedGender = user.cccd.gender;
+    if (normalizedGender) {
+      const genderUpper = normalizedGender.toUpperCase();
+      const genderMap = {
+        NAM: 'MALE',
+        MALE: 'MALE',
+        NỮ: 'FEMALE',
+        NU: 'FEMALE',
+        FEMALE: 'FEMALE',
+        KHÁC: 'OTHER',
+        KHAC: 'OTHER',
+        OTHER: 'OTHER'
+      };
+      normalizedGender = genderMap[genderUpper] || normalizedGender;
+    }
+
     return {
       cccdNumber: decryptedCCCDNumber, // Trả về plain text
       fullName: user.cccd.fullName,
       dateOfBirth: user.cccd.dateOfBirth,
-      address: user.cccd.address,
-      gender: user.cccd.gender,
+      address: normalizedAddress,
+      gender: normalizedGender,
       isVerified: user.cccd.isVerified,
       uploadedAt: user.cccd.uploadedAt,
       verifiedAt: user.cccd.verifiedAt,
@@ -671,6 +788,7 @@ module.exports = {
   validateNationalIdFormat,
   validateDateOfBirth,
   checkCCCDExists,
+  generateCCCDId,
   encryptCCCDNumber,
   decryptCCCDNumber
 };

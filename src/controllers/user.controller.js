@@ -8,6 +8,7 @@ const {
   updateProfile,
   updateProfileByKyc,
   changePassword,
+  verifyPassword,
   createReport,
   getUserReports,
   getReportById,
@@ -15,13 +16,27 @@ const {
   updateBankAccount,
   removeBankAccount,
   getBankAccount,
-  VIETNAMESE_BANKS
+  VIETNAMESE_BANKS,
+  uploadAvatar
 } = require('../services/user.service');
 
 exports.getUsers = async (req, res) => {
   const users = await getAllUsers();
 
   return SuccessResponse.ok(res, users, 'Users retrieved successfully');
+};
+exports.uploadAvatar = async (req, res) => {
+  try {
+    if (!req.file) {
+      return responseUtils.error(res, 'Vui lòng chọn ảnh avatar', 400);
+    }
+
+    const avatarUrl = await uploadAvatar(req.user.id, req.file.buffer);
+    return SuccessResponse.ok(res, { avatarUrl }, 'Upload avatar thành công');
+  } catch (error) {
+    console.error('Upload avatar error:', error);
+    return responseUtils.error(res, error.message, 400);
+  }
 };
 
 exports.createUser = async (req, res) => {
@@ -55,15 +70,15 @@ exports.updateProfileByKyc = async (req, res) => {
 exports.changePassword = async (req, res) => {
   try {
     const { currentPassword, newPassword } = req.body;
-    
+
     if (!currentPassword || !newPassword) {
       return responseUtils.error(res, 'Mật khẩu hiện tại và mật khẩu mới là bắt buộc', 400);
     }
-    
+
     if (newPassword.length < 6) {
       return responseUtils.error(res, 'Mật khẩu mới phải có ít nhất 6 ký tự', 400);
     }
-    
+
     const result = await changePassword(req.user.id, currentPassword, newPassword);
     return SuccessResponse.ok(res, null, 'Đổi mật khẩu thành công');
   } catch (error) {
@@ -71,6 +86,23 @@ exports.changePassword = async (req, res) => {
     return responseUtils.error(res, error.message, 400);
   }
 };
+
+exports.verifyPassword = async (req, res) => {
+  try {
+    const { password } = req.body;
+
+    if (!password) {
+      return responseUtils.error(res, 'Mật khẩu là bắt buộc', 400);
+    }
+
+    const result = await verifyPassword(req.user.id, password);
+    return SuccessResponse.ok(res, result, 'Xác thực mật khẩu thành công');
+  } catch (error) {
+    console.error('Verify password error:', error);
+    return responseUtils.error(res, error.message, 400);
+  }
+};
+
 // ========== REPORT MANAGEMENT ==========
 exports.createReport = async (req, res) => {
   try {
@@ -80,10 +112,14 @@ exports.createReport = async (req, res) => {
 
     const report = await createReport(req.body, req.user.id);
     return responseUtils.success(res, report, 'Gửi báo cáo thành công');
-  } catch (error) {   
+  } catch (error) {
     console.error('Create report error:', error);
-    
-    if (error.name === 'ValidationError' || error.message.includes('bắt buộc') || error.message.includes('không hợp lệ')) {
+
+    if (
+      error.name === 'ValidationError' ||
+      error.message.includes('bắt buộc') ||
+      error.message.includes('không hợp lệ')
+    ) {
       return responseUtils.error(res, error.message, 400);
     } else if (error.name === 'NotFoundError' || error.message.includes('không tồn tại')) {
       return responseUtils.error(res, error.message, 404);
@@ -120,7 +156,7 @@ exports.getReportById = async (req, res) => {
     return responseUtils.success(res, report, 'Lấy chi tiết báo cáo thành công');
   } catch (error) {
     console.error('Get report by ID error:', error);
-    
+
     if (error.name === 'NotFoundError' || error.message.includes('không tồn tại')) {
       return responseUtils.error(res, error.message, 404);
     } else {

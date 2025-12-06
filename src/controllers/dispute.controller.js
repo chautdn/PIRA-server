@@ -19,7 +19,8 @@ class DisputeController {
         type,
         title,
         description,
-        evidence
+        evidence,
+        repairCost
       } = req.body;
 
       const complainantId = req.user._id;
@@ -34,7 +35,8 @@ class DisputeController {
         type,
         title,
         description,
-        evidence
+        evidence,
+        repairCost
       });
 
       return responseUtils.success(res, {
@@ -214,6 +216,32 @@ class DisputeController {
   }
 
   /**
+   * Owner đưa ra quyết định cuối cùng (Owner tạo dispute RETURN)
+   * POST /api/disputes/:disputeId/negotiation/owner-dispute-decision
+   */
+  async submitOwnerDisputeFinalDecision(req, res) {
+    try {
+      const { disputeId } = req.params;
+      const { decision } = req.body;
+      const ownerId = req.user._id;
+
+      if (!decision || !decision.trim()) {
+        return responseUtils.error(res, 'Vui lòng nhập quyết định cuối cùng', 400);
+      }
+
+      const dispute = await negotiationService.submitOwnerDisputeFinalDecision(disputeId, ownerId, decision.trim());
+
+      return responseUtils.success(res, {
+        dispute,
+        message: 'Đã đưa ra quyết định cuối cùng, chờ renter phản hồi'
+      });
+    } catch (error) {
+      console.error('Submit owner dispute final decision error:', error);
+      return responseUtils.error(res, error.message, 400);
+    }
+  }
+
+  /**
    * Renter phản hồi quyết định của owner
    * POST /api/disputes/:disputeId/negotiation/respond-owner-decision
    */
@@ -358,6 +386,81 @@ class DisputeController {
       return responseUtils.error(res, error.message, 400);
     }
   }
+
+  /**
+   * Admin xử lý thanh toán từ ví + tiền cọc
+   * POST /api/disputes/:disputeId/admin-process-payment
+   */
+  async adminProcessPayment(req, res) {
+    try {
+      const { disputeId } = req.params;
+      const adminId = req.user._id;
+      const { repairCost, depositAmount, additionalRequired } = req.body;
+
+      // Validate input
+      if (!repairCost || repairCost <= 0) {
+        return responseUtils.error(res, 'Chi phí sửa chữa không hợp lệ', 400);
+      }
+
+      if (depositAmount < 0) {
+        return responseUtils.error(res, 'Tiền cọc không hợp lệ', 400);
+      }
+
+      const dispute = await disputeService.adminProcessPayment(disputeId, adminId, {
+        repairCost,
+        depositAmount,
+        additionalRequired
+      });
+
+      return responseUtils.success(res, {
+        dispute,
+        message: 'Xử lý thanh toán thành công'
+      });
+    } catch (error) {
+      console.error('Admin process payment error:', error);
+      return responseUtils.error(res, error.message, 400);
+    }
+  }
+
+  /**
+   * Admin quyết định cuối cùng cho owner dispute từ kết quả bên thứ 3
+   * POST /api/disputes/:disputeId/admin-final-decision-owner-dispute
+   */
+  async adminFinalDecisionOwnerDispute(req, res) {
+    try {
+      const { disputeId } = req.params;
+      const adminId = req.user._id;
+      const { decision, compensationAmount, reasoning } = req.body;
+
+      // Validate
+      if (!decision || !['COMPLAINANT_RIGHT', 'RESPONDENT_RIGHT'].includes(decision)) {
+        return responseUtils.error(res, 'Quyết định không hợp lệ', 400);
+      }
+
+      if (decision === 'COMPLAINANT_RIGHT' && (!compensationAmount || compensationAmount <= 0)) {
+        return responseUtils.error(res, 'Số tiền bồi thường không hợp lệ', 400);
+      }
+
+      if (!reasoning || !reasoning.trim()) {
+        return responseUtils.error(res, 'Vui lòng nhập lý do quyết định', 400);
+      }
+
+      const dispute = await disputeService.adminFinalDecisionOwnerDispute(disputeId, adminId, {
+        decision,
+        compensationAmount: decision === 'COMPLAINANT_RIGHT' ? parseFloat(compensationAmount) : 0,
+        reasoning
+      });
+
+      return responseUtils.success(res, {
+        dispute,
+        message: 'Đã đưa ra quyết định cuối cùng'
+      });
+    } catch (error) {
+      console.error('Admin final decision owner dispute error:', error);
+      return responseUtils.error(res, error.message, 400);
+    }
+  }
+
 }
 
 module.exports = new DisputeController();

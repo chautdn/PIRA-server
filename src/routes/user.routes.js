@@ -7,6 +7,8 @@ const {
   updateProfile,
   updateProfileByKyc,
   changePassword,
+  verifyPassword,
+  uploadAvatar,
   getBankAccount,
   addBankAccount,
   updateBankAccount,
@@ -15,6 +17,7 @@ const {
 } = require('../controllers/user.controller');
 const { registerRoute } = require('./register.routes');
 const { authMiddleware } = require('../middleware/auth');
+const upload = require('../middleware/upload');
 
 router.get('/', authMiddleware.verifyToken, authMiddleware.checkUserRole('admin'), getUsers); // Lấy danh sách user
 router.post('/create', authMiddleware.checkUserRole('admin'), createUser); // Tạo user mới
@@ -22,6 +25,8 @@ router.get('/profile', authMiddleware.verifyToken, getProfile); // Lấy thông 
 router.put('/profile', authMiddleware.verifyToken, updateProfile); // Cập nhật thông tin user
 router.put('/profile-by-kyc', authMiddleware.verifyToken, updateProfileByKyc); // Cập nhật thông tin user
 router.put('/change-password', authMiddleware.verifyToken, changePassword); // Đổi mật khẩu
+router.post('/verify-password', authMiddleware.verifyToken, verifyPassword); // Xác thực mật khẩu
+router.post('/upload-avatar', authMiddleware.verifyToken, upload.single('avatar'), uploadAvatar); // Upload avatar
 
 // Bank Account routes
 router.get('/banks', getVietnameseBanks); // Get list of Vietnamese banks (public)

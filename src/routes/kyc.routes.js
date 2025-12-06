@@ -18,8 +18,8 @@ router.post(
   kycController.uploadCCCDImages
 );
 
-// Lấy ảnh CCCD
-router.get('/cccd-images', kycController.getCCCDImages);
+// Lấy ảnh CCCD - yêu cầu password (chuyển sang POST)
+router.post('/cccd-images', kycController.getCCCDImages);
 
 // Lấy thông tin CCCD
 router.get('/cccd-info', kycController.getUserCCCD);

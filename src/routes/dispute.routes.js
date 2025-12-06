@@ -70,10 +70,17 @@ router.post('/:disputeId/negotiation/respond', authenticate, disputeController.r
 
 /**
  * @route   POST /api/disputes/:disputeId/negotiation/owner-decision
- * @desc    Owner đưa ra quyết định cuối cùng
+ * @desc    Owner đưa ra quyết định cuối cùng (Renter tạo dispute DELIVERY)
  * @access  Private (Owner/Respondent)
  */
 router.post('/:disputeId/negotiation/owner-decision', authenticate, disputeController.submitOwnerFinalDecision);
+
+/**
+ * @route   POST /api/disputes/:disputeId/negotiation/owner-dispute-decision
+ * @desc    Owner đưa ra quyết định cuối cùng (Owner tạo dispute RETURN)
+ * @access  Private (Owner/Complainant)
+ */
+router.post('/:disputeId/negotiation/owner-dispute-decision', authenticate, disputeController.submitOwnerDisputeFinalDecision);
 
 /**
  * @route   POST /api/disputes/:disputeId/negotiation/respond-owner-decision
@@ -178,6 +185,13 @@ router.post('/:disputeId/admin/process-final-agreement', authenticate, requireAd
 router.post('/:disputeId/admin/third-party/final-decision', authenticate, requireAdmin, adminDisputeController.makeFinalDecision);
 
 /**
+ * @route   POST /api/disputes/:disputeId/admin/third-party/reject-evidence
+ * @desc    Admin từ chối bằng chứng bên thứ 3 (fake/không hợp lệ)
+ * @access  Private (Admin)
+ */
+router.post('/:disputeId/admin/third-party/reject-evidence', authenticate, requireAdmin, adminDisputeController.rejectThirdPartyEvidence);
+
+/**
  * @route   POST /api/disputes/:disputeId/admin/process-final-agreement
  * @desc    Admin xử lý kết quả đàm phán cuối cùng
  * @access  Private (Admin)
@@ -204,6 +218,20 @@ router.patch('/:disputeId/admin/assign', authenticate, requireAdmin, adminDisput
  * @access  Private (Admin)
  */
 router.post('/:disputeId/admin/share-shipper-info', authenticate, requireAdmin, adminDisputeController.shareShipperInfo);
+
+/**
+ * @route   POST /api/disputes/:disputeId/admin-process-payment
+ * @desc    Admin xử lý thanh toán từ ví + tiền cọc
+ * @access  Private (Admin)
+ */
+router.post('/:disputeId/admin-process-payment', authenticate, requireAdmin, disputeController.adminProcessPayment);
+
+/**
+ * @route   POST /api/disputes/:disputeId/admin-final-decision-owner-dispute
+ * @desc    Admin quyết định cuối cùng cho owner dispute dựa trên kết quả bên thứ 3
+ * @access  Private (Admin)
+ */
+router.post('/:disputeId/admin-final-decision-owner-dispute', authenticate, requireAdmin, disputeController.adminFinalDecisionOwnerDispute);
 
 // ========== THIRD PARTY ROUTES ==========
 
