@@ -22,9 +22,9 @@ class OTPController {
 
       // Find contract
       const contract = await Contract.findById(contractId)
-        .populate('renter', 'fullName email')
-        .populate('owner', 'fullName email')
-        .populate('masterOrder', 'masterOrderNumber');
+        .populate('renter', 'firstName lastName email')
+        .populate('owner', 'firstName lastName email')
+        .populate('subOrder', 'subOrderNumber');
 
       if (!contract) {
         throw new NotFoundError('Không tìm thấy hợp đồng');
@@ -42,7 +42,7 @@ class OTPController {
 
       if (contract.owner._id.toString() === userId.toString()) {
         userRole = 'owner';
-        userName = contract.owner.fullName;
+        userName = `${contract.owner.firstName} ${contract.owner.lastName}`.trim();
         userEmail = contract.owner.email;
 
         // Check if owner has already signed
@@ -82,7 +82,11 @@ class OTPController {
       }).send(res);
     } catch (error) {
       console.error('❌ Error sending contract signing OTP:', error);
-      throw error;
+      // Return error response instead of throwing
+      return res.status(error.statusCode || 500).json({
+        status: error.status || 'error',
+        message: error.message
+      });
     }
   }
 
@@ -127,7 +131,11 @@ class OTPController {
       }).send(res);
     } catch (error) {
       console.error('❌ Error verifying contract signing OTP:', error);
-      throw error;
+      // Return error response instead of throwing
+      return res.status(error.statusCode || 400).json({
+        status: error.status || 'fail',
+        message: error.message
+      });
     }
   }
 
@@ -148,7 +156,11 @@ class OTPController {
       }).send(res);
     } catch (error) {
       console.error('❌ Error getting OTP status:', error);
-      throw error;
+      // Return error response instead of throwing
+      return res.status(error.statusCode || 500).json({
+        status: error.status || 'error',
+        message: error.message
+      });
     }
   }
 }

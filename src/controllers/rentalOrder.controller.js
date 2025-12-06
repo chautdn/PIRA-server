@@ -103,7 +103,9 @@ class RentalOrderController {
         depositPaymentMethod,
         depositTransactionId,
         // Selected items from frontend
-        selectedItems
+        selectedItems,
+        // Shipping data calculated from frontend
+        shippingData
       } = req.body;
 
       console.log('📥 POST /api/rental-orders/create-paid');
@@ -123,7 +125,9 @@ class RentalOrderController {
         depositPaymentMethod,
         depositTransactionId,
         // Pass selected items to service
-        selectedItems
+        selectedItems,
+        // Pass shipping data to service
+        shippingData
       });
 
       if (!masterOrder) {
