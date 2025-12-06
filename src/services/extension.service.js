@@ -8,15 +8,12 @@ const Wallet = require('../models/Wallet');
 const Transaction = require('../models/Transaction');
 const { PayOS } = require('@payos/node');
 
-
 class ExtensionService {
   /**
    * Renter tạo yêu cầu gia hạn thuê
    */
   async requestExtension(subOrderId, renterId, extensionData) {
     try {
-
-
       const { newEndDate, extensionReason, paymentMethod } = extensionData;
 
       // Validate newEndDate
@@ -35,11 +32,7 @@ class ExtensionService {
       const subOrder = await SubOrder.findOne({
         _id: subOrderId,
         status: 'ACTIVE'
-      }).populate([
-        { path: 'masterOrder' },
-        { path: 'owner' },
-        { path: 'products.product' }
-      ]);
+      }).populate([{ path: 'masterOrder' }, { path: 'owner' }, { path: 'products.product' }]);
 
       if (!subOrder) {
         throw new Error('Không tìm thấy SubOrder hoặc SubOrder không ở trạng thái ACTIVE');
@@ -53,7 +46,7 @@ class ExtensionService {
 
       // Tính toán giá gia hạn
       let currentEnd;
-      
+
       // Try to get end date from products or subOrder
       if (subOrder.products && subOrder.products.length > 0) {
         currentEnd = new Date(subOrder.products[0].rentalPeriod.endDate);
@@ -71,11 +64,11 @@ class ExtensionService {
 
       // Lấy giá thuê từ sản phẩm - từ SubOrder hoặc Product
       let rentalRate = 0;
-      
+
       if (subOrder.products && subOrder.products.length > 0) {
         rentalRate = subOrder.products[0].rentalRate || 0;
       }
-      
+
       // If not found in subOrder, fetch from Product
       if (rentalRate === 0) {
         const product = await Product.findById(subOrder.products[0].product);
@@ -92,15 +85,6 @@ class ExtensionService {
 
       const extensionCost = Math.round(rentalRate * extensionDays);
       const totalCost = Math.round(extensionCost); // Có thể thêm deposits sau
-
-      console.log(' Calculation:', {
-        currentEndDate: currentEnd,
-        newEndDate: newEnd,
-        extensionDays,
-        rentalRate,
-        extensionCost,
-        totalCost
-      });
 
       // Đảm bảo ownerId lấy đúng từ subOrder và luôn là ObjectId
       let ownerId = subOrder.owner?._id || subOrder.owner;
@@ -173,7 +157,6 @@ class ExtensionService {
 
       return populatedRequest;
     } catch (error) {
-
       console.error('Error details:', {
         message: error.message,
         stack: error.stack,
@@ -188,7 +171,6 @@ class ExtensionService {
    */
   async processExtensionPayment(extensionRequest, paymentMethod, amount, renterId) {
     try {
-
       switch (paymentMethod) {
         case 'WALLET':
           return await this.processWalletPayment(renterId, amount);
@@ -229,7 +211,7 @@ class ExtensionService {
       }
 
       const wallet = user.wallet;
-      
+
       // Validate wallet balance
       if (wallet.balance.available === undefined || wallet.balance.available === null) {
         throw new Error('Ví không có số dư');
@@ -244,7 +226,7 @@ class ExtensionService {
       // Deduct from wallet - ensure result is a number
       const transactionId = `EXT_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`;
       wallet.balance.available = Math.round(wallet.balance.available - amount);
-      
+
       // Add transaction log
       if (!wallet.transactions) {
         wallet.transactions = [];
@@ -256,7 +238,7 @@ class ExtensionService {
         timestamp: new Date(),
         status: 'COMPLETED'
       });
-      
+
       await wallet.save();
 
       return {
@@ -304,19 +286,13 @@ class ExtensionService {
         orderCode,
         amount: Math.round(amount),
         description: `Extension: ${extensionRequest?.extensionDays || 'N/A'} ngày`.substring(0, 25),
-        returnUrl: `${process.env.CLIENT_URL || 'http://localhost:3000'}/rental-orders?payment=success&orderCode=${orderCode}`,
-        cancelUrl: `${process.env.CLIENT_URL || 'http://localhost:3000'}/rental-orders?payment=cancel&orderCode=${orderCode}`,
+        returnUrl: `${process.env.CLIENT_URL || 'https://pira.asia'}/rental-orders?payment=success&orderCode=${orderCode}`,
+        cancelUrl: `${process.env.CLIENT_URL || 'https://pira.asia'}/rental-orders?payment=cancel&orderCode=${orderCode}`,
         buyerName: renter.profile?.fullName || renter.profile?.firstName || 'Renter',
         buyerEmail: renter.email,
         buyerPhone: renter.phone || '',
         buyerAddress: `${renter.address?.streetAddress || 'N/A'}`
       };
-
-      console.log('📤 Creating PayOS payment link for extension:', {
-        orderCode,
-        amount: Math.round(amount),
-        renter: renterId
-      });
 
       // Create payment link
       const paymentLink = await payos.paymentRequests.create(paymentRequest);
@@ -345,12 +321,6 @@ class ExtensionService {
       });
 
       await transaction.save();
-
-      console.log('✅ PayOS payment link created for extension:', {
-        transactionId: transaction._id,
-        orderCode,
-        checkoutUrl: paymentLink.checkoutUrl
-      });
 
       return {
         transactionId: transaction._id.toString(),
@@ -387,7 +357,6 @@ class ExtensionService {
    */
   async getOwnerExtensionRequests(ownerId, filters = {}) {
     try {
-
       // Luôn ép ownerId về ObjectId để đảm bảo nhất quán
       let ownerObjectId;
       if (mongoose.Types.ObjectId.isValid(ownerId)) {
@@ -457,7 +426,6 @@ class ExtensionService {
    */
   async approveExtension(requestId, ownerId) {
     try {
-
       const extensionRequest = await ExtensionRequest.findOne({
         _id: requestId,
         owner: ownerId,
@@ -482,7 +450,6 @@ class ExtensionService {
       subOrder.rentalPeriod.endDate = extensionRequest.newEndDate;
       await subOrder.save();
 
-
       return await ExtensionRequest.findById(requestId).populate([
         { path: 'renter', select: 'profile email' }
       ]);
@@ -496,7 +463,6 @@ class ExtensionService {
    */
   async rejectExtension(requestId, ownerId, rejectionData) {
     try {
-
       const { rejectionReason, notes } = rejectionData;
 
       const extensionRequest = await ExtensionRequest.findOne({
@@ -556,7 +522,6 @@ class ExtensionService {
    */
   async cancelExtension(requestId, renterId) {
     try {
-
       const extensionRequest = await ExtensionRequest.findOne({
         _id: requestId,
         renter: renterId,
@@ -594,9 +559,7 @@ class ExtensionService {
       }
 
       const requests = await ExtensionRequest.find(query)
-        .populate([
-          { path: 'owner', select: 'profile email' }
-        ])
+        .populate([{ path: 'owner', select: 'profile email' }])
         .sort({ requestedAt: -1 })
         .limit(filters.limit || 10)
         .skip((filters.page - 1) * (filters.limit || 10) || 0);

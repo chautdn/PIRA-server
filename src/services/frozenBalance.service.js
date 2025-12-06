@@ -10,7 +10,6 @@ class FrozenBalanceService {
    */
   async unlockExpiredFrozenFunds() {
     try {
-      console.log(`🔓 [FrozenBalanceService] Starting unlock check for expired frozen funds...`);
       
       // Find all frozen records that should be unlocked (unlocksAt <= now)
       const now = new Date();
@@ -19,7 +18,6 @@ class FrozenBalanceService {
         unlocksAt: { $lte: now }
       }).populate('wallet').populate('user');
 
-      console.log(`   Found ${expiredFrozenRecords.length} frozen record(s) to unlock`);
 
       if (expiredFrozenRecords.length === 0) {
         return { success: true, unlockedCount: 0, message: 'No frozen funds to unlock' };
@@ -37,18 +35,11 @@ class FrozenBalanceService {
           const amount = frozenRecord.amount;
           const user = frozenRecord.user;
 
-          console.log(`\n   💰 Unlocking frozen fund:`);
-          console.log(`      User: ${user._id}`);
-          console.log(`      Amount: ${amount} VND`);
-          console.log(`      Reason: ${frozenRecord.reason}`);
-          console.log(`      SubOrder: ${frozenRecord.subOrderNumber}`);
 
           // Move from frozen to available
           wallet.balance.frozen -= amount;
           wallet.balance.available += amount;
           await wallet.save({ session });
-
-          console.log(`      ✅ Wallet updated: frozen=${wallet.balance.frozen}, available=${wallet.balance.available}`);
 
           // Update frozen record status
           frozenRecord.status = 'UNLOCKED';
@@ -74,8 +65,6 @@ class FrozenBalanceService {
           });
           await unlockTransaction.save({ session });
 
-          console.log(`      ✅ Transaction record created: ${unlockTransaction._id}`);
-
           await session.commitTransaction();
 
           unlockedCount++;
@@ -98,7 +87,6 @@ class FrozenBalanceService {
             });
           }
 
-          console.log(`      ✅ Socket notification sent to user`);
         } catch (error) {
           await session.abortTransaction();
           console.error(`      ❌ Error unlocking frozen fund for ${frozenRecord.user._id}:`, error.message);
@@ -113,8 +101,6 @@ class FrozenBalanceService {
           session.endSession();
         }
       }
-
-      console.log(`\n✅ [FrozenBalanceService] Unlock process complete. Unlocked: ${unlockedCount}/${expiredFrozenRecords.length}`);
 
       return {
         success: true,

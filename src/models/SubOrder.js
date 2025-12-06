@@ -518,13 +518,6 @@ subOrderSchema.virtual('canConfirmDelivery').get(function () {
   return this.status !== 'DELIVERED';
 });
 
-// Virtual: shipments - get all shipments for this subOrder
-subOrderSchema.virtual('shipments', {
-  ref: 'Shipment',
-  localField: '_id',
-  foreignField: 'subOrder'
-});
-
 // Ensure virtuals are included when converting to JSON or Object
 subOrderSchema.set('toJSON', { virtuals: true });
 subOrderSchema.set('toObject', { virtuals: true });
