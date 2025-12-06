@@ -135,8 +135,8 @@ const createTopUpSession = async (userId, amount, metadata = {}) => {
       orderCode,
       amount: validAmount,
       description: `PIRA Top-up ${Math.round(validAmount / 1000)}k`, // Max 25 chars: "PIRA Top-up 50000k" = 18 chars
-      returnUrl: `${process.env.CLIENT_URL || 'https://pira.asia'}/wallet/topup-success?orderCode=${orderCode}`,
-      cancelUrl: `${process.env.CLIENT_URL || 'https://pira.asia'}/wallet/topup-cancel?orderCode=${orderCode}`
+      returnUrl: `${process.env.CLIENT_URL || 'http://localhost:3000'}/wallet/topup-success?orderCode=${orderCode}`,
+      cancelUrl: `${process.env.CLIENT_URL || 'http://localhost:3000'}/wallet/topup-cancel?orderCode=${orderCode}`
     };
 
     const paymentLink = await payos.paymentRequests.create(paymentData);
@@ -564,8 +564,8 @@ const createOrderPaymentSession = async (userId, amount, orderInfo, metadata = {
       orderCode,
       amount: validAmount,
       description: `PIRA Order ${Math.round(validAmount / 1000)}k`, // Keep it short like top-up
-      returnUrl: `${process.env.CLIENT_URL || 'https://pira.asia'}/rental-orders/payment-success?orderCode=${orderCode}`,
-      cancelUrl: `${process.env.CLIENT_URL || 'https://pira.asia'}/rental-orders/payment-cancel?orderCode=${orderCode}`
+      returnUrl: `${process.env.CLIENT_URL || 'http://localhost:3000'}/rental-orders/payment-success?orderCode=${orderCode}`,
+      cancelUrl: `${process.env.CLIENT_URL || 'http://localhost:3000'}/rental-orders/payment-cancel?orderCode=${orderCode}`
     };
 
     const paymentLink = await payos.paymentRequests.create(paymentData);

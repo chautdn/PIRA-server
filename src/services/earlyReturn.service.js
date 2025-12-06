@@ -2038,8 +2038,8 @@ class EarlyReturnRequestService {
           orderCode,
           amount,
           description: `PIRA Ship ${Math.round(amount / 1000)}k`,
-          returnUrl: `${process.env.CLIENT_URL || 'https://pira.asia'}/rental-orders/shipping-payment-success?orderCode=${orderCode}&requestId=${requestId}`,
-          cancelUrl: `${process.env.CLIENT_URL || 'https://pira.asia'}/rental-orders/shipping-payment-cancel?orderCode=${orderCode}&requestId=${requestId}`
+          returnUrl: `${process.env.CLIENT_URL || 'http://localhost:3000'}/rental-orders/shipping-payment-success?orderCode=${orderCode}&requestId=${requestId}`,
+          cancelUrl: `${process.env.CLIENT_URL || 'http://localhost:3000'}/rental-orders/shipping-payment-cancel?orderCode=${orderCode}&requestId=${requestId}`
         });
 
         // Create transaction record
