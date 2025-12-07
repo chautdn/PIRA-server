@@ -394,6 +394,31 @@ class ShipmentService {
           console.error(`   ⚠️  Failed to update creditScore:`, creditErr.message);
         }
 
+        // Award loyaltyPoints +5 to both renter and owner when order completed
+        try {
+          const User = require('../models/User');
+          
+          // Add 5 loyaltyPoints to owner
+          const owner = await User.findById(shipment.subOrder.owner);
+          if (owner) {
+            if (!owner.loyaltyPoints) owner.loyaltyPoints = 0;
+            owner.loyaltyPoints += 5;
+            await owner.save();
+            console.log(`   ✅ Owner loyaltyPoints +5: ${owner.loyaltyPoints}`);
+          }
+          
+          // Add 5 loyaltyPoints to renter
+          const renter = await User.findById(shipment.subOrder.masterOrder?.renter);
+          if (renter) {
+            if (!renter.loyaltyPoints) renter.loyaltyPoints = 0;
+            renter.loyaltyPoints += 5;
+            await renter.save();
+            console.log(`   ✅ Renter loyaltyPoints +5: ${renter.loyaltyPoints}`);
+          }
+        } catch (loyaltyErr) {
+          console.error(`   ⚠️  Failed to update loyaltyPoints:`, loyaltyErr.message);
+        }
+
         // Set masterOrder status to COMPLETED (all items returned)
         try {
           const MasterOrder = require('../models/MasterOrder');
