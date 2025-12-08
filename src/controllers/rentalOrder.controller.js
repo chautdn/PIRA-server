@@ -1036,24 +1036,24 @@ class RentalOrderController {
       if (cancel === 'true' || status === 'CANCELLED') {
         // Payment was cancelled - redirect to rental payment cancel page
         return res.redirect(
-          `${process.env.CLIENT_URL || 'http://localhost:3000'}/payment/cancelled?orderCode=${orderCode}`
+          `${process.env.CLIENT_URL || 'https://pira.asia'}/payment/cancelled?orderCode=${orderCode}`
         );
       }
 
       if (status === 'PAID') {
         // Payment successful - redirect to rental payment success page
         return res.redirect(
-          `${process.env.CLIENT_URL || 'http://localhost:3000'}/payment/success?orderCode=${orderCode}`
+          `${process.env.CLIENT_URL || 'https://pira.asia'}/payment/success?orderCode=${orderCode}`
         );
       }
 
       // Default case - redirect to pending page
       return res.redirect(
-        `${process.env.CLIENT_URL || 'http://localhost:3000'}/payment/pending?orderCode=${orderCode}`
+        `${process.env.CLIENT_URL || 'https://pira.asia'}/payment/pending?orderCode=${orderCode}`
       );
     } catch (error) {
       console.error('❌ Error handling rental payment callback:', error);
-      return res.redirect(`${process.env.CLIENT_URL || 'http://localhost:3000'}/payment/error`);
+      return res.redirect(`${process.env.CLIENT_URL || 'https://pira.asia'}/payment/error`);
     }
   }
 
@@ -1069,11 +1069,11 @@ class RentalOrderController {
 
       // Redirect to rental payment cancelled page
       return res.redirect(
-        `${process.env.CLIENT_URL || 'http://localhost:3000'}/payment/cancelled?orderCode=${orderCode}`
+        `${process.env.CLIENT_URL || 'https://pira.asia'}/payment/cancelled?orderCode=${orderCode}`
       );
     } catch (error) {
       console.error('❌ Error handling rental payment cancel:', error);
-      return res.redirect(`${process.env.CLIENT_URL || 'http://localhost:3000'}/payment/error`);
+      return res.redirect(`${process.env.CLIENT_URL || 'https://pira.asia'}/payment/error`);
     }
   }
 

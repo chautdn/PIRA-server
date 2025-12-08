@@ -19,8 +19,8 @@ const server = http.createServer(app);
 const io = new Server(server, {
   cors: {
     origin: [
-      process.env.CLIENT_URL || 'http://localhost:3000',
-      'http://localhost:3000',
+      process.env.CLIENT_URL || 'https://pira.asia',
+      'https://pira.asia',
       'http://localhost:5173',
       /^http:\/\/10\.12\.64\.\d+:3000$/, // Allow any device on your network
       /^http:\/\/192\.168\.\d+\.\d+:3000$/, // Allow common local networks
