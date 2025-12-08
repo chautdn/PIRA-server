@@ -509,6 +509,65 @@ router.post(
   RentalOrderController.extendRental
 );
 
+// ============================================================================
+// CONTRACT EDITING ROUTES
+// ============================================================================
+
+/**
+ * Get contract for editing (owner only, before signing)
+ * GET /api/rental-orders/contracts/:contractId/edit
+ */
+router.get(
+  '/contracts/:contractId/edit',
+  [param('contractId').isMongoId().withMessage('ID hợp đồng không hợp lệ'), validateRequest],
+  RentalOrderController.getContractForEditing
+);
+
+/**
+ * Update contract editable terms (owner only, before signing)
+ * PUT /api/rental-orders/contracts/:contractId/terms
+ */
+router.put(
+  '/contracts/:contractId/terms',
+  [
+    param('contractId').isMongoId().withMessage('ID hợp đồng không hợp lệ'),
+    body('additionalTerms').optional().isArray().withMessage('Điều khoản bổ sung phải là mảng'),
+    body('customClauses').optional().isString().withMessage('Điều khoản tùy chỉnh phải là chuỗi'),
+    body('specialConditions').optional().isString().withMessage('Điều kiện đặc biệt phải là chuỗi'),
+    validateRequest
+  ],
+  RentalOrderController.updateContractTerms
+);
+
+/**
+ * Add a single term to contract (owner only, before signing)
+ * POST /api/rental-orders/contracts/:contractId/terms
+ */
+router.post(
+  '/contracts/:contractId/terms',
+  [
+    param('contractId').isMongoId().withMessage('ID hợp đồng không hợp lệ'),
+    body('title').notEmpty().withMessage('Tiêu đề điều khoản là bắt buộc'),
+    body('content').notEmpty().withMessage('Nội dung điều khoản là bắt buộc'),
+    validateRequest
+  ],
+  RentalOrderController.addContractTerm
+);
+
+/**
+ * Remove a term from contract (owner only, before signing)
+ * DELETE /api/rental-orders/contracts/:contractId/terms/:termId
+ */
+router.delete(
+  '/contracts/:contractId/terms/:termId',
+  [
+    param('contractId').isMongoId().withMessage('ID hợp đồng không hợp lệ'),
+    param('termId').isMongoId().withMessage('ID điều khoản không hợp lệ'),
+    validateRequest
+  ],
+  RentalOrderController.removeContractTerm
+);
+
 // Register routes
 registerRoute('/rental-orders', router);
 

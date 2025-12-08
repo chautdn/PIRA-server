@@ -75,7 +75,7 @@ const webhookController = {
         transaction.type === 'order_payment' && transaction.metadata?.orderType === 'rental_order';
 
       // Check if this is an early return upfront shipping payment
-      const isEarlyReturnUpfrontPayment = 
+      const isEarlyReturnUpfrontPayment =
         transaction.metadata?.orderType === 'early_return_upfront_shipping';
 
       console.log('🔍 Transaction type check:', {
@@ -103,24 +103,35 @@ const webhookController = {
           });
 
           // Credit system wallet
-          const systemWallet = await Wallet.findOne({ isSystem: true });
+          const SystemWallet = require('../models/SystemWallet');
+          const User = require('../models/User');
+          const systemWallet = await SystemWallet.findOne({});
           if (systemWallet) {
             systemWallet.balance.available += transaction.amount;
+            systemWallet.lastModifiedBy = transaction.user;
+            systemWallet.lastModifiedAt = new Date();
             await systemWallet.save();
 
             // Create transaction record for system wallet
+            const adminUser = await User.findOne({ role: 'admin' });
             const systemTransaction = new Transaction({
+              user: adminUser?._id || transaction.user,
               wallet: systemWallet._id,
-              type: 'deposit',
+              type: 'TRANSFER_IN',
               amount: transaction.amount,
               status: 'success',
               paymentMethod: 'payos',
-              description: `Phí ship thêm - Trả hàng sớm từ renter`,
+              description: `Phí ship thêm - Trả hàng sớm từ renter (PayOS)`,
+              toSystemWallet: true,
+              systemWalletAction: 'fee_collection',
               metadata: {
                 subOrderId: transaction.metadata.subOrderId,
-                renterId: transaction.user._id,
-                sourceTransaction: transaction._id
-              }
+                renterId: transaction.user,
+                sourceTransaction: transaction._id,
+                orderType: 'early_return_upfront_shipping',
+                addressInfo: transaction.metadata.addressInfo
+              },
+              processedAt: new Date()
             });
             await systemTransaction.save();
 

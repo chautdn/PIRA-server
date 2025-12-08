@@ -23,7 +23,7 @@ class VietMapService {
     params.append('point', `${latOwner},${lonOwner}`); // LAT,LON
     params.append('point', `${latUser},${lonUser}`); // LAT,LON
     params.append('points_encoded', 'true');
-    params.append('vehicle', 'bike'); // Xe máy
+    params.append('vehicle', 'bike'); // hoặc 'motorcycle' nếu muốn chính xác hơn
     params.append('optimize', 'true');
 
     console.log('VietMap Route request urlsearchParams:', params.toString());
@@ -62,7 +62,7 @@ class VietMapService {
    */
   calculateShippingFee(distanceKm, options = {}) {
     const baseFee = options.baseFee || 15000; // 15k cố định
-    const pricePerKm = options.pricePerKm || 5000; // 5k/km
+    const pricePerKm = options.pricePerKm || 3000; // 1k/km (reduced from 5k/km)
     const minFee = options.minFee || 20000; // tối thiểu 20k
     const maxFee = options.maxFee || 150000; // tối đa 150k
 

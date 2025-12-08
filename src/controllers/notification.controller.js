@@ -77,14 +77,17 @@ const notificationController = {
   getUnreadCount: async (req, res, next) => {
     try {
       const userId = req.user._id;
+      console.log('🔔 [Notification Controller] Getting unread count for user:', userId);
 
       const count = await notificationService.getUnreadCount(userId);
+      console.log('🔔 [Notification Controller] Unread count:', count);
 
       new SUCCESS({
         message: 'Unread count retrieved',
         metadata: { unreadCount: count }
       }).send(res);
     } catch (error) {
+      console.error('❌ [Notification Controller] Error getting unread count:', error);
       next(error);
     }
   }

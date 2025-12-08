@@ -129,6 +129,13 @@ router.get('/admin/statistics', authenticate, requireAdmin, adminDisputeControll
 router.post('/:disputeId/admin/review', authenticate, requireAdmin, adminDisputeController.reviewDispute);
 
 /**
+ * @route   POST /api/disputes/:disputeId/admin/resolve-shipper-damage
+ * @desc    Admin xử lý tranh chấp lỗi shipper
+ * @access  Private (Admin)
+ */
+router.post('/:disputeId/admin/resolve-shipper-damage', authenticate, requireAdmin, adminDisputeController.resolveShipperDamage);
+
+/**
  * @route   POST /api/disputes/:disputeId/admin/negotiation/create
  * @desc    Tạo negotiation room
  * @access  Private (Admin)

@@ -1,5 +1,7 @@
 const mongoose = require('mongoose');
 const Dispute = require('../models/Dispute');
+const User = require('../models/User');
+const notificationService = require('./notification.service');
 
 class NegotiationService {
   /**
@@ -108,6 +110,36 @@ class NegotiationService {
     });
 
     await dispute.save();
+
+    // Gửi notification cho bên kia
+    try {
+      const user = await User.findById(userId);
+      const otherParty = isComplainant ? dispute.respondent : dispute.complainant;
+      const roleText = isComplainant ? 'Người khiếu nại' : 'Bên bị khiếu nại';
+      
+      await notificationService.createNotification({
+        recipient: otherParty,
+        type: 'DISPUTE',
+        category: 'INFO',
+        title: 'Đề xuất thỏa thuận mới',
+        message: `${roleText} ${user.profile?.fullName || ''} đã đề xuất thỏa thuận. Vui lòng xem xét và phản hồi.`,
+        relatedDispute: dispute._id,
+        actions: [{
+          label: 'Xem đề xuất',
+          url: `/disputes/${dispute._id}/negotiation`,
+          action: 'VIEW_PROPOSAL'
+        }],
+        data: {
+          disputeId: dispute.disputeId,
+          proposalText,
+          proposalAmount
+        },
+        status: 'SENT'
+      });
+    } catch (error) {
+      console.error('Failed to create proposal notification:', error);
+    }
+
     return dispute.populate(['complainant', 'respondent']);
   }
 
@@ -185,6 +217,79 @@ class NegotiationService {
     }
 
     await dispute.save();
+
+    // Gửi notification cho bên kia và admin nếu cần
+    try {
+      const user = await User.findById(userId);
+      const otherParty = isComplainant ? dispute.respondent : dispute.complainant;
+      const roleText = isComplainant ? 'Người khiếu nại' : 'Bên bị khiếu nại';
+      const decisionText = accepted ? 'chấp nhận' : 'từ chối';
+      
+      if (accepted && dispute.negotiationRoom.finalAgreement.complainantAccepted && 
+          dispute.negotiationRoom.finalAgreement.respondentAccepted) {
+        // Cả 2 bên đồng ý -> Thông báo cho admin
+        const notificationData = {
+          type: 'DISPUTE',
+          category: 'SUCCESS',
+          title: '2 bên đã thống nhất',
+          message: `Tranh chấp ${dispute.disputeId} đã có thỏa thuận từ cả 2 bên. Vui lòng xác nhận và chốt quyết định.`,
+          relatedDispute: dispute._id,
+          actions: [{
+            label: 'Xem chi tiết',
+            url: `/admin/disputes/${dispute._id}`,
+            action: 'ADMIN_REVIEW'
+          }],
+          data: {
+            disputeId: dispute.disputeId,
+            proposal: dispute.negotiationRoom.finalAgreement.proposalText
+          },
+          status: 'SENT'
+        };
+        
+        // Gửi cho admin và cả 2 bên
+        await Promise.all([
+          notificationService.createNotification({
+            ...notificationData,
+            recipient: dispute.assignedAdmin
+          }),
+          notificationService.createNotification({
+            ...notificationData,
+            title: 'Đã thống nhất thỏa thuận',
+            message: 'Cả 2 bên đã chấp nhận thỏa thuận. Chờ admin xác nhận cuối cùng.',
+            recipient: dispute.complainant
+          }),
+          notificationService.createNotification({
+            ...notificationData,
+            title: 'Đã thống nhất thỏa thuận',
+            message: 'Cả 2 bên đã chấp nhận thỏa thuận. Chờ admin xác nhận cuối cùng.',
+            recipient: dispute.respondent
+          })
+        ]);
+      } else {
+        // Thông báo cho bên kia về phản hồi
+        await notificationService.createNotification({
+          recipient: otherParty,
+          type: 'DISPUTE',
+          category: accepted ? 'SUCCESS' : 'WARNING',
+          title: `Phản hồi thỏa thuận`,
+          message: `${roleText} ${user.profile?.fullName || ''} đã ${decisionText} thỏa thuận.${!accepted ? ' Hãy đề xuất lại hoặc chờ hết hạn đàm phán.' : ''}`,
+          relatedDispute: dispute._id,
+          actions: [{
+            label: 'Xem chi tiết',
+            url: `/disputes/${dispute._id}/negotiation`,
+            action: 'VIEW_NEGOTIATION'
+          }],
+          data: {
+            disputeId: dispute.disputeId,
+            accepted
+          },
+          status: 'SENT'
+        });
+      }
+    } catch (error) {
+      console.error('Failed to create agreement response notification:', error);
+    }
+
     return dispute.populate(['complainant', 'respondent']);
   }
 

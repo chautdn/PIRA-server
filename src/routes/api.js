@@ -38,6 +38,7 @@ require('./earlyReturn.routes.register');
 require('./systemPromotion.routes');
 require('./shipment.routes.register');
 require('./upload.routes.register');
+require('./ai.routes'); // AI Visual Search
 
 // Owner Statistics routes
 const ownerStatisticsRoutes = require('./ownerStatistics.routes');
@@ -70,6 +71,9 @@ router.use('/admin/bank-verification', bankVerificationRoutes);
 // Admin Transaction routes
 const adminTransactionRoutes = require('./adminTransaction.routes');
 router.use('/admin/transactions', adminTransactionRoutes);
+// Recommendation routes
+const recommendationRoutes = require('./recommendation.routes');
+router.use('/recommendations', recommendationRoutes);
 
 // Upload routes
 const uploadRoutes = require('./upload.routes');
@@ -78,6 +82,10 @@ router.use('/upload', uploadRoutes);
 // Extension routes
 const extensionRoutes = require('./extension.routes');
 router.use('/extensions', extensionRoutes);
+
+// OTP routes
+const otpRoutes = require('./otp.routes');
+router.use('/otp', otpRoutes);
 
 // Register all routes from the registry FIRST
 getRoutes()?.forEach(({ path, router: moduleRouter }) => {

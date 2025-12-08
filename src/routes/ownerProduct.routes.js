@@ -110,6 +110,12 @@ router.delete(
   ownerProductController.deleteImage
 );
 
+router.get(
+  '/rental-requests/:subOrderId',
+  [param('subOrderId').isMongoId().withMessage('Valid subOrder ID is required')],
+  ownerProductController.getSubOrderDetail
+);
+
 router.post(
   '/rental-requests/:subOrderId/items/:itemIndex/confirm',
   [
@@ -158,6 +164,27 @@ router.put(
       .withMessage('Description must be between 10 and 2000 characters')
   ],
   ownerProductController.updateProductSafeFields
+);
+
+// Check if pricing can be edited
+router.get(
+  '/:productId/can-edit-pricing',
+  [param('productId').isMongoId().withMessage('Valid product ID is required')],
+  ownerProductController.canEditPricing
+);
+
+// Update product pricing
+router.put(
+  '/:productId/pricing',
+  [
+    param('productId').isMongoId().withMessage('Valid product ID is required'),
+    body('dailyRate').optional().isNumeric().withMessage('Daily rate must be a number'),
+    body('weeklyRate').optional().isNumeric().withMessage('Weekly rate must be a number'),
+    body('monthlyRate').optional().isNumeric().withMessage('Monthly rate must be a number'),
+    body('depositAmount').optional().isNumeric().withMessage('Deposit amount must be a number'),
+    body('depositDescription').optional().isString()
+  ],
+  ownerProductController.updatePricing
 );
 
 registerRoute('/owner-products', router);

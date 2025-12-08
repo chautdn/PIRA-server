@@ -1,6 +1,7 @@
 const mongoose = require('mongoose');
 const Dispute = require('../models/Dispute');
 const User = require('../models/User');
+const notificationService = require('./notification.service');
 
 class ThirdPartyService {
   /**
@@ -67,6 +68,44 @@ class ThirdPartyService {
     });
 
     await dispute.save();
+
+    // Gửi notification cho cả 2 bên
+    try {
+      const admin = await User.findById(adminId);
+      const notificationData = {
+        type: 'DISPUTE',
+        category: 'WARNING',
+        title: 'Chuyển sang bên thứ 3',
+        message: `Tranh chấp đã được chuyển sang bên thứ 3: ${thirdPartyInfo.name}. Vui lòng liên hệ và upload kết quả trước ${evidenceDeadline.toLocaleDateString('vi-VN')}.`,
+        relatedDispute: dispute._id,
+        actions: [{
+          label: 'Xem chi tiết',
+          url: `/disputes/${dispute._id}`,
+          action: 'VIEW_DISPUTE'
+        }],
+        data: {
+          disputeId: dispute.disputeId,
+          thirdPartyName: thirdPartyInfo.name,
+          thirdPartyContact: thirdPartyInfo.contactInfo,
+          evidenceDeadline: evidenceDeadline.toISOString()
+        },
+        status: 'SENT'
+      };
+
+      await Promise.all([
+        notificationService.createNotification({
+          ...notificationData,
+          recipient: dispute.complainant
+        }),
+        notificationService.createNotification({
+          ...notificationData,
+          recipient: dispute.respondent
+        })
+      ]);
+    } catch (error) {
+      console.error('Failed to create third party escalation notification:', error);
+    }
+
     return dispute.populate(['complainant', 'respondent', 'assignedAdmin']);
   }
 
@@ -180,6 +219,58 @@ class ThirdPartyService {
       { path: 'respondent', select: 'profile email' },
       { path: 'thirdPartyResolution.evidence.uploadedBy', select: 'profile email' }
     ]);
+
+    // Gửi notification cho bên kia và admin
+    try {
+      const uploader = await User.findById(userId);
+      const otherParty = isComplainant ? dispute.respondent : dispute.complainant;
+      const roleText = isComplainant ? 'Người khiếu nại' : 'Bên bị khiếu nại';
+      
+      // Thông báo cho bên kia
+      await notificationService.createNotification({
+        recipient: otherParty,
+        type: 'DISPUTE',
+        category: 'INFO',
+        title: 'Bằng chứng bên thứ 3 đã upload',
+        message: `${roleText} ${uploader.profile?.fullName || ''} đã upload kết quả từ bên thứ 3. Chờ admin đưa ra quyết định cuối cùng.`,
+        relatedDispute: dispute._id,
+        actions: [{
+          label: 'Xem bằng chứng',
+          url: `/disputes/${dispute._id}`,
+          action: 'VIEW_EVIDENCE'
+        }],
+        data: {
+          disputeId: dispute.disputeId,
+          uploadedBy: userId.toString()
+        },
+        status: 'SENT'
+      });
+
+      // Thông báo cho admin
+      if (dispute.assignedAdmin) {
+        await notificationService.createNotification({
+          recipient: dispute.assignedAdmin,
+          type: 'DISPUTE',
+          category: 'INFO',
+          title: 'Bằng chứng bên thứ 3 đã sẵn sàng',
+          message: `Tranh chấp ${dispute.disputeId} đã có kết quả từ bên thứ 3. Vui lòng xem xét và đưa ra quyết định cuối cùng.`,
+          relatedDispute: dispute._id,
+          actions: [{
+            label: 'Xem và quyết định',
+            url: `/admin/disputes/${dispute._id}`,
+            action: 'ADMIN_FINAL_DECISION'
+          }],
+          data: {
+            disputeId: dispute.disputeId,
+            uploadedBy: userId.toString()
+          },
+          status: 'SENT'
+        });
+      }
+    } catch (error) {
+      console.error('Failed to create evidence upload notification:', error);
+    }
+
     return dispute;
   }
 
@@ -233,6 +324,43 @@ class ThirdPartyService {
     });
 
     await dispute.save();
+
+    // Gửi notification cho cả 2 bên
+    try {
+      const admin = await User.findById(adminId);
+      const notificationData = {
+        type: 'DISPUTE',
+        category: 'SUCCESS',
+        title: 'Quyết định cuối cùng',
+        message: `Admin ${admin.profile?.fullName || 'hệ thống'} đã đưa ra quyết định cuối cùng dựa trên kết quả bên thứ 3. Tranh chấp đã kết thúc.`,
+        relatedDispute: dispute._id,
+        actions: [{
+          label: 'Xem kết quả',
+          url: `/disputes/${dispute._id}`,
+          action: 'VIEW_RESOLUTION'
+        }],
+        data: {
+          disputeId: dispute.disputeId,
+          resolutionText,
+          financialImpact
+        },
+        status: 'SENT'
+      };
+
+      await Promise.all([
+        notificationService.createNotification({
+          ...notificationData,
+          recipient: dispute.complainant
+        }),
+        notificationService.createNotification({
+          ...notificationData,
+          recipient: dispute.respondent
+        })
+      ]);
+    } catch (error) {
+      console.error('Failed to create final decision notification:', error);
+    }
+
     return dispute.populate(['complainant', 'respondent', 'assignedAdmin']);
   }
 
