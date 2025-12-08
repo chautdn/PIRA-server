@@ -110,17 +110,33 @@ class AdminService {
       // Determine date range
       const dateRange = this.getDateRange(period, startDate, endDate);
 
+      // Get previous period for comparison
+      const previousDateRange = this.getPreviousDateRange(dateRange, period);
+
       // Get detailed revenue breakdown
-      const [orderRevenue, shippingRevenue, promotionRevenue, platformFees, timeSeriesData] =
-        await Promise.all([
-          this.getOrderRevenue(dateRange),
-          this.getShippingRevenue(dateRange),
-          this.getPromotionRevenue(dateRange),
-          this.getPlatformFees(dateRange),
-          this.getTimeSeriesRevenue(dateRange, period)
-        ]);
+      const [
+        orderRevenue,
+        shippingRevenue,
+        promotionRevenue,
+        platformFees,
+        timeSeriesData,
+        previousRevenue
+      ] = await Promise.all([
+        this.getOrderRevenue(dateRange),
+        this.getShippingRevenue(dateRange),
+        this.getPromotionRevenue(dateRange),
+        this.getPlatformFees(dateRange),
+        this.getTimeSeriesRevenue(dateRange, period),
+        this.getTotalRevenue(previousDateRange)
+      ]);
 
       const totalRevenue = orderRevenue + shippingRevenue + promotionRevenue + platformFees;
+
+      // Calculate growth rate
+      const growthRate =
+        previousRevenue > 0
+          ? (((totalRevenue - previousRevenue) / previousRevenue) * 100).toFixed(2)
+          : 0;
 
       return {
         summary: {
@@ -128,7 +144,8 @@ class AdminService {
           orderRevenue,
           shippingRevenue,
           promotionRevenue,
-          platformFees
+          platformFees,
+          growthRate: parseFloat(growthRate)
         },
         breakdown: {
           bySource: [
@@ -150,21 +167,30 @@ class AdminService {
   async getProfitStatistics({ period = 'month', startDate, endDate }) {
     try {
       const dateRange = this.getDateRange(period, startDate, endDate);
+      const previousDateRange = this.getPreviousDateRange(dateRange, period);
 
-      // Get revenue and costs
-      const revenueStats = await this.getRevenueStatistics({ period, startDate, endDate });
-      const costs = await this.getOperatingCosts(dateRange);
+      // Get revenue and costs for current and previous period
+      const [revenueStats, costs, previousProfit] = await Promise.all([
+        this.getRevenueStatistics({ period, startDate, endDate }),
+        this.getOperatingCosts(dateRange),
+        this.getProfit(previousDateRange)
+      ]);
 
       const profit = revenueStats.summary.total - costs.total;
       const profitMargin =
         revenueStats.summary.total > 0 ? (profit / revenueStats.summary.total) * 100 : 0;
+
+      // Calculate growth rate
+      const profitGrowthRate =
+        previousProfit > 0 ? (((profit - previousProfit) / previousProfit) * 100).toFixed(2) : 0;
 
       return {
         summary: {
           totalRevenue: revenueStats.summary.total,
           totalCosts: costs.total,
           profit,
-          profitMargin: profitMargin.toFixed(2)
+          profitMargin: parseFloat(profitMargin.toFixed(2)),
+          growthRate: parseFloat(profitGrowthRate)
         },
         revenue: revenueStats.summary,
         costs: costs.breakdown,
@@ -216,8 +242,36 @@ class AdminService {
     return { start, end };
   }
 
+  getPreviousDateRange(currentRange, period) {
+    const { start, end } = currentRange;
+    const duration = end - start;
+
+    return {
+      start: new Date(start.getTime() - duration),
+      end: new Date(start.getTime())
+    };
+  }
+
+  async getTotalRevenue(dateRange) {
+    const [orderRevenue, shippingRevenue, promotionRevenue, platformFees] = await Promise.all([
+      this.getOrderRevenue(dateRange),
+      this.getShippingRevenue(dateRange),
+      this.getPromotionRevenue(dateRange),
+      this.getPlatformFees(dateRange)
+    ]);
+
+    return orderRevenue + shippingRevenue + promotionRevenue + platformFees;
+  }
+
+  async getProfit(dateRange) {
+    const revenue = await this.getTotalRevenue(dateRange);
+    const costs = await this.getOperatingCosts(dateRange);
+    return revenue - costs.total;
+  }
+
   async getOrderRevenue(dateRange) {
-    const result = await Order.aggregate([
+    // Sử dụng SubOrder để tính doanh thu chi tiết hơn
+    const result = await SubOrder.aggregate([
       {
         $match: {
           createdAt: { $gte: dateRange.start, $lte: dateRange.end },
@@ -227,7 +281,7 @@ class AdminService {
       {
         $group: {
           _id: null,
-          total: { $sum: '$totalAmount' }
+          total: { $sum: '$pricing.subtotalRental' } // Chỉ tính tiền thuê, không bao gồm deposit
         }
       }
     ]);
@@ -236,7 +290,8 @@ class AdminService {
   }
 
   async getShippingRevenue(dateRange) {
-    const result = await Order.aggregate([
+    // Sử dụng SubOrder để tính phí ship chi tiết từ pricing.shippingFee
+    const result = await SubOrder.aggregate([
       {
         $match: {
           createdAt: { $gte: dateRange.start, $lte: dateRange.end },
@@ -246,7 +301,7 @@ class AdminService {
       {
         $group: {
           _id: null,
-          total: { $sum: '$totalShippingFee' }
+          total: { $sum: '$pricing.shippingFee' }
         }
       }
     ]);
@@ -345,7 +400,7 @@ class AdminService {
         };
     }
 
-    const data = await Order.aggregate([
+    const data = await SubOrder.aggregate([
       {
         $match: {
           createdAt: { $gte: dateRange.start, $lte: dateRange.end },
@@ -355,8 +410,8 @@ class AdminService {
       {
         $group: {
           _id: groupBy,
-          revenue: { $sum: '$totalAmount' },
-          shippingFee: { $sum: '$totalShippingFee' },
+          revenue: { $sum: '$pricing.subtotalRental' },
+          shippingFee: { $sum: '$pricing.shippingFee' },
           orderCount: { $sum: 1 }
         }
       },
@@ -390,6 +445,170 @@ class AdminService {
     } else {
       return `${year}-${String(month).padStart(2, '0')}`;
     }
+  }
+
+  // ========== SUBORDER SPECIFIC STATISTICS ==========
+
+  /**
+   * Lấy doanh thu theo từng owner (chủ cho thuê)
+   */
+  async getRevenueByOwner(dateRange, limit = 10) {
+    const result = await SubOrder.aggregate([
+      {
+        $match: {
+          createdAt: { $gte: dateRange.start, $lte: dateRange.end },
+          status: 'COMPLETED'
+        }
+      },
+      {
+        $group: {
+          _id: '$owner',
+          totalRevenue: { $sum: '$pricing.subtotalRental' },
+          totalShipping: { $sum: '$pricing.shippingFee' },
+          totalDeposit: { $sum: '$pricing.subtotalDeposit' },
+          orderCount: { $sum: 1 }
+        }
+      },
+      {
+        $lookup: {
+          from: 'users',
+          localField: '_id',
+          foreignField: '_id',
+          as: 'ownerInfo'
+        }
+      },
+      {
+        $unwind: '$ownerInfo'
+      },
+      {
+        $project: {
+          ownerId: '$_id',
+          ownerName: '$ownerInfo.fullName',
+          ownerEmail: '$ownerInfo.email',
+          totalRevenue: 1,
+          totalShipping: 1,
+          totalDeposit: 1,
+          orderCount: 1,
+          averageOrderValue: { $divide: ['$totalRevenue', '$orderCount'] }
+        }
+      },
+      { $sort: { totalRevenue: -1 } },
+      { $limit: limit }
+    ]);
+
+    return result;
+  }
+
+  /**
+   * Lấy thống kê deposit (tiền cọc)
+   */
+  async getDepositStatistics(dateRange) {
+    const result = await SubOrder.aggregate([
+      {
+        $match: {
+          createdAt: { $gte: dateRange.start, $lte: dateRange.end },
+          status: { $in: ['COMPLETED', 'ACTIVE', 'DELIVERED'] }
+        }
+      },
+      {
+        $group: {
+          _id: null,
+          totalDeposit: { $sum: '$pricing.subtotalDeposit' },
+          totalRefunded: {
+            $sum: {
+              $cond: [{ $eq: ['$status', 'COMPLETED'] }, '$pricing.subtotalDeposit', 0]
+            }
+          },
+          totalHeld: {
+            $sum: {
+              $cond: [{ $in: ['$status', ['ACTIVE', 'DELIVERED']] }, '$pricing.subtotalDeposit', 0]
+            }
+          },
+          orderCount: { $sum: 1 }
+        }
+      }
+    ]);
+
+    return result.length > 0
+      ? result[0]
+      : {
+          totalDeposit: 0,
+          totalRefunded: 0,
+          totalHeld: 0,
+          orderCount: 0
+        };
+  }
+
+  /**
+   * Lấy sản phẩm được thuê nhiều nhất
+   */
+  async getTopRentalProducts(dateRange, limit = 10) {
+    const result = await SubOrder.aggregate([
+      {
+        $match: {
+          createdAt: { $gte: dateRange.start, $lte: dateRange.end },
+          status: 'COMPLETED'
+        }
+      },
+      { $unwind: '$products' },
+      {
+        $group: {
+          _id: '$products.product',
+          totalQuantity: { $sum: '$products.quantity' },
+          totalRevenue: { $sum: '$products.totalRental' },
+          orderCount: { $sum: 1 }
+        }
+      },
+      {
+        $lookup: {
+          from: 'products',
+          localField: '_id',
+          foreignField: '_id',
+          as: 'productInfo'
+        }
+      },
+      {
+        $unwind: '$productInfo'
+      },
+      {
+        $project: {
+          productId: '$_id',
+          productName: '$productInfo.title',
+          productImage: '$productInfo.images.0',
+          totalQuantity: 1,
+          totalRevenue: 1,
+          orderCount: 1,
+          averageRevenue: { $divide: ['$totalRevenue', '$orderCount'] }
+        }
+      },
+      { $sort: { totalQuantity: -1 } },
+      { $limit: limit }
+    ]);
+
+    return result;
+  }
+
+  /**
+   * Thống kê theo trạng thái SubOrder
+   */
+  async getSubOrderStatusBreakdown(dateRange) {
+    const result = await SubOrder.aggregate([
+      {
+        $match: {
+          createdAt: { $gte: dateRange.start, $lte: dateRange.end }
+        }
+      },
+      {
+        $group: {
+          _id: '$status',
+          count: { $sum: 1 },
+          totalRevenue: { $sum: '$pricing.subtotalRental' }
+        }
+      },
+      { $sort: { count: -1 } }
+    ]);
+
+    return result;
   }
 
   // ========== USER MANAGEMENT ==========
