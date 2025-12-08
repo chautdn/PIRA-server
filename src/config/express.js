@@ -21,49 +21,47 @@ app.use(
   })
 );
 
-// CORS is handled by nginx reverse proxy in production
-// Only enable for local development
-if (process.env.NODE_ENV !== 'production') {
-  app.use(
-    cors({
-      origin: function (origin, callback) {
-        // Allow requests with no origin (like mobile apps or curl requests)
-        if (!origin) return callback(null, true);
+// CORS configuration - Always enabled for both development and production
+app.use(
+  cors({
+    origin: function (origin, callback) {
+      // Allow requests with no origin (like mobile apps or curl requests)
+      if (!origin) return callback(null, true);
 
-        const allowedOrigins = [
-          process.env.CLIENT_URL || 'http://localhost:5173',
-          'http://localhost:3001',
-          'http://localhost:5173',
-          'http://127.0.0.1:3000',
-          'https://pira.asia',
-          'http://pira.asia'
-        ];
+      const allowedOrigins = [
+        process.env.CLIENT_URL || 'http://localhost:5173',
+        'http://localhost:3001',
+        'http://localhost:5173',
+        'http://127.0.0.1:3000',
+        'https://pira.asia',
+        'https://www.pira.asia',
+        'http://pira.asia'
+      ];
 
-        // Allow any origin from local network (10.x.x.x, 192.168.x.x, 172.x.x.x)
-        const localNetworkPattern =
-          /^http:\/\/(10\.\d+\.\d+\.\d+|192\.168\.\d+\.\d+|172\.\d+\.\d+\.\d+):(3000|5173)$/;
+      // Allow any origin from local network (10.x.x.x, 192.168.x.x, 172.x.x.x)
+      const localNetworkPattern =
+        /^http:\/\/(10\.\d+\.\d+\.\d+|192\.168\.\d+\.\d+|172\.\d+\.\d+\.\d+):(3000|5173)$/;
 
-        if (allowedOrigins.includes(origin) || localNetworkPattern.test(origin)) {
-          callback(null, true);
-        } else {
-          console.log('CORS blocked origin:', origin);
-          callback(null, true); // Allow anyway for development
-        }
-      },
-      credentials: true,
-      methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
-      allowedHeaders: [
-        'Content-Type',
-        'Authorization',
-        'X-Requested-With',
-        'token', // Thêm header 'token'
-        'x-verification-token', // Thêm header này nếu cần
-        'Cache-Control',
-        'Pragma'
-      ]
-    })
-  );
-}
+      if (allowedOrigins.includes(origin) || localNetworkPattern.test(origin)) {
+        callback(null, true);
+      } else {
+        console.log('CORS blocked origin:', origin);
+        callback(new Error('Not allowed by CORS'));
+      }
+    },
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+    allowedHeaders: [
+      'Content-Type',
+      'Authorization',
+      'X-Requested-With',
+      'token',
+      'x-verification-token',
+      'Cache-Control',
+      'Pragma'
+    ]
+  })
+);
 
 // Additional security headers for Google OAuth (only in development)
 if (process.env.NODE_ENV !== 'production') {
