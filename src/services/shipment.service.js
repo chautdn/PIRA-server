@@ -123,7 +123,23 @@ class ShipmentService {
   }
 
   async getShipment(id) {
-    return Shipment.findById(id).populate('shipper subOrder');
+    return Shipment.findById(id).populate({
+      path: 'subOrder',
+      populate: [
+        {
+          path: 'masterOrder',
+          select: 'rentalPeriod renter masterOrderNumber',
+          populate: {
+            path: 'renter',
+            select: 'profile email phone'
+          }
+        },
+        {
+          path: 'owner',
+          select: 'profile email phone'
+        }
+      ]
+    }).populate('shipper');
   }
 
   async listByShipper(shipperId) {
