@@ -9,7 +9,7 @@ async function verify() {
   try {
     const uri = process.env.DATABASE_URL || process.env.MONGODB_URI || process.env.MONGO_URI;
     const dbName = process.env.DB_NAME || process.env.MONGO_DB_NAME || 'PIRA_System';
-    
+
     if (!uri) throw new Error('Missing MONGODB_URI');
 
     const conn = await mongoose.connect(uri, { dbName });
@@ -25,7 +25,9 @@ async function verify() {
       console.log(`✅ Shipment: ${s.shipmentId}`);
       console.log(`   Type: ${s.type}`);
       console.log(`   Status: ${s.status}`);
-      console.log(`   scheduledAt: ${s.scheduledAt ? new Date(s.scheduledAt).toLocaleDateString('vi-VN') : 'MISSING'}`);
+      console.log(
+        `   scheduledAt: ${s.scheduledAt ? new Date(s.scheduledAt).toLocaleDateString('vi-VN') : 'MISSING'}`
+      );
       console.log('');
     }
 
