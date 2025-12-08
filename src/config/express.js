@@ -34,7 +34,9 @@ if (process.env.NODE_ENV !== 'production') {
           process.env.CLIENT_URL || 'http://localhost:5173',
           'http://localhost:3001',
           'http://localhost:5173',
-          'http://127.0.0.1:3000'
+          'http://127.0.0.1:3000',
+          'https://pira.asia',
+          'http://pira.asia'
         ];
 
         // Allow any origin from local network (10.x.x.x, 192.168.x.x, 172.x.x.x)

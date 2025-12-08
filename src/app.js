@@ -22,6 +22,10 @@ const io = new Server(server, {
       process.env.CLIENT_URL || 'https://pira.asia',
       'https://pira.asia',
       'http://localhost:5173',
+      'http://103.200.23.208', // VPS IP
+      'https://103.200.23.208', // VPS IP HTTPS
+      'http://pira.asia', // Domain HTTP
+      'https://pira.asia', // Domain HTTPS
       /^http:\/\/10\.12\.64\.\d+:3000$/, // Allow any device on your network
       /^http:\/\/192\.168\.\d+\.\d+:3000$/, // Allow common local networks
       /^http:\/\/172\.\d+\.\d+\.\d+:3000$/ // Allow Docker/virtual networks

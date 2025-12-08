@@ -6,7 +6,7 @@ const Wallet = require('../models/Wallet');
 async function createWalletsForExistingUsers() {
   try {
     // Connect to database
-    await mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/pira');
+    await mongoose.connect(process.env.MONGODB_URI);
     console.log('✅ Connected to MongoDB');
 
     // Find all users without wallets
