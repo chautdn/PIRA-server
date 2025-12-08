@@ -32,6 +32,51 @@ class AdminController {
     }
   }
 
+  // ========== SUBORDER STATISTICS ==========
+  async getRevenueByOwner(req, res) {
+    try {
+      const { period, startDate, endDate, limit = 10 } = req.query;
+      const dateRange = adminService.getDateRange(period, startDate, endDate);
+      const statistics = await adminService.getRevenueByOwner(dateRange, parseInt(limit));
+      return responseUtils.success(res, statistics, 'Lấy thống kê doanh thu theo owner thành công');
+    } catch (error) {
+      return responseUtils.error(res, error.message, 500);
+    }
+  }
+
+  async getDepositStatistics(req, res) {
+    try {
+      const { period, startDate, endDate } = req.query;
+      const dateRange = adminService.getDateRange(period, startDate, endDate);
+      const statistics = await adminService.getDepositStatistics(dateRange);
+      return responseUtils.success(res, statistics, 'Lấy thống kê tiền cọc thành công');
+    } catch (error) {
+      return responseUtils.error(res, error.message, 500);
+    }
+  }
+
+  async getTopRentalProducts(req, res) {
+    try {
+      const { period, startDate, endDate, limit = 10 } = req.query;
+      const dateRange = adminService.getDateRange(period, startDate, endDate);
+      const statistics = await adminService.getTopRentalProducts(dateRange, parseInt(limit));
+      return responseUtils.success(res, statistics, 'Lấy sản phẩm được thuê nhiều nhất thành công');
+    } catch (error) {
+      return responseUtils.error(res, error.message, 500);
+    }
+  }
+
+  async getSubOrderStatusBreakdown(req, res) {
+    try {
+      const { period, startDate, endDate } = req.query;
+      const dateRange = adminService.getDateRange(period, startDate, endDate);
+      const statistics = await adminService.getSubOrderStatusBreakdown(dateRange);
+      return responseUtils.success(res, statistics, 'Lấy thống kê trạng thái SubOrder thành công');
+    } catch (error) {
+      return responseUtils.error(res, error.message, 500);
+    }
+  }
+
   // ========== USER MANAGEMENT ==========
   async getAllUsers(req, res) {
     try {
