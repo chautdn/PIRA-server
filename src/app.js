@@ -8,6 +8,7 @@ const app = require('./config/express');
 const http = require('http');
 const { Server } = require('socket.io');
 const ChatGateway = require('./socket/chat.gateway');
+const orderSocket = require('./socket/orderSocket');
 
 const PORT = process.env.PORT || 5000;
 
@@ -35,6 +36,11 @@ const io = new Server(server, {
 // Initialize chat gateway
 const chatGateway = new ChatGateway(io);
 global.chatGateway = chatGateway; // Make available globally
+global.io = io; // Make Socket.IO instance available globally for order/contract events
+
+// Initialize order socket for real-time order/contract updates
+orderSocket(io);
+console.log('✅ Order socket initialized for real-time updates');
 
 // Initialize promotion cron job
 const { startPromotionCronJob, runImmediately } = require('./scripts/promotionCron');

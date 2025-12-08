@@ -397,6 +397,44 @@ class RentalOrderService {
         await draftOrder.save();
 
         console.log('✅ Order confirmed and SubOrders updated to PENDING_CONFIRMATION');
+
+        // Emit socket event: Notify all owners about new order
+        try {
+          const populatedOrder = await MasterOrder.findById(draftOrder._id)
+            .populate({
+              path: 'subOrders',
+              populate: [
+                { path: 'owner', select: 'profile email phone' },
+                { path: 'products.product', select: 'name images price' }
+              ]
+            })
+            .populate('renter', 'profile phone email');
+
+          // Get unique owner IDs from subOrders
+          const ownerIds = [
+            ...new Set(populatedOrder.subOrders.map((sub) => sub.owner._id.toString()))
+          ];
+
+          if (global.io) {
+            ownerIds.forEach((ownerId) => {
+              global.io.to(`user:${ownerId}`).emit('order:new', {
+                masterOrderId: populatedOrder._id,
+                masterOrderNumber: populatedOrder.masterOrderNumber,
+                renterId: populatedOrder.renter._id.toString(),
+                renterInfo: {
+                  name: `${populatedOrder.renter.profile?.firstName || ''} ${populatedOrder.renter.profile?.lastName || ''}`.trim(),
+                  email: populatedOrder.renter.email
+                },
+                totalAmount: populatedOrder.totalAmount,
+                createdAt: populatedOrder.createdAt,
+                message: 'Bạn có đơn thuê mới cần xác nhận'
+              });
+            });
+            console.log(`📡 Socket event sent: order:new to ${ownerIds.length} owner(s)`);
+          }
+        } catch (socketError) {
+          console.error('⚠️ Error emitting socket event:', socketError);
+        }
       } else {
         // PENDING payment: SubOrders remain in initial status
         console.log('⏳ Order created but awaiting payment completion');
@@ -1046,6 +1084,25 @@ class RentalOrderService {
       // Owner ký xong → chuyển sang PENDING_RENTER
       contract.status = 'PENDING_RENTER';
       console.log('✅ Owner đã ký hợp đồng, chuyển sang PENDING_RENTER');
+
+      // Emit socket event: Notify renter that owner signed
+      try {
+        if (global.io) {
+          global.io
+            .to(`user:${contract.renter._id.toString()}`)
+            .emit('contract:signatureReceived', {
+              contractId: contract._id,
+              subOrderId: contract.subOrder,
+              signedBy: 'owner',
+              ownerId: contract.owner._id.toString(),
+              renterId: contract.renter._id.toString(),
+              message: 'Chủ đồ đã ký hợp đồng, bạn có thể ký hợp đồng ngay'
+            });
+          console.log('📡 Socket event sent: contract:signatureReceived to renter');
+        }
+      } catch (socketError) {
+        console.error('⚠️ Error emitting socket event:', socketError);
+      }
     }
 
     if (isRenter) {
@@ -1060,6 +1117,28 @@ class RentalOrderService {
       contract.status = 'SIGNED';
       contract.signedAt = new Date();
       console.log('✅ Renter đã ký hợp đồng, hợp đồng hoàn tất');
+
+      // Emit socket event: Notify both parties that contract is fully executed
+      try {
+        if (global.io) {
+          const eventData = {
+            contractId: contract._id,
+            subOrderId: contract.subOrder,
+            ownerId: contract.owner._id.toString(),
+            renterId: contract.renter._id.toString(),
+            message: 'Hợp đồng đã được ký đầy đủ bởi cả hai bên'
+          };
+          global.io
+            .to(`user:${contract.owner._id.toString()}`)
+            .emit('contract:fullyExecuted', eventData);
+          global.io
+            .to(`user:${contract.renter._id.toString()}`)
+            .emit('contract:fullyExecuted', eventData);
+          console.log('📡 Socket event sent: contract:fullyExecuted to both parties');
+        }
+      } catch (socketError) {
+        console.error('⚠️ Error emitting socket event:', socketError);
+      }
 
       // Cập nhật SubOrder
       const updatedSubOrder = await SubOrder.findOneAndUpdate(
