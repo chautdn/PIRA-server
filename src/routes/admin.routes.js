@@ -13,6 +13,12 @@ router.get('/dashboard', adminController.getDashboard);
 router.get('/statistics/revenue', adminController.getRevenueStatistics);
 router.get('/statistics/profit', adminController.getProfitStatistics);
 
+// ========== SUBORDER STATISTICS ==========
+router.get('/statistics/revenue-by-owner', adminController.getRevenueByOwner);
+router.get('/statistics/deposit', adminController.getDepositStatistics);
+router.get('/statistics/top-products', adminController.getTopRentalProducts);
+router.get('/statistics/suborder-status', adminController.getSubOrderStatusBreakdown);
+
 // ========== TEST ROUTES ==========
 
 // ========== USER MANAGEMENT ==========
