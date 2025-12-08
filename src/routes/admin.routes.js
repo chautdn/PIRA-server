@@ -73,6 +73,10 @@ router.get('/users/:userId/financial-profile', adminController.getUserFinancialP
 router.get('/settings', adminController.getSystemSettings);
 router.put('/settings', adminController.updateSystemSettings);
 
+// ========== SHIPMENT MANAGEMENT ==========
+router.get('/shipment-stats', adminController.getShipmentStats);
+router.get('/shippers', adminController.getAllShippers);
+
 // Đăng ký routes với prefix /admin
 registerRoute('/admin', router);
 

@@ -841,6 +841,28 @@ class AdminController {
       return responseUtils.error(res, error.message, 500);
     }
   }
+
+  // ========== SHIPMENT MANAGEMENT ==========
+  async getShipmentStats(req, res) {
+    try {
+      const stats = await adminService.getShipmentStats();
+      return responseUtils.success(res, stats, 'Lấy thống kê vận chuyển thành công');
+    } catch (error) {
+      return responseUtils.error(res, error.message, 500);
+    }
+  }
+
+  async getAllShippers(req, res) {
+    try {
+      const { page = 1, limit = 100, search, district } = req.query;
+      const filters = { page, limit, search, district };
+      
+      const result = await adminService.getAllShippers(filters);
+      return responseUtils.success(res, result, 'Lấy danh sách shipper thành công');
+    } catch (error) {
+      return responseUtils.error(res, error.message, 500);
+    }
+  }
 }
 
 module.exports = new AdminController();
