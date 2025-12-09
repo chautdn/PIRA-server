@@ -98,17 +98,14 @@ const getWalletDebugInfo = async (req, res) => {
     }
 
     // Get all transactions
-    const transactions = await Transaction.find({ user: userId })
-      .sort({ createdAt: -1 })
-      .limit(20);
+    const transactions = await Transaction.find({ user: userId }).sort({ createdAt: -1 }).limit(20);
 
     // Get all frozen balance records
-    const frozenRecords = await FrozenBalance.find({ user: userId })
-      .sort({ createdAt: -1 });
+    const frozenRecords = await FrozenBalance.find({ user: userId }).sort({ createdAt: -1 });
 
     // Calculate frozen balance from records
     const totalFrozen = frozenRecords
-      .filter(r => r.status === 'FROZEN')
+      .filter((r) => r.status === 'FROZEN')
       .reduce((sum, r) => sum + r.amount, 0);
 
     const debugInfo = {
@@ -129,7 +126,7 @@ const getWalletDebugInfo = async (req, res) => {
         calculatedFrozen: totalFrozen,
         discrepancy: wallet.balance.frozen !== totalFrozen ? 'MISMATCH' : 'OK'
       },
-      frozenRecords: frozenRecords.map(r => ({
+      frozenRecords: frozenRecords.map((r) => ({
         _id: r._id,
         amount: r.amount,
         reason: r.reason,
@@ -138,9 +135,10 @@ const getWalletDebugInfo = async (req, res) => {
         unlocksAt: r.unlocksAt,
         unlockedAt: r.unlockedAt,
         createdAt: r.createdAt,
-        timeUntilUnlock: r.status === 'FROZEN' ? Math.max(0, Math.ceil((r.unlocksAt - Date.now()) / 1000)) : null
+        timeUntilUnlock:
+          r.status === 'FROZEN' ? Math.max(0, Math.ceil((r.unlocksAt - Date.now()) / 1000)) : null
       })),
-      recentTransactions: transactions.map(t => ({
+      recentTransactions: transactions.map((t) => ({
         _id: t._id,
         type: t.type,
         amount: t.amount,

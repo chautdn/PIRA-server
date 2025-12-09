@@ -145,7 +145,7 @@ class RentalOrderService {
       const subOrders = [];
       let totalAmount = 0;
       let totalDepositAmount = 0;
-      let totalShippingFee = 0;
+      let totalShippingFee = 0; // Final shipping fee (after discount) - what customer actually pays
 
       for (const [ownerId, products] of Object.entries(productsByOwner)) {
         const owner = await User.findById(ownerId);
@@ -175,62 +175,48 @@ class RentalOrderService {
         if (deliveryMethod === 'DELIVERY' && shippingData && shippingData.groupedShipping) {
           const ownerShippingData = shippingData.groupedShipping[ownerId];
 
-          if (ownerShippingData) {
-            // Calculate total original shipping for this SubOrder
-            const ownerShippingFee = ownerShippingData.shippingFee || 0;
+          if (ownerShippingData && ownerShippingData.deliveryBatches) {
+            // ✅ NEW: Create deliveryBatches from frontend data
+            subOrder.deliveryBatches = ownerShippingData.deliveryBatches.map((batch) => {
+              // ✅ Map productIds to product item _ids by BOTH productId AND deliveryDate
+              const productItemIds = batch.productIds
+                .map((productId) => {
+                  // Find product item matching BOTH product._id AND delivery date
+                  const productItem = subOrder.products.find((p) => {
+                    const itemDeliveryDate = p.rentalPeriod?.startDate
+                      ? new Date(p.rentalPeriod.startDate).toISOString().split('T')[0]
+                      : null;
 
-            // Calculate promotion discount proportionally for each product
-            // Frontend already allocated shipping per product based on delivery batches
-            const totalShippingBeforeDiscount = shippingData.totalShipping || 0;
-            const totalPromotionDiscount = shippingData.promotionDiscount || 0;
+                    return (
+                      p.product.toString() === productId.toString() &&
+                      itemDeliveryDate === batch.deliveryDate
+                    );
+                  });
+                  return productItem?._id;
+                })
+                .filter(Boolean);
 
-            // Calculate this SubOrder's share of the total discount
-            const ownerDiscountShare =
-              totalShippingBeforeDiscount > 0
-                ? Math.round(
-                    (ownerShippingFee / totalShippingBeforeDiscount) * totalPromotionDiscount
-                  )
-                : 0;
-
-            let subOrderFinalShipping = 0;
-
-            // Update each product's shipping fee with proportional discount
-            ownerShippingData.products.forEach((productShipping) => {
-              const product = subOrder.products.find(
-                (p) => p.product.toString() === productShipping.productId.toString()
-              );
-              if (product) {
-                const productOriginalShipping = productShipping.totalShippingFee || 0;
-
-                // Calculate this product's share of the SubOrder discount
-                // Based on its proportion of the SubOrder's total shipping
-                const productDiscountShare =
-                  ownerShippingFee > 0
-                    ? Math.round((productOriginalShipping / ownerShippingFee) * ownerDiscountShare)
-                    : 0;
-
-                const productFinalShipping = productOriginalShipping - productDiscountShare;
-
-                product.totalShippingFee = productFinalShipping;
-                product.shipping = {
-                  distance: ownerShippingData.deliveryInfo?.distance || 0,
-                  fee: {
-                    baseFee: 15000,
-                    pricePerKm: 5000,
-                    totalFee: productFinalShipping
-                  },
-                  method: 'DELIVERY',
-                  deliveryInfo: {
-                    deliveryDate: productShipping.deliveryDate
-                  }
-                };
-
-                subOrderFinalShipping += productFinalShipping;
-              }
+              return {
+                deliveryDate: batch.deliveryDate,
+                products: productItemIds,
+                distance: batch.distance || 0,
+                shippingFee: {
+                  originalFee: batch.shippingFee.originalFee || 0,
+                  discountAmount: batch.shippingFee.discountAmount || 0,
+                  finalFee: batch.shippingFee.finalFee || 0,
+                  status: 'PENDING'
+                }
+              };
             });
 
-            // Set SubOrder level shipping (sum of all products' final shipping)
-            subOrder.pricing.shippingFee = subOrderFinalShipping;
+            // Calculate total shipping fee from all batches
+            const totalShippingFee = subOrder.deliveryBatches.reduce(
+              (sum, batch) => sum + (batch.shippingFee.finalFee || 0),
+              0
+            );
+
+            // Set SubOrder level shipping
+            subOrder.pricing.shippingFee = totalShippingFee;
 
             // Set shipping object with delivery info from frontend
             subOrder.shipping = {
@@ -238,26 +224,35 @@ class RentalOrderService {
               fee: {
                 baseFee: 15000,
                 pricePerKm: 5000,
-                totalFee: ownerShippingFee,
-                discount: ownerDiscountShare,
-                finalFee: subOrderFinalShipping
+                totalFee: ownerShippingData.shippingFee || 0, // Original fee before discount
+                discount: (ownerShippingData.shippingFee || 0) - totalShippingFee,
+                finalFee: totalShippingFee
               },
               distance: ownerShippingData.deliveryInfo?.distance || 0,
               estimatedTime: ownerShippingData.deliveryInfo?.estimatedTime || 0,
               deliveryInfo: ownerShippingData.deliveryInfo || null
             };
 
-            // Apply promotion if exists (already calculated in frontend)
+            // Apply promotion if exists
             if (shippingData.activePromotion) {
+              const totalDiscount = subOrder.deliveryBatches.reduce(
+                (sum, batch) => sum + (batch.shippingFee.discountAmount || 0),
+                0
+              );
+
               subOrder.appliedPromotions = [
                 {
                   promotion: shippingData.activePromotion._id,
                   promotionType: 'SYSTEM',
-                  discountAmount: shippingData.promotionDiscount || 0,
+                  discountAmount: totalDiscount,
                   appliedTo: 'SHIPPING'
                 }
               ];
             }
+
+            console.log(
+              `📦 Created ${subOrder.deliveryBatches.length} delivery batches for SubOrder ${ownerId}`
+            );
           }
         }
 
@@ -267,14 +262,16 @@ class RentalOrderService {
         // Cộng dồn tổng tiền
         totalAmount += subOrder.pricing.subtotalRental;
         totalDepositAmount += subOrder.pricing.subtotalDeposit;
-        totalShippingFee += subOrder.pricing.shippingFee;
+        // Use final shipping fee (after discount) from pricing.shippingFee
+        // This is the amount customer actually pays
+        totalShippingFee += subOrder.pricing.shippingFee || 0;
       }
 
       // Cập nhật MasterOrder
       masterOrder.subOrders = subOrders.map((so) => so._id);
       masterOrder.totalAmount = totalAmount;
       masterOrder.totalDepositAmount = totalDepositAmount;
-      masterOrder.totalShippingFee = totalShippingFee;
+      masterOrder.totalShippingFee = totalShippingFee; // Final shipping after discount (what customer pays)
 
       await masterOrder.save();
 
@@ -1118,6 +1115,151 @@ class RentalOrderService {
       contract.signedAt = new Date();
       console.log('✅ Renter đã ký hợp đồng, hợp đồng hoàn tất');
 
+      // ✅ Process refund for rejected products after renter signs contract
+      const subOrderForRefund = await SubOrder.findOne({ contract: contractId });
+
+      if (subOrderForRefund) {
+        // Check if refund is needed
+        const hasRenterDecision = !!subOrderForRefund.renterDecision;
+        const isAccepted = subOrderForRefund.renterDecision?.status === 'ACCEPTED';
+        const isContinuePartial = subOrderForRefund.renterDecision?.choice === 'CONTINUE_PARTIAL';
+        const notYetProcessed = !subOrderForRefund.renterDecision?.refundProcessed;
+        const hasRejectedProducts = subOrderForRefund.products?.some(
+          (p) => p.productStatus === 'REJECTED'
+        );
+
+        const shouldProcessRefund =
+          (hasRenterDecision && isAccepted && isContinuePartial && notYetProcessed) ||
+          (!hasRenterDecision &&
+            hasRejectedProducts &&
+            subOrderForRefund.ownerDecision?.status === 'PARTIAL');
+
+        if (shouldProcessRefund) {
+          let refundDetails = subOrderForRefund.renterDecision?.refundDetails || {};
+
+          // Calculate refund from products if not in renterDecision
+          if (!refundDetails.totalRefund || refundDetails.totalRefund === 0) {
+            let depositRefund = 0;
+            let rentalRefund = 0;
+            let shippingRefund = 0;
+            const confirmedProductIds = [];
+
+            for (const productItem of subOrderForRefund.products) {
+              if (productItem.productStatus === 'REJECTED') {
+                depositRefund += productItem.totalDeposit || 0;
+                rentalRefund += productItem.totalRental || 0;
+              } else if (productItem.productStatus === 'CONFIRMED') {
+                confirmedProductIds.push(productItem._id);
+              }
+            }
+
+            // Calculate shipping from deliveryBatches
+            if (subOrderForRefund.deliveryBatches && subOrderForRefund.deliveryBatches.length > 0) {
+              subOrderForRefund.deliveryBatches.forEach((batch) => {
+                const hasConfirmed = batch.products.some((batchProductId) =>
+                  confirmedProductIds.some((pid) => pid.toString() === batchProductId.toString())
+                );
+
+                if (!hasConfirmed) {
+                  shippingRefund += batch.shippingFee.finalFee || 0;
+                }
+              });
+            }
+
+            refundDetails = {
+              depositRefund,
+              rentalRefund,
+              shippingRefund,
+              totalRefund: depositRefund + rentalRefund + shippingRefund
+            };
+          }
+
+          const totalRefund =
+            (refundDetails.depositRefund || 0) +
+            (refundDetails.rentalRefund || 0) +
+            (refundDetails.shippingRefund || 0);
+
+          if (totalRefund > 0) {
+            console.log(
+              `💰 Processing deferred refund after renter signed contract: ${totalRefund.toLocaleString('vi-VN')}đ`
+            );
+
+            const Wallet = require('../models/Wallet');
+            const Transaction = require('../models/Transaction');
+            const SystemWallet = require('../models/SystemWallet');
+
+            const renterId = contract.renter._id;
+            const wallet = await Wallet.findOne({ user: renterId });
+
+            if (wallet) {
+              wallet.balance.available += totalRefund;
+              await wallet.save();
+
+              const systemWallet = await SystemWallet.findOne({});
+              if (systemWallet && systemWallet.balance.available >= totalRefund) {
+                systemWallet.balance.available -= totalRefund;
+                await systemWallet.save();
+              }
+
+              const transaction = new Transaction({
+                user: renterId,
+                wallet: wallet._id,
+                type: 'refund',
+                amount: totalRefund,
+                status: 'success',
+                description: `Hoàn tiền phần bị từ chối - Đơn ${subOrderForRefund.subOrderNumber} (sau khi ký hợp đồng)`,
+                reference: subOrderForRefund.subOrderNumber,
+                paymentMethod: 'wallet',
+                fromSystemWallet: true,
+                systemWalletAction: 'refund',
+                metadata: {
+                  subOrderId: subOrderForRefund._id,
+                  contractId: contract._id,
+                  refundType: 'partial_rejection_after_contract',
+                  refundBreakdown: {
+                    depositRefund: refundDetails.depositRefund || 0,
+                    rentalRefund: refundDetails.rentalRefund || 0,
+                    shippingRefund: refundDetails.shippingRefund || 0
+                  }
+                },
+                processedAt: new Date()
+              });
+              await transaction.save();
+
+              // Mark refund as processed
+              if (subOrderForRefund.renterDecision) {
+                subOrderForRefund.renterDecision.refundProcessed = true;
+                if (subOrderForRefund.renterDecision.refundDetails) {
+                  subOrderForRefund.renterDecision.refundDetails.processedAt = new Date();
+                }
+              } else {
+                subOrderForRefund.renterDecision = {
+                  status: 'ACCEPTED',
+                  decidedAt: new Date(),
+                  choice: 'CONTINUE_PARTIAL',
+                  refundProcessed: true,
+                  refundDetails: {
+                    ...refundDetails,
+                    processedAt: new Date()
+                  }
+                };
+              }
+              await subOrderForRefund.save();
+
+              console.log(
+                `✅ Refunded ${totalRefund.toLocaleString('vi-VN')}đ to wallet after contract signing`
+              );
+            } else {
+              console.error(`❌ Wallet not found for renter ${renterId}`);
+            }
+          } else {
+            console.log(`⚠️ No refund needed (totalRefund = 0)`);
+          }
+        } else {
+          console.log('⏭️ Skipping refund - conditions not met');
+        }
+      }
+
       // Emit socket event: Notify both parties that contract is fully executed
       try {
         if (global.io) {
@@ -1552,8 +1694,6 @@ class RentalOrderService {
    * Lấy danh sách SubOrder cho chủ sản phẩm
    */
   async getSubOrdersByOwner(ownerId, options = {}) {
-    console.log('🔍 Getting SubOrders for owner:', ownerId);
-
     try {
       const { status, page = 1, limit = 10 } = options;
       const skip = (page - 1) * limit;
@@ -1605,8 +1745,6 @@ class RentalOrderService {
    * Lấy danh sách sản phẩm đang được thuê (active rentals) cho chủ sản phẩm
    */
   async getActiveRentalsByOwner(ownerId, options = {}) {
-    console.log('🔍 Getting active rentals for owner:', ownerId);
-
     try {
       const { page = 1, limit = 20 } = options;
       const skip = (page - 1) * limit;
@@ -2779,6 +2917,50 @@ class RentalOrderService {
   // ============================================================================
 
   /**
+   * ✅ NEW: Simplified shipping refund calculation using deliveryBatches
+   * Logic: If batch has ≥1 confirmed product → keep batch fee
+   *        If batch has all products rejected → refund 100% of batch fee
+   *
+   * @param {Object} subOrder - SubOrder document with deliveryBatches
+   * @param {Set} confirmedSet - Set of confirmed product _ids
+   * @returns {Number} Total shipping refund amount
+   */
+  calculateShippingRefundForPartialConfirm(subOrder, confirmedSet) {
+    if (!subOrder.deliveryBatches || subOrder.deliveryBatches.length === 0) {
+      return 0; // No batches = no refund
+    }
+
+    let totalShippingRefund = 0;
+
+    subOrder.deliveryBatches.forEach((batch) => {
+      // Check if this batch has any confirmed product
+      const hasConfirmed = batch.products.some((productItemId) =>
+        confirmedSet.has(productItemId.toString())
+      );
+
+      if (!hasConfirmed) {
+        // ALL products in this batch rejected → Refund 100% batch fee
+        const batchRefund = batch.shippingFee.finalFee || 0;
+        totalShippingRefund += batchRefund;
+
+        // Update batch status to REFUNDED
+        batch.shippingFee.status = 'REFUNDED';
+
+        console.log(
+          `📦 Batch ${batch.deliveryDate}: All products rejected → Refund ${batchRefund.toLocaleString('vi-VN')}đ`
+        );
+      } else {
+        // At least 1 confirmed → Keep batch fee (no refund)
+        console.log(
+          `📦 Batch ${batch.deliveryDate}: Has confirmed products → Keep fee ${batch.shippingFee.finalFee.toLocaleString('vi-VN')}đ`
+        );
+      }
+    });
+
+    return totalShippingRefund;
+  }
+
+  /**
    * Owner xác nhận một phần sản phẩm trong SubOrder
    * - Những sản phẩm được chọn → CONFIRMED
    * - Những sản phẩm KHÔNG được chọn → TỰ ĐỘNG REJECTED + hoàn tiền ngay lập tức
@@ -2824,6 +3006,9 @@ class RentalOrderService {
       // Chuyển sang Set để tìm kiếm nhanh
       const confirmedSet = new Set(confirmedProductIds.map((id) => id.toString()));
 
+      // ✅ NEW: Calculate shipping refund using simplified batch logic
+      const shippingRefund = this.calculateShippingRefundForPartialConfirm(subOrder, confirmedSet);
+
       let totalConfirmed = 0;
       let totalRejected = 0;
       let rejectedAmount = 0;
@@ -2845,13 +3030,19 @@ class RentalOrderService {
           productItem.rejectionReason = 'Chủ đồ chỉ xác nhận một phần đơn hàng';
           totalRejected++;
 
-          // Tính số tiền cần hoàn
+          // Tính số tiền cần hoàn (rental + deposit, shipping tính riêng ở batch level)
           const rentalAmount = productItem.totalRental || 0;
           const depositAmount = productItem.totalDeposit || 0;
-          const shippingAmount = productItem.totalShippingFee || 0;
-          rejectedAmount += rentalAmount + depositAmount + shippingAmount;
+
+          rejectedAmount += rentalAmount + depositAmount;
+
+          console.log(`   ❌ Rejected product: Rental ${rentalAmount} + Deposit ${depositAmount}`);
         }
       }
+
+      // Add shipping refund to total rejected amount
+      rejectedAmount += shippingRefund;
+      console.log(`💰 Total shipping refund: ${shippingRefund.toLocaleString('vi-VN')}đ`);
 
       // 4. Cập nhật trạng thái SubOrder
       if (totalConfirmed > 0 && totalRejected > 0) {
@@ -2918,26 +3109,31 @@ class RentalOrderService {
         // → KHÔNG hoàn tiền ngay, chờ người thuê quyết định
         console.log('⏳ Partial confirmation - waiting for renter to decide (cancel or continue)');
 
-        // Tính toán chi tiết số tiền sẽ hoàn nếu người thuê chọn hủy hoặc tiếp tục
+        // ✅ Calculate refund details (shipping calculated from batches)
         let depositForRejected = 0;
         let rentalForRejected = 0;
-        let shippingForRejected = 0;
 
         for (const productItem of subOrder.products) {
           if (productItem.productStatus === 'REJECTED') {
             depositForRejected += productItem.totalDeposit || 0;
             rentalForRejected += productItem.totalRental || 0;
-            shippingForRejected += productItem.totalShippingFee || 0;
           }
         }
 
-        // Lưu thông tin này vào renterDecision để dễ tham khảo
+        // ✅ Lưu thông tin refund vào renterDecision (bao gồm shipping từ batch calculation)
         subOrder.renterDecision.refundDetails = {
           depositRefund: depositForRejected,
           rentalRefund: rentalForRejected,
-          shippingRefund: shippingForRejected,
-          totalRefund: depositForRejected + rentalForRejected + shippingForRejected
+          shippingRefund: shippingRefund, // ✅ From batch calculation above
+          totalRefund: depositForRejected + rentalForRejected + shippingRefund
         };
+
+        console.log(`📝 Saved refund details for renter decision:`, {
+          deposit: depositForRejected,
+          rental: rentalForRejected,
+          shipping: shippingRefund,
+          total: depositForRejected + rentalForRejected + shippingRefund
+        });
       }
 
       // 6. Cập nhật confirmationSummary của MasterOrder
@@ -2954,18 +3150,26 @@ class RentalOrderService {
         totalRejected
       );
 
-      // 9. Chỉ tạo hợp đồng nếu owner xác nhận ĐỦ 100%
-      if (totalConfirmed === subOrder.products.length && totalRejected === 0) {
+      // 9. ✅ NEW: Tạo hợp đồng cho cả partial confirmation (owner ký trước)
+      if (totalConfirmed > 0) {
         // Chuyển SubOrder sang READY_FOR_CONTRACT
-        subOrder.status = 'READY_FOR_CONTRACT';
+        subOrder.status =
+          totalConfirmed === subOrder.products.length
+            ? 'READY_FOR_CONTRACT'
+            : 'PENDING_RENTER_DECISION'; // Keep status for partial, but create contract
+
         subOrder.contractStatus = {
           status: 'PENDING',
           createdAt: now
         };
         await subOrder.save({ session });
 
-        // Tạo hợp đồng cho tất cả sản phẩm được CONFIRMED
+        // Tạo hợp đồng cho tất cả sản phẩm được CONFIRMED (owner sẽ ký trước)
         await this.generatePartialContract(subOrder._id, session);
+
+        console.log(
+          `📄 Contract created for ${totalConfirmed} confirmed products - Owner will sign first`
+        );
       }
 
       await session.commitTransaction();
@@ -3304,135 +3508,140 @@ class RentalOrderService {
 
     return `
       <!DOCTYPE html>
-      <html lang="vi">
-      <head>
-        <meta charset="UTF-8">
-        <title>Hợp đồng thuê ${contractNumber}</title>
-        <style>
-          body { font-family: 'Times New Roman', serif; padding: 40px; line-height: 1.6; }
-          h1 { text-align: center; color: #2c3e50; }
-          .info { margin: 20px 0; }
-          .info strong { display: inline-block; width: 200px; }
-          table { width: 100%; border-collapse: collapse; margin: 20px 0; }
-          th, td { border: 1px solid #ddd; padding: 12px; text-align: left; }
-          th { background-color: #3498db; color: white; }
-          .total { font-weight: bold; background-color: #ecf0f1; }
-          .note { background-color: #fff3cd; padding: 15px; border-left: 4px solid #ffc107; margin: 20px 0; }
-        </style>
-      </head>
-      <body>
-        <h1>HỢP ĐỒNG THUÊ ĐỒ</h1>
-        <p style="text-align: center; font-weight: bold;">Số: ${contractNumber}</p>
-        
-        <div class="info">
-          <p><strong>BÊN CHO THUÊ:</strong> ${subOrder.owner?.profile?.firstName || 'N/A'} ${subOrder.owner?.profile?.lastName || ''}</p>
-          <p><strong>Số điện thoại:</strong> ${subOrder.owner?.phone || 'N/A'}</p>
-          <p><strong>Email:</strong> ${subOrder.owner?.email || 'N/A'}</p>
-        </div>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <title>Hợp đồng thuê ${contractNumber}</title>
+  <style>
+    body { font-family: 'Times New Roman', serif; padding: 40px; line-height: 1.6; }
+    h1 { text-align: center; color: #2c3e50; }
+    .info { margin: 20px 0; }
+    .info strong { display: inline-block; width: 200px; }
+    table { width: 100%; border-collapse: collapse; margin: 20px 0; }
+    th, td { border: 1px solid #ddd; padding: 12px; text-align: left; }
+    th { background-color: #3498db; color: white; }
+    .total { font-weight: bold; background-color: #ecf0f1; }
+    .note { background-color: #fff3cd; padding: 15px; border-left: 4px solid #ffc107; margin: 20px 0; }
+  </style>
+</head>
 
-        <div class="info">
-          <p><strong>BÊN THUÊ:</strong> ${renter?.profile?.firstName || 'N/A'} ${renter?.profile?.lastName || ''}</p>
-          <p><strong>Số điện thoại:</strong> ${renter?.phone || 'N/A'}</p>
-          <p><strong>Email:</strong> ${renter?.email || 'N/A'}</p>
-        </div>
+<body>
+  <h1>HỢP ĐỒNG THUÊ ĐỒ</h1>
+  <p style="text-align: center; font-weight: bold;">Số: ${contractNumber}</p>
 
-        <div class="note">
-          <strong>Lưu ý quan trọng:</strong> 
-          <p>Chủ đồ đã xác nhận <strong>${confirmedProducts.length}</strong> sản phẩm trong đơn hàng này. 
-          Các sản phẩm còn lại đã được tự động hủy và hoàn tiền.</p>
-        </div>
+  <div class="info">
+    <p><strong>BÊN CHO THUÊ:</strong> ${subOrder.owner?.profile?.firstName || 'N/A'} ${subOrder.owner?.profile?.lastName || ''}</p>
+    <p><strong>Số điện thoại:</strong> ${subOrder.owner?.phone || 'N/A'}</p>
+    <p><strong>Email:</strong> ${subOrder.owner?.email || 'N/A'}</p>
+  </div>
 
-        <h3>DANH SÁCH SẢN PHẨM ĐÃ XÁC NHẬN</h3>
-        <table>
-          <thead>
-            <tr>
-              <th>STT</th>
-              <th>Tên sản phẩm</th>
-              <th>Số lượng</th>
-              <th>Ngày bắt đầu</th>
-              <th>Ngày kết thúc</th>
-              <th>Giá thuê</th>
-              <th>Tiền cọc</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${productListHTML}
-            <tr class="total">
-              <td colspan="5" style="text-align: right;">TỔNG CỘNG:</td>
-              <td>${totalRental.toLocaleString('vi-VN')} VND</td>
-              <td>${totalDeposit.toLocaleString('vi-VN')} VND</td>
-            </tr>
-            <tr class="total">
-              <td colspan="5" style="text-align: right;">Phí vận chuyển:</td>
-              <td colspan="2">${totalShipping.toLocaleString('vi-VN')} VND</td>
-            </tr>
-            <tr class="total">
-              <td colspan="5" style="text-align: right;"><strong>TỔNG THANH TOÁN:</strong></td>
-              <td colspan="2"><strong>${totalAmount.toLocaleString('vi-VN')} VND</strong></td>
-            </tr>
-          </tbody>
-        </table>
+  <div class="info">
+    <p><strong>BÊN THUÊ:</strong> ${renter?.profile?.firstName || 'N/A'} ${renter?.profile?.lastName || ''}</p>
+    <p><strong>Số điện thoại:</strong> ${renter?.phone || 'N/A'}</p>
+    <p><strong>Email:</strong> ${renter?.email || 'N/A'}</p>
+  </div>
 
-        <h3>ĐIỀU KHOẢN HỢP ĐỒNG</h3>
-        <ol>
-          <li>Bên thuê cam kết sử dụng sản phẩm đúng mục đích và giữ gìn cẩn thận.</li>
-          <li>Tiền cọc sẽ được hoàn trả sau khi trả sản phẩm trong tình trạng tốt.</li>
-          <li>Nếu trả trễ, bên thuê phải chịu phí phạt theo quy định.</li>
-          <li>Nếu sản phẩm bị hư hỏng, bên thuê phải bồi thường theo giá trị thực tế.</li>
-        </ol>
-        <h3>ĐIỀU KHOẢN GIA HẠN</h3>
-        <ol>
-          <li>Bên Thuê phải hoàn thành đầy đủ các nghĩa vụ trong hợp đồng gốc để được xét duyệt gia hạn, bao gồm việc thanh toán đầy đủ các khoản phí đã phát sinh.</li>
-          <li>Thời hạn gia hạn được tính bắt đầu ngay sau khi thời hạn thuê cũ kết thúc, trừ khi hai bên có thỏa thuận khác.</li>
-          <li>Phí gia hạn được áp dụng theo đơn giá thuê tại thời điểm gia hạn hoặc theo thỏa thuận riêng giữa hai bên.</li>
-          <li>Gia hạn chỉ có hiệu lực sau khi Bên Thuê thanh toán đầy đủ chi phí gia hạn và nhận được xác nhận từ Bên Cho Thuê hoặc hệ thống.</li>
-          <li>Các quyền và nghĩa vụ của hai bên trong thời gian gia hạn tiếp tục được áp dụng như hợp đồng gốc, trừ khi có sửa đổi được ghi rõ trong phụ lục.</li>
-          <li>Mọi thiệt hại, mất mát hoặc hư hỏng tài sản xảy ra trong thời gian gia hạn đều do Bên Thuê chịu trách nhiệm.</li>
-          <li>Phụ lục gia hạn là một phần không tách rời của hợp đồng và có hiệu lực pháp lý tương đương hợp đồng gốc.</li>
-        </ol>
+  <div class="note">
+    <strong>Lưu ý quan trọng:</strong>
+    <p>Chủ đồ đã xác nhận <strong>${confirmedProducts.length}</strong> sản phẩm trong đơn hàng này. 
+    Các sản phẩm còn lại đã được tự động hủy và hoàn tiền.</p>
+  </div>
 
+  <h3>DANH SÁCH SẢN PHẨM ĐÃ XÁC NHẬN</h3>
 
-        ${
-          editableTerms?.additionalTerms && editableTerms.additionalTerms.length > 0
-            ? `
-        <h3>ĐIỀU KHOẢN BỔ SUNG</h3>
-        <ol start="5">
-          ${editableTerms.additionalTerms.map((term) => `<li><strong>${term.title}:</strong> ${term.content}</li>`).join('')}
-        </ol>
-        `
-            : ''
-        }
+  <table>
+    <thead>
+      <tr>
+        <th>STT</th>
+        <th>Tên sản phẩm</th>
+        <th>Số lượng</th>
+        <th>Ngày bắt đầu</th>
+        <th>Ngày kết thúc</th>
+        <th>Giá thuê</th>
+        <th>Tiền cọc</th>
+      </tr>
+    </thead>
 
-        ${
-          editableTerms?.customClauses
-            ? `
-        <h3>ĐIỀU KHOẢN TỰY CHỈNH</h3>
-        <p style="white-space: pre-wrap;">${editableTerms.customClauses}</p>
-        `
-            : ''
-        }
+    <tbody>
+      ${productListHTML}
 
-        ${
-          editableTerms?.specialConditions
-            ? `
-        <h3>ĐIỀU KIỆN ĐẶC BIỆT</h3>
-        <p style="white-space: pre-wrap;">${editableTerms.specialConditions}</p>
-        `
-            : ''
-        }
+      <tr class="total">
+        <td colspan="5" style="text-align: right;">TỔNG CỘNG:</td>
+        <td>${totalRental.toLocaleString('vi-VN')} VND</td>
+        <td>${totalDeposit.toLocaleString('vi-VN')} VND</td>
+      </tr>
+    </tbody>
+  </table>
 
-        <div style="margin-top: 50px; display: flex; justify-content: space-between;">
-          <div style="text-align: center;">
-            <p><strong>BÊN CHO THUÊ</strong></p>
-            <p>(Ký và ghi rõ họ tên)</p>
-          </div>
-          <div style="text-align: center;">
-            <p><strong>BÊN THUÊ</strong></p>
-            <p>(Ký và ghi rõ họ tên)</p>
-          </div>
-        </div>
-      </body>
-      </html>
+  <!-- Lưu ý về phí vận chuyển -->
+  <div class="note">
+    <strong>Lưu ý:</strong>
+    <p>Phí vận chuyển (nếu có) là chi phí riêng giữa nền tảng và Bên Thuê. 
+    Bên Cho Thuê không liên quan và không chịu trách nhiệm về khoản phí này.</p>
+  </div>
+
+  <h3>ĐIỀU KHOẢN HỢP ĐỒNG</h3>
+  <ol>
+    <li>Bên thuê cam kết sử dụng sản phẩm đúng mục đích và giữ gìn cẩn thận.</li>
+    <li>Tiền cọc sẽ được hoàn trả sau khi trả sản phẩm trong tình trạng tốt.</li>
+    <li>Nếu trả trễ, bên thuê phải chịu phí phạt theo quy định.</li>
+    <li>Nếu sản phẩm bị hư hỏng, bên thuê phải bồi thường theo giá trị thực tế.</li>
+  </ol>
+
+  <h3>ĐIỀU KHOẢN GIA HẠN</h3>
+  <ol>
+    <li>Bên Thuê phải hoàn thành đầy đủ các nghĩa vụ trong hợp đồng gốc để được xét duyệt gia hạn.</li>
+    <li>Thời hạn gia hạn được tính ngay sau khi hợp đồng cũ kết thúc, trừ khi có thỏa thuận khác.</li>
+    <li>Phí gia hạn áp dụng theo thời điểm gia hạn hoặc theo thỏa thuận.</li>
+    <li>Gia hạn chỉ có hiệu lực khi Bên Thuê thanh toán đầy đủ chi phí.</li>
+    <li>Các quyền và nghĩa vụ tiếp tục giữ nguyên trừ khi có phụ lục thay đổi.</li>
+    <li>Mọi thiệt hại trong thời gian gia hạn do Bên Thuê chịu.</li>
+    <li>Phụ lục gia hạn là một phần của hợp đồng.</li>
+  </ol>
+
+  ${
+    editableTerms?.additionalTerms && editableTerms.additionalTerms.length > 0
+      ? `
+  <h3>ĐIỀU KHOẢN BỔ SUNG</h3>
+  <ol start="5">
+    ${editableTerms.additionalTerms.map((term) => `<li><strong>${term.title}:</strong> ${term.content}</li>`).join('')}
+  </ol>
+  `
+      : ''
+  }
+
+  ${
+    editableTerms?.customClauses
+      ? `
+  <h3>ĐIỀU KHOẢN TÙY CHỈNH</h3>
+  <p style="white-space: pre-wrap;">${editableTerms.customClauses}</p>
+  `
+      : ''
+  }
+
+  ${
+    editableTerms?.specialConditions
+      ? `
+  <h3>ĐIỀU KIỆN ĐẶC BIỆT</h3>
+  <p style="white-space: pre-wrap;">${editableTerms.specialConditions}</p>
+  `
+      : ''
+  }
+
+  <div style="margin-top: 50px; display: flex; justify-content: space-between;">
+    <div style="text-align: center;">
+      <p><strong>BÊN CHO THUÊ</strong></p>
+      <p>(Ký và ghi rõ họ tên)</p>
+    </div>
+    <div style="text-align: center;">
+      <p><strong>BÊN THUÊ</strong></p>
+      <p>(Ký và ghi rõ họ tên)</p>
+    </div>
+  </div>
+
+</body>
+</html>
+
     `;
   }
 
@@ -3930,10 +4139,18 @@ class RentalOrderService {
       let totalRental = 0;
       let totalShipping = 0;
 
+      // Calculate rental and deposit from products
       for (const productItem of subOrder.products) {
         totalDeposit += productItem.totalDeposit || 0;
         totalRental += productItem.totalRental || 0;
-        totalShipping += productItem.totalShippingFee || 0;
+      }
+
+      // ✅ NEW: Calculate shipping from deliveryBatches (all batches)
+      if (subOrder.deliveryBatches && subOrder.deliveryBatches.length > 0) {
+        totalShipping = subOrder.deliveryBatches.reduce(
+          (sum, batch) => sum + (batch.shippingFee.finalFee || 0),
+          0
+        );
       }
 
       const totalRefund = totalDeposit + totalRental + totalShipping;
@@ -4019,6 +4236,24 @@ class RentalOrderService {
       subOrder.cancelReason = reason;
       await subOrder.save({ session });
 
+      // ✅ NEW: Xóa hợp đồng đã tạo (nếu có)
+      const Contract = require('../models/Contract');
+      const existingContract = await Contract.findOne({
+        subOrder: subOrder._id
+      }).session(session);
+
+      if (existingContract) {
+        // Soft delete: mark as cancelled instead of hard delete
+        existingContract.status = 'CANCELLED';
+        existingContract.cancelledAt = new Date();
+        existingContract.cancelReason = 'Người thuê từ chối đơn hàng một phần';
+        await existingContract.save({ session });
+
+        console.log(
+          `🗑️ Contract ${existingContract._id} marked as CANCELLED - Renter rejected partial order`
+        );
+      }
+
       // 7. Cập nhật MasterOrder
       await this.updateMasterOrderConfirmationSummary(masterOrder._id, session);
       await this.updateMasterOrderStatus(masterOrder._id, session);
@@ -4085,22 +4320,44 @@ class RentalOrderService {
       let rentalConfirmed = 0;
       let shippingConfirmed = 0;
 
+      // Get product IDs for confirmed and rejected products
+      const confirmedProductIds = [];
+      const rejectedProductIds = [];
+
       for (const productItem of subOrder.products) {
         if (productItem.productStatus === 'REJECTED') {
           depositRefund += productItem.totalDeposit || 0;
           rentalRefund += productItem.totalRental || 0;
-          shippingRefund += productItem.totalShippingFee || 0;
+          rejectedProductIds.push(productItem._id);
         } else if (productItem.productStatus === 'CONFIRMED') {
           depositConfirmed += productItem.totalDeposit || 0;
           rentalConfirmed += productItem.totalRental || 0;
-          shippingConfirmed += productItem.totalShippingFee || 0;
+          confirmedProductIds.push(productItem._id);
         }
+      }
+
+      // ✅ NEW: Calculate shipping from deliveryBatches
+      if (subOrder.deliveryBatches && subOrder.deliveryBatches.length > 0) {
+        subOrder.deliveryBatches.forEach((batch) => {
+          // Check if batch has confirmed products
+          const hasConfirmed = batch.products.some((batchProductId) =>
+            confirmedProductIds.some((pid) => pid.toString() === batchProductId.toString())
+          );
+
+          if (hasConfirmed) {
+            // Batch kept (has confirmed product)
+            shippingConfirmed += batch.shippingFee.finalFee || 0;
+          } else {
+            // Batch refunded (all products rejected)
+            shippingRefund += batch.shippingFee.finalFee || 0;
+          }
+        });
       }
 
       const totalRefund = depositRefund + rentalRefund + shippingRefund;
       const totalKept = depositConfirmed + rentalConfirmed + shippingConfirmed;
 
-      console.log(`💰 Renter accepted partial order - refunding rejected portion:`, {
+      console.log(`💰 Renter accepted partial order - will refund after contract signing:`, {
         refund: {
           deposit: depositRefund,
           rental: rentalRefund,
@@ -4115,87 +4372,33 @@ class RentalOrderService {
         }
       });
 
-      // 3. Hoàn tiền cho phần bị REJECTED
-      if (totalRefund > 0) {
-        const wallet = await Wallet.findOne({ user: renterId }).session(session);
-        if (!wallet) {
-          throw new Error('Không tìm thấy ví của người thuê');
-        }
+      // ✅ NEW: KHÔNG hoàn tiền ngay, chỉ lưu thông tin để hoàn sau khi ký hợp đồng
+      // Refund will be processed after renter signs the contract
 
-        // Cộng tiền vào available balance
-        wallet.balance.available += totalRefund;
-        await wallet.save({ session });
-
-        // 4. Trừ tiền từ system wallet
-        const SystemWallet = require('../models/SystemWallet');
-        const systemWallet = await SystemWallet.findOne({}).session(session);
-        if (systemWallet && systemWallet.balance.available >= totalRefund) {
-          systemWallet.balance.available -= totalRefund;
-          await systemWallet.save({ session });
-        }
-
-        // 5. Tạo transaction record với breakdown chi tiết
-        const transaction = new Transaction({
-          user: renterId,
-          wallet: wallet._id,
-          type: 'refund',
-          amount: totalRefund,
-          status: 'success',
-          description: `Hoàn tiền phần bị từ chối - Đơn ${subOrder.subOrderNumber}`,
-          reference: subOrder.subOrderNumber,
-          paymentMethod: 'wallet',
-          fromSystemWallet: true,
-          systemWalletAction: 'refund',
-          metadata: {
-            masterOrderId: masterOrder._id,
-            subOrderId: subOrder._id,
-            subOrderNumber: subOrder.subOrderNumber,
-            reason: 'Người thuê chấp nhận đơn một phần - hoàn tiền cho phần bị từ chối',
-            refundType: 'renter_accept_partial_order',
-            feeBreakdown: {
-              depositKept: depositConfirmed,
-              rentalKept: rentalConfirmed,
-              shippingKept: shippingConfirmed
-            },
-            refundBreakdown: {
-              depositRefund: depositRefund,
-              rentalRefund: rentalRefund,
-              shippingRefund: shippingRefund
-            }
-          },
-          processedAt: new Date()
-        });
-        await transaction.save({ session });
-      }
-
-      // 6. Cập nhật SubOrder
-      subOrder.status = 'RENTER_ACCEPTED_PARTIAL';
+      // 3. Cập nhật SubOrder
+      subOrder.status = 'READY_FOR_CONTRACT'; // ✅ Chuyển sang ký hợp đồng (đã có sẵn từ owner)
       subOrder.renterDecision = {
         status: 'ACCEPTED',
         decidedAt: new Date(),
         choice: 'CONTINUE_PARTIAL',
-        refundProcessed: true,
+        refundProcessed: false, // ✅ Chưa hoàn tiền, sẽ hoàn sau khi ký hợp đồng
         refundDetails: {
           depositRefund: depositRefund,
           rentalRefund: rentalRefund,
           shippingRefund: shippingRefund,
           totalRefund: totalRefund,
-          processedAt: new Date()
+          processedAt: null // ✅ Sẽ cập nhật khi hoàn tiền thực tế
         }
       };
       await subOrder.save({ session });
 
-      // 7. Tạo hợp đồng cho các sản phẩm CONFIRMED
-      subOrder.status = 'READY_FOR_CONTRACT';
-      subOrder.contractStatus = {
-        status: 'PENDING',
-        createdAt: new Date()
-      };
-      await subOrder.save({ session });
+      // ✅ Contract already exists (created by owner), renter just needs to sign
+      console.log(`✅ Renter accepted partial order - Contract ready for renter signature`);
+      console.log(
+        `⏳ Refund of ${totalRefund.toLocaleString('vi-VN')}đ will be processed after contract signing`
+      );
 
-      await this.generatePartialContract(subOrder._id, session);
-
-      // 8. Cập nhật MasterOrder
+      // 4. Cập nhật MasterOrder
       await this.updateMasterOrderConfirmationSummary(masterOrder._id, session);
       await this.updateMasterOrderStatus(masterOrder._id, session);
 
