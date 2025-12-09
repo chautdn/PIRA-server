@@ -102,7 +102,8 @@ const contractSchema = new mongoose.Schema(
         'ACTIVE', // Đang hiệu lực
         'COMPLETED', // Hoàn thành
         'TERMINATED', // Chấm dứt
-        'EXPIRED' // Hết hạn
+        'EXPIRED', // Hết hạn
+        'CANCELLED' // Hủy bỏ
       ],
       default: 'DRAFT'
     },
