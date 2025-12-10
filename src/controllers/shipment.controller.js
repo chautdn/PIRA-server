@@ -181,7 +181,6 @@ class ShipmentController {
       }
 
       const shipment = await ShipmentService.markDelivered(shipmentId, req.body);
-      console.log('✅ Shipment marked as delivered successfully');
       return res.json({ status: 'success', data: shipment });
     } catch (err) {
       console.error('deliver error', err.message);
@@ -393,13 +392,11 @@ class ShipmentController {
         proof.imagesBeforeDelivery = imageUrls;
         // Also keep first image in imageBeforeDelivery for backward compatibility
         proof.imageBeforeDelivery = imageUrls[0];
-        console.log(`✅ Updated imagesBeforeDelivery with ${imageUrls.length} image(s)`);
       } else if (shipment.status === 'IN_TRANSIT') {
         // Deliver phase - save as after delivery images
         proof.imagesAfterDelivery = imageUrls;
         // Also keep first image in imageAfterDelivery for backward compatibility
         proof.imageAfterDelivery = imageUrls[0];
-        console.log(`✅ Updated imagesAfterDelivery with ${imageUrls.length} image(s)`);
       } else {
         return res.status(400).json({ status: 'error', message: 'Shipment must be in SHIPPER_CONFIRMED or IN_TRANSIT status' });
       }
@@ -409,12 +406,10 @@ class ShipmentController {
         try {
           proof.geolocation = JSON.parse(req.body.geolocation);
         } catch (e) {
-          console.log('Invalid geolocation format');
         }
       }
 
       await proof.save();
-      console.log(`✅ ShipmentProof saved: ${proof._id}`);
 
       return res.json({ status: 'success', message: 'Proof uploaded successfully', data: proof });
     } catch (err) {

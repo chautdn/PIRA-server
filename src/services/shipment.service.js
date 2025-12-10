@@ -293,9 +293,9 @@ class ShipmentService {
     }
     
     if (shipment.type === 'DELIVERY') {
-        // DELIVERY: product → DELIVERED, subOrder → ACTIVE
+        // DELIVERY: product → ACTIVE, subOrder → ACTIVE
         if (shipment.productIndex !== undefined) {
-          shipment.subOrder.products[shipment.productIndex].productStatus = 'DELIVERED';
+          shipment.subOrder.products[shipment.productIndex].productStatus = 'ACTIVE';
         }
         shipment.subOrder.status = 'ACTIVE';
         await shipment.subOrder.save();
