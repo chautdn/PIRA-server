@@ -39,7 +39,6 @@ class ClarifaiService {
         ]
       };
 
-
       const workflowResponse = await new Promise((resolve, reject) => {
         const timeout = setTimeout(() => {
           reject(new Error('Workflow request timeout after 30 seconds'));
@@ -56,7 +55,6 @@ class ClarifaiService {
         });
       });
 
-     
       // Check if response is successful
       if (workflowResponse.status.code !== 10000) {
         console.error('Workflow failed:', workflowResponse.status.description);
@@ -83,10 +81,8 @@ class ClarifaiService {
       modelResults: []
     };
 
-   
     for (const output of results.outputs) {
       const model = output.model;
-  
 
       if (output.data && output.data.concepts) {
         const concepts = output.data.concepts.filter((concept) => concept.value > 0.5);
@@ -138,8 +134,6 @@ class ClarifaiService {
       threshold: 0.5
     };
 
-   
-
     if (!result.safe) {
       console.warn(
         `⚠️ NSFW VIOLATION: Image flagged as inappropriate (NSFW: ${(nsfwValue * 100).toFixed(1)}%)`
@@ -160,8 +154,6 @@ class ClarifaiService {
       confidence: concepts.length > 0 ? concepts[0].value : 0,
       rawConcepts: concepts
     };
-
-  
 
     return result;
   }
