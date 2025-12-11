@@ -2863,6 +2863,25 @@ class RentalOrderService {
       for (const subOrder of bookings) {
         for (const productItem of subOrder.products) {
           if (productItem.product.toString() === productId) {
+            // ✅ Only count products that are actually blocking availability
+            // Exclude: REJECTED, OWNER_NO_SHOW, DELIVERY_FAILED, RENTER_NO_SHOW, RETURN_FAILED, RETURNED, COMPLETED, CANCELLED
+            const inactiveStatuses = [
+              'REJECTED',
+              'OWNER_NO_SHOW',
+              'DELIVERY_FAILED',
+              'RENTER_NO_SHOW',
+              'RETURN_FAILED',
+              'RETURNED',
+              'COMPLETED',
+              'CANCELLED'
+            ];
+
+            const isActiveBooking = !inactiveStatuses.includes(productItem.productStatus);
+
+            if (!isActiveBooking) {
+              continue; // Skip this product - it's not blocking availability
+            }
+
             const itemStart = new Date(productItem.rentalPeriod.startDate);
             const itemEnd = new Date(productItem.rentalPeriod.endDate);
 
@@ -2880,6 +2899,7 @@ class RentalOrderService {
                 renterName:
                   `${subOrder.masterOrder?.renter?.profile?.firstName || ''} ${subOrder.masterOrder?.renter?.profile?.lastName || ''}`.trim(),
                 quantity: productItem.quantity,
+                productStatus: productItem.productStatus, // ✅ Add for debugging
                 rentalPeriod: {
                   startDate: productItem.rentalPeriod.startDate,
                   endDate: productItem.rentalPeriod.endDate,
