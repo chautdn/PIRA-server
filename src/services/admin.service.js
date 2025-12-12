@@ -2936,6 +2936,297 @@ class AdminService {
       throw new Error(`Lỗi khi xuất dữ liệu giao dịch: ${error.message}`);
     }
   }
+
+  // ========== SHIPMENT MANAGEMENT ==========
+  async getShipmentStats() {
+    try {
+      const Shipment = require('../models/Shipment');
+
+      // Get total shippers
+      const totalShippers = await User.countDocuments({ role: 'SHIPPER' });
+
+      // Get shipment statistics
+      const shipmentStats = await Shipment.aggregate([
+        {
+          $group: {
+            _id: null,
+            total: { $sum: 1 },
+            delivered: { $sum: { $cond: [{ $eq: ['$status', 'DELIVERED'] }, 1, 0] } },
+            failed: { $sum: { $cond: [{ $eq: ['$status', 'FAILED'] }, 1, 0] } },
+            totalFee: { $sum: '$fee' }
+          }
+        }
+      ]);
+
+      const stats = shipmentStats[0] || {
+        total: 0,
+        delivered: 0,
+        failed: 0,
+        totalFee: 0
+      };
+
+      // Get daily shipment stats (last 7 days)
+      const sevenDaysAgo = new Date();
+      sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+
+      const dailyStats = await Shipment.aggregate([
+        {
+          $match: {
+            createdAt: { $gte: sevenDaysAgo }
+          }
+        },
+        {
+          $group: {
+            _id: {
+              $dateToString: { format: '%Y-%m-%d', date: '$createdAt' }
+            },
+            count: { $sum: 1 }
+          }
+        },
+        { $sort: { _id: 1 } }
+      ]);
+
+      // Get top 5 shippers by shipments
+      const topShippers = await Shipment.aggregate([
+        {
+          $group: {
+            _id: '$shipper',
+            totalShipments: { $sum: 1 },
+            completedShipments: {
+              $sum: { $cond: [{ $eq: ['$status', 'DELIVERED'] }, 1, 0] }
+            },
+            totalFee: { $sum: '$fee' }
+          }
+        },
+        { $sort: { totalShipments: -1 } },
+        { $limit: 5 },
+        {
+          $lookup: {
+            from: 'users',
+            localField: '_id',
+            foreignField: '_id',
+            as: 'shipperInfo'
+          }
+        },
+        { $unwind: '$shipperInfo' }
+      ]);
+
+      // Format top shippers with profile info
+      const formattedTopShippers = topShippers.map(s => ({
+        _id: s._id,
+        profile: s.shipperInfo.profile,
+        address: s.shipperInfo.address,
+        totalShipments: s.totalShipments,
+        completedShipments: s.completedShipments,
+        revenue: s.totalFee
+      }));
+
+      return {
+        totalShippers,
+        totalShipments: stats.total,
+        successRate: stats.total > 0 ? ((stats.delivered / stats.total) * 100).toFixed(1) : 0,
+        totalRevenue: stats.totalFee,
+        dailyData: dailyStats.map(d => ({
+          date: d._id,
+          count: d.count
+        })),
+        successFailureRatio: {
+          success: stats.delivered,
+          failed: stats.failed
+        },
+        topShippers: formattedTopShippers
+      };
+    } catch (error) {
+      console.error('Error getting shipment stats:', error);
+      throw new Error(`Lỗi khi lấy thống kê vận chuyển: ${error.message}`);
+    }
+  }
+
+  async getAllShippers(filters = {}) {
+    try {
+      const { page = 1, limit = 100, search, district } = filters;
+      const skip = (page - 1) * limit;
+
+      // Build filter query
+      const filterQuery = { role: 'SHIPPER' };
+
+      if (search) {
+        filterQuery.$or = [
+          { 'profile.firstName': { $regex: search, $options: 'i' } },
+          { 'profile.fullName': { $regex: search, $options: 'i' } },
+          { email: { $regex: search, $options: 'i' } },
+          { phone: { $regex: search, $options: 'i' } }
+        ];
+      }
+
+      if (district) {
+        filterQuery['address.district'] = district;
+      }
+
+      const Shipment = require('../models/Shipment');
+
+      // Get shippers with their shipment statistics
+      const shippers = await User.find(filterQuery)
+        .select('profile email phone address status createdAt')
+        .skip(skip)
+        .limit(limit)
+        .lean();
+
+      // Enrich shipper data with shipment statistics and ratings
+      const Review = require('../models/Review');
+      const enrichedShippers = await Promise.all(
+        shippers.map(async (shipper) => {
+          const shipmentStats = await Shipment.aggregate([
+            { $match: { shipper: shipper._id } },
+            {
+              $group: {
+                _id: null,
+                totalShipments: { $sum: 1 },
+                completedShipments: {
+                  $sum: { $cond: [{ $eq: ['$status', 'DELIVERED'] }, 1, 0] }
+                },
+                totalFee: { $sum: '$fee' }
+              }
+            }
+          ]);
+
+          const stats = shipmentStats[0] || {
+            totalShipments: 0,
+            completedShipments: 0,
+            totalFee: 0
+          };
+
+          // Calculate average rating for shipper
+          const ratingStats = await Review.aggregate([
+            { $match: { targetType: 'SHIPPER', targetId: shipper._id } },
+            {
+              $group: {
+                _id: null,
+                avgRating: { $avg: '$rating' },
+                totalReviews: { $sum: 1 }
+              }
+            }
+          ]);
+
+          const rating = ratingStats[0] || { avgRating: 0, totalReviews: 0 };
+
+          return {
+            ...shipper,
+            totalShipments: stats.totalShipments,
+            completedShipments: stats.completedShipments,
+            revenue: stats.totalFee,
+            averageRating: rating.avgRating ? parseFloat(rating.avgRating.toFixed(1)) : 0,
+            totalReviews: rating.totalReviews
+          };
+        })
+      );
+
+      const total = await User.countDocuments(filterQuery);
+
+      return {
+        data: enrichedShippers,
+        pagination: {
+          page,
+          limit,
+          total,
+          totalPages: Math.ceil(total / limit)
+        }
+      };
+    } catch (error) {
+      console.error('Error getting shippers:', error);
+      throw new Error(`Lỗi khi lấy danh sách shipper: ${error.message}`);
+    }
+  }
+
+  async getShipperById(shipperId) {
+    try {
+      const Shipment = require('../models/Shipment');
+      const Review = require('../models/Review');
+
+      // Get shipper details
+      const shipper = await User.findOne({ _id: shipperId, role: 'SHIPPER' })
+        .select('profile email phone address status createdAt')
+        .lean();
+
+      if (!shipper) {
+        throw new Error('Không tìm thấy shipper');
+      }
+
+      // Get shipment statistics
+      const shipmentStats = await Shipment.aggregate([
+        { $match: { shipper: shipper._id } },
+        {
+          $group: {
+            _id: null,
+            totalShipments: { $sum: 1 },
+            completedShipments: {
+              $sum: { $cond: [{ $eq: ['$status', 'DELIVERED'] }, 1, 0] }
+            },
+            cancelledShipments: {
+              $sum: { $cond: [{ $eq: ['$status', 'CANCELLED'] }, 1, 0] }
+            },
+            failedShipments: {
+              $sum: { $cond: [{ $eq: ['$status', 'DELIVERY_FAILED'] }, 1, 0] }
+            },
+            totalFee: { $sum: '$fee' }
+          }
+        }
+      ]);
+
+      const stats = shipmentStats[0] || {
+        totalShipments: 0,
+        completedShipments: 0,
+        cancelledShipments: 0,
+        failedShipments: 0,
+        totalFee: 0
+      };
+
+      // Calculate average rating for shipper
+      const ratingStats = await Review.aggregate([
+        { $match: { targetType: 'SHIPPER', targetId: shipper._id } },
+        {
+          $group: {
+            _id: null,
+            avgRating: { $avg: '$rating' },
+            totalReviews: { $sum: 1 }
+          }
+        }
+      ]);
+
+      const rating = ratingStats[0] || { avgRating: 0, totalReviews: 0 };
+
+      // Get recent shipments
+      const recentShipments = await Shipment.find({ shipper: shipper._id })
+        .populate('masterOrder', 'orderNumber')
+        .populate('subOrder', 'subOrderNumber')
+        .sort({ createdAt: -1 })
+        .limit(20)
+        .lean();
+
+      // Get recent reviews
+      const recentReviews = await Review.find({ targetType: 'SHIPPER', targetId: shipper._id })
+        .populate('userId', 'profile.fullName profile.firstName')
+        .sort({ createdAt: -1 })
+        .limit(10)
+        .lean();
+
+      return {
+        ...shipper,
+        totalShipments: stats.totalShipments,
+        completedShipments: stats.completedShipments,
+        cancelledShipments: stats.cancelledShipments,
+        failedShipments: stats.failedShipments,
+        revenue: stats.totalFee,
+        averageRating: rating.avgRating ? parseFloat(rating.avgRating.toFixed(1)) : 0,
+        totalReviews: rating.totalReviews,
+        recentShipments,
+        recentReviews
+      };
+    } catch (error) {
+      console.error('Error getting shipper details:', error);
+      throw new Error(`Lỗi khi lấy thông tin shipper: ${error.message}`);
+    }
+  }
 }
 
 module.exports = new AdminService();

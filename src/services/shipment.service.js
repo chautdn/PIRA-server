@@ -126,7 +126,23 @@ class ShipmentService {
   }
 
   async getShipment(id) {
-    return Shipment.findById(id).populate('shipper subOrder');
+    return Shipment.findById(id).populate({
+      path: 'subOrder',
+      populate: [
+        {
+          path: 'masterOrder',
+          select: 'rentalPeriod renter masterOrderNumber',
+          populate: {
+            path: 'renter',
+            select: 'profile email phone'
+          }
+        },
+        {
+          path: 'owner',
+          select: 'profile email phone'
+        }
+      ]
+    }).populate('shipper');
   }
 
   async listByShipper(shipperId) {
@@ -290,12 +306,12 @@ class ShipmentService {
     }
 
     if (shipment.type === 'DELIVERY') {
-      // DELIVERY: product → DELIVERED, subOrder → ACTIVE
-      if (shipment.productIndex !== undefined) {
-        shipment.subOrder.products[shipment.productIndex].productStatus = 'DELIVERED';
-      }
-      shipment.subOrder.status = 'ACTIVE';
-      await shipment.subOrder.save();
+        // DELIVERY: product → ACTIVE, subOrder → ACTIVE
+        if (shipment.productIndex !== undefined) {
+          shipment.subOrder.products[shipment.productIndex].productStatus = 'ACTIVE';
+        }
+        shipment.subOrder.status = 'ACTIVE';
+        await shipment.subOrder.save();
 
       // Transfer 80% of rental fee to owner (frozen 24h)
       try {
@@ -401,23 +417,48 @@ class ShipmentService {
       shipment.subOrder.status = 'COMPLETED';
       await shipment.subOrder.save();
 
-      // Award creditScore +5 to owner if creditScore < 100
-      try {
-        const User = require('../models/User');
-        const owner = await User.findById(shipment.subOrder.owner);
-        if (owner) {
-          if (!owner.creditScore) owner.creditScore = 0;
-          if (owner.creditScore < 100) {
-            owner.creditScore = Math.min(100, owner.creditScore + 5);
-            await owner.save();
-            console.log(`   ✅ Owner creditScore +5: ${owner.creditScore} (max 100)`);
-          } else {
-            console.log(`   ℹ️ Owner creditScore already at max: ${owner.creditScore}`);
+        // Award creditScore +5 to owner if creditScore < 100
+        try {
+          const User = require('../models/User');
+          const owner = await User.findById(shipment.subOrder.owner);
+          if (owner) {
+            if (!owner.creditScore) owner.creditScore = 0;
+            if (owner.creditScore < 100) {
+              owner.creditScore = Math.min(100, owner.creditScore + 5);
+              await owner.save();
+              console.log(`   ✅ Owner creditScore +5: ${owner.creditScore} (max 100)`);
+            } else {
+              console.log(`   ℹ️ Owner creditScore already at max: ${owner.creditScore}`);
+            }
           }
+        } catch (creditErr) {
+          console.error(`   ⚠️  Failed to update creditScore:`, creditErr.message);
         }
-      } catch (creditErr) {
-        console.error(`   ⚠️  Failed to update creditScore:`, creditErr.message);
-      }
+
+        // Award loyaltyPoints +5 to both renter and owner when order completed
+        try {
+          const User = require('../models/User');
+          
+          // Add 5 loyaltyPoints to owner
+          const owner = await User.findById(shipment.subOrder.owner);
+          if (owner) {
+            if (!owner.loyaltyPoints) owner.loyaltyPoints = 0;
+            owner.loyaltyPoints += 5;
+            await owner.save();
+            console.log(`   ✅ Owner loyaltyPoints +5: ${owner.loyaltyPoints}`);
+          }
+          
+          // Add 5 loyaltyPoints to renter
+          const renter = await User.findById(shipment.subOrder.masterOrder?.renter);
+          if (renter) {
+            if (!renter.loyaltyPoints) renter.loyaltyPoints = 0;
+            renter.loyaltyPoints += 5;
+            await renter.save();
+            console.log(`   ✅ Renter loyaltyPoints +5: ${renter.loyaltyPoints}`);
+          }
+        } catch (loyaltyErr) {
+          console.error(`   ⚠️  Failed to update loyaltyPoints:`, loyaltyErr.message);
+        }
 
       // Set masterOrder status to COMPLETED (all items returned)
       try {
@@ -1331,22 +1372,47 @@ class ShipmentService {
       shipment.tracking.failureReason = 'Sản phẩm có lỗi';
       shipment.tracking.notes = notes;
       await shipment.save();
+
+      // Update product status in SubOrder to DELIVERY_FAILED
+      if (shipment.productIndex !== undefined && subOrder.products[shipment.productIndex]) {
+        subOrder.products[shipment.productIndex].productStatus = 'DELIVERY_FAILED';
+        await subOrder.save();
+        console.log(`✅ Updated product status to DELIVERY_FAILED for product at index ${shipment.productIndex}`);
+      }
     }
 
     // 5. Send notification to owner
     try {
       const NotificationService = require('./notification.service');
 
-      let ownerMessage = `Renter không nhận hàng từ shipment ${shipment.shipmentId}.`;
+      let ownerTitle = '';
+      let ownerMessage = '';
+      
       if (reason === 'NO_CONTACT') {
-        ownerMessage += ` Lý do: Không liên lạc được với renter khi trả hàng.`;
+        ownerTitle = '⚠️ Không liên lạc được với renter';
+        ownerMessage = `Shipper không thể liên lạc được với renter khi giao hàng cho shipment ${shipment.shipmentId} (SubOrder: ${subOrder.subOrderNumber}).`;
+        if (notes && notes.trim()) {
+          ownerMessage += `\n\nChi tiết: ${notes}`;
+        }
+        ownerMessage += '\n\nRenter đã bị trừ điểm tín nhiệm và một phần tiền thuê. Bạn sẽ được bồi thường.';
+      } else if (reason === 'PRODUCT_DAMAGED') {
+        ownerTitle = '⚠️ Sản phẩm có lỗi';
+        ownerMessage = `Renter không nhận hàng do sản phẩm có lỗi từ shipment ${shipment.shipmentId} (SubOrder: ${subOrder.subOrderNumber}).`;
+        if (notes && notes.trim()) {
+          ownerMessage += `\n\nLý do từ shipper: ${notes}`;
+        }
+        ownerMessage += '\n\nVui lòng kiểm tra và liên hệ với renter để giải quyết vấn đề.';
       } else {
-        ownerMessage += ` Lý do: Sản phẩm có lỗi.`;
+        ownerTitle = '⚠️ Renter không nhận hàng';
+        ownerMessage = `Renter không nhận hàng từ shipment ${shipment.shipmentId}.`;
+        if (notes && notes.trim()) {
+          ownerMessage += ` Lý do: ${notes}`;
+        }
       }
 
       await NotificationService.createNotification({
         recipient: subOrder.owner._id,
-        title: '⚠️ Renter không nhận hàng',
+        title: ownerTitle,
         message: ownerMessage,
         type: 'SHIPMENT',
         category: 'WARNING',
@@ -1354,9 +1420,12 @@ class ShipmentService {
           shipmentId: shipment.shipmentId,
           subOrderNumber: subOrder.subOrderNumber,
           reason: reason,
-          notes: notes
+          notes: notes,
+          reasonText: reason === 'NO_CONTACT' ? 'Không liên lạc được với renter' : 'Sản phẩm có lỗi'
         }
       });
+      
+      console.log(`✅ Sent notification to owner: ${ownerTitle}`);
     } catch (err) {
       console.error(`   ⚠️  Notification to owner failed: ${err.message}`);
     }
