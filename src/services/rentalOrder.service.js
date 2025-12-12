@@ -4958,10 +4958,20 @@ class RentalOrderService {
       });
       await transaction.save({ session });
 
-      // 6. Cập nhật SubOrder
+      // 6. Cập nhật SubOrder và tất cả products
       subOrder.status = 'CANCELLED';
       subOrder.cancelledAt = new Date();
       subOrder.cancelReason = reason;
+
+      // Cập nhật productStatus của tất cả products thành REJECTED
+      subOrder.products.forEach((productItem) => {
+        if (productItem.productStatus === 'PENDING') {
+          productItem.productStatus = 'REJECTED';
+          productItem.rejectedAt = new Date();
+          productItem.rejectionReason = reason;
+        }
+      });
+
       await subOrder.save({ session });
 
       // 7. Cập nhật MasterOrder
@@ -5004,5 +5014,4 @@ class RentalOrderService {
     }
   }
 }
-
 module.exports = new RentalOrderService();
