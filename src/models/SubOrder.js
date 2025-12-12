@@ -190,10 +190,7 @@ const subOrderSchema = new mongoose.Schema(
         actualReturnDate: Date, // Ngày trả thực tế (cho early return)
         totalRental: Number,
         totalDeposit: Number,
-        totalShippingFee: {
-          type: Number,
-          default: 0 // Individual product shipping fee
-        },
+        // ❌ REMOVED: totalShippingFee - Không còn tính phí ship theo product nữa
 
         // Disputes liên quan đến product này
         disputes: [
@@ -202,6 +199,56 @@ const subOrderSchema = new mongoose.Schema(
             ref: 'Dispute'
           }
         ]
+      }
+    ],
+
+    // ✅ NEW: Delivery Batches - Nhóm giao hàng theo ngày
+    // Mỗi batch = 1 chuyến giao hàng (có thể giao nhiều products cùng lúc)
+    deliveryBatches: [
+      {
+        deliveryDate: {
+          type: String, // YYYY-MM-DD format
+          required: true
+        },
+        products: [
+          {
+            type: mongoose.Schema.Types.ObjectId, // Reference to product item _id in products array
+            required: true
+          }
+        ],
+        distance: {
+          type: Number, // km from owner to renter
+          default: 0
+        },
+        shippingFee: {
+          originalFee: {
+            type: Number, // Phí gốc trước discount
+            default: 0
+          },
+          discountAmount: {
+            type: Number, // Số tiền được giảm
+            default: 0
+          },
+          finalFee: {
+            type: Number, // Phí thực tế phải trả = originalFee - discountAmount
+            required: true,
+            default: 0
+          },
+          status: {
+            type: String,
+            enum: ['PENDING', 'PAID', 'REFUNDED', 'CANCELLED'],
+            default: 'PENDING'
+          }
+        },
+        // Tracking info
+        shipment: {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: 'Shipment'
+        },
+        createdAt: {
+          type: Date,
+          default: Date.now
+        }
       }
     ],
 

@@ -34,9 +34,7 @@ class AdminService {
         this.getMonthlyRevenue()
       ]);
 
-      const usersByRole = await User.aggregate([
-        { $group: { _id: '$role', count: { $sum: 1 } } }
-      ]);
+      const usersByRole = await User.aggregate([{ $group: { _id: '$role', count: { $sum: 1 } } }]);
 
       const productsByStatus = await Product.aggregate([
         { $group: { _id: '$status', count: { $sum: 1 } } }
@@ -87,11 +85,11 @@ class AdminService {
     sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
 
     return await Order.aggregate([
-      { 
-        $match: { 
+      {
+        $match: {
           createdAt: { $gte: sixMonthsAgo },
           status: 'COMPLETED'
-        } 
+        }
       },
       {
         $group: {
@@ -106,10 +104,517 @@ class AdminService {
     ]);
   }
 
+  // ========== ADVANCED STATISTICS ==========
+  async getRevenueStatistics({ period = 'month', startDate, endDate }) {
+    try {
+      // Determine date range
+      const dateRange = this.getDateRange(period, startDate, endDate);
+
+      // Get previous period for comparison
+      const previousDateRange = this.getPreviousDateRange(dateRange, period);
+
+      // Get detailed revenue breakdown
+      const [
+        orderRevenue,
+        shippingRevenue,
+        promotionRevenue,
+        platformFees,
+        timeSeriesData,
+        previousRevenue
+      ] = await Promise.all([
+        this.getOrderRevenue(dateRange),
+        this.getShippingRevenue(dateRange),
+        this.getPromotionRevenue(dateRange),
+        this.getPlatformFees(dateRange),
+        this.getTimeSeriesRevenue(dateRange, period),
+        this.getTotalRevenue(previousDateRange)
+      ]);
+
+      const totalRevenue = orderRevenue + shippingRevenue + promotionRevenue + platformFees;
+
+      // Calculate growth rate
+      const growthRate =
+        previousRevenue > 0
+          ? (((totalRevenue - previousRevenue) / previousRevenue) * 100).toFixed(2)
+          : 0;
+
+      return {
+        summary: {
+          total: totalRevenue,
+          orderRevenue,
+          shippingRevenue,
+          promotionRevenue,
+          platformFees,
+          growthRate: parseFloat(growthRate)
+        },
+        breakdown: {
+          bySource: [
+            { name: 'Đơn hàng', value: orderRevenue },
+            { name: 'Phí vận chuyển', value: shippingRevenue },
+            { name: 'Quảng cáo', value: promotionRevenue },
+            { name: 'Phí nền tảng', value: platformFees }
+          ]
+        },
+        timeSeries: timeSeriesData,
+        period,
+        dateRange
+      };
+    } catch (error) {
+      throw new Error(`Lỗi khi lấy thống kê doanh thu: ${error.message}`);
+    }
+  }
+
+  async getProfitStatistics({ period = 'month', startDate, endDate }) {
+    try {
+      const dateRange = this.getDateRange(period, startDate, endDate);
+      const previousDateRange = this.getPreviousDateRange(dateRange, period);
+
+      // Get revenue and costs for current and previous period
+      const [revenueStats, costs, previousProfit] = await Promise.all([
+        this.getRevenueStatistics({ period, startDate, endDate }),
+        this.getOperatingCosts(dateRange),
+        this.getProfit(previousDateRange)
+      ]);
+
+      const profit = revenueStats.summary.total - costs.total;
+      const profitMargin =
+        revenueStats.summary.total > 0 ? (profit / revenueStats.summary.total) * 100 : 0;
+
+      // Calculate growth rate
+      const profitGrowthRate =
+        previousProfit > 0 ? (((profit - previousProfit) / previousProfit) * 100).toFixed(2) : 0;
+
+      return {
+        summary: {
+          totalRevenue: revenueStats.summary.total,
+          totalCosts: costs.total,
+          profit,
+          profitMargin: parseFloat(profitMargin.toFixed(2)),
+          growthRate: parseFloat(profitGrowthRate)
+        },
+        revenue: revenueStats.summary,
+        costs: costs.breakdown,
+        timeSeries: await this.getTimeSeriesProfit(dateRange, period),
+        period,
+        dateRange
+      };
+    } catch (error) {
+      throw new Error(`Lỗi khi lấy thống kê lợi nhuận: ${error.message}`);
+    }
+  }
+
+  getDateRange(period, startDate, endDate) {
+    const now = new Date();
+    let start, end;
+
+    if (startDate && endDate) {
+      start = new Date(startDate);
+      end = new Date(endDate);
+    } else {
+      end = now;
+      switch (period) {
+        case 'day':
+          start = new Date(now);
+          start.setHours(0, 0, 0, 0);
+          break;
+        case 'week':
+          start = new Date(now);
+          start.setDate(now.getDate() - 7);
+          break;
+        case 'month':
+          start = new Date(now);
+          start.setMonth(now.getMonth() - 1);
+          break;
+        case 'quarter':
+          start = new Date(now);
+          start.setMonth(now.getMonth() - 3);
+          break;
+        case 'year':
+          start = new Date(now);
+          start.setFullYear(now.getFullYear() - 1);
+          break;
+        default:
+          start = new Date(now);
+          start.setMonth(now.getMonth() - 1);
+      }
+    }
+
+    return { start, end };
+  }
+
+  getPreviousDateRange(currentRange, period) {
+    const { start, end } = currentRange;
+    const duration = end - start;
+
+    return {
+      start: new Date(start.getTime() - duration),
+      end: new Date(start.getTime())
+    };
+  }
+
+  async getTotalRevenue(dateRange) {
+    const [orderRevenue, shippingRevenue, promotionRevenue, platformFees] = await Promise.all([
+      this.getOrderRevenue(dateRange),
+      this.getShippingRevenue(dateRange),
+      this.getPromotionRevenue(dateRange),
+      this.getPlatformFees(dateRange)
+    ]);
+
+    return orderRevenue + shippingRevenue + promotionRevenue + platformFees;
+  }
+
+  async getProfit(dateRange) {
+    const revenue = await this.getTotalRevenue(dateRange);
+    const costs = await this.getOperatingCosts(dateRange);
+    return revenue - costs.total;
+  }
+
+  async getOrderRevenue(dateRange) {
+    // Sử dụng SubOrder để tính doanh thu chi tiết hơn
+    const result = await SubOrder.aggregate([
+      {
+        $match: {
+          createdAt: { $gte: dateRange.start, $lte: dateRange.end },
+          status: 'COMPLETED'
+        }
+      },
+      {
+        $group: {
+          _id: null,
+          total: { $sum: '$pricing.subtotalRental' } // Chỉ tính tiền thuê, không bao gồm deposit
+        }
+      }
+    ]);
+
+    return result.length > 0 ? result[0].total : 0;
+  }
+
+  async getShippingRevenue(dateRange) {
+    // Sử dụng SubOrder để tính phí ship chi tiết từ pricing.shippingFee
+    const result = await SubOrder.aggregate([
+      {
+        $match: {
+          createdAt: { $gte: dateRange.start, $lte: dateRange.end },
+          status: 'COMPLETED'
+        }
+      },
+      {
+        $group: {
+          _id: null,
+          total: { $sum: '$pricing.shippingFee' }
+        }
+      }
+    ]);
+
+    return result.length > 0 ? result[0].total : 0;
+  }
+
+  async getPromotionRevenue(dateRange) {
+    const result = await Transaction.aggregate([
+      {
+        $match: {
+          createdAt: { $gte: dateRange.start, $lte: dateRange.end },
+          type: 'PROMOTION_REVENUE',
+          status: 'success'
+        }
+      },
+      {
+        $group: {
+          _id: null,
+          total: { $sum: '$amount' }
+        }
+      }
+    ]);
+
+    return result.length > 0 ? result[0].total : 0;
+  }
+
+  async getPlatformFees(dateRange) {
+    // Platform fee is typically 5-10% of order revenue
+    const orderRevenue = await this.getOrderRevenue(dateRange);
+    const platformFeeRate = 0.05; // 5%
+    return orderRevenue * platformFeeRate;
+  }
+
+  async getOperatingCosts(dateRange) {
+    // Calculate refunds and penalties as costs
+    const refunds = await Transaction.aggregate([
+      {
+        $match: {
+          createdAt: { $gte: dateRange.start, $lte: dateRange.end },
+          type: 'refund',
+          status: 'success'
+        }
+      },
+      {
+        $group: {
+          _id: null,
+          total: { $sum: '$amount' }
+        }
+      }
+    ]);
+
+    const refundTotal = refunds.length > 0 ? refunds[0].total : 0;
+
+    return {
+      total: refundTotal,
+      breakdown: {
+        refunds: refundTotal,
+        maintenance: 0,
+        support: 0
+      }
+    };
+  }
+
+  async getTimeSeriesRevenue(dateRange, period) {
+    let groupBy;
+
+    switch (period) {
+      case 'day':
+        groupBy = {
+          year: { $year: '$createdAt' },
+          month: { $month: '$createdAt' },
+          day: { $dayOfMonth: '$createdAt' },
+          hour: { $hour: '$createdAt' }
+        };
+        break;
+      case 'week':
+      case 'month':
+        groupBy = {
+          year: { $year: '$createdAt' },
+          month: { $month: '$createdAt' },
+          day: { $dayOfMonth: '$createdAt' }
+        };
+        break;
+      case 'quarter':
+      case 'year':
+        groupBy = {
+          year: { $year: '$createdAt' },
+          month: { $month: '$createdAt' }
+        };
+        break;
+      default:
+        groupBy = {
+          year: { $year: '$createdAt' },
+          month: { $month: '$createdAt' }
+        };
+    }
+
+    const data = await SubOrder.aggregate([
+      {
+        $match: {
+          createdAt: { $gte: dateRange.start, $lte: dateRange.end },
+          status: 'COMPLETED'
+        }
+      },
+      {
+        $group: {
+          _id: groupBy,
+          revenue: { $sum: '$pricing.subtotalRental' },
+          shippingFee: { $sum: '$pricing.shippingFee' },
+          orderCount: { $sum: 1 }
+        }
+      },
+      { $sort: { '_id.year': 1, '_id.month': 1, '_id.day': 1, '_id.hour': 1 } }
+    ]);
+
+    return data.map((item) => ({
+      date: this.formatDate(item._id, period),
+      revenue: item.revenue,
+      shippingFee: item.shippingFee,
+      orderCount: item.orderCount
+    }));
+  }
+
+  async getTimeSeriesProfit(dateRange, period) {
+    const revenueData = await this.getTimeSeriesRevenue(dateRange, period);
+
+    return revenueData.map((item) => ({
+      ...item,
+      profit: item.revenue * 0.95 // Simplified: 95% profit margin
+    }));
+  }
+
+  formatDate(dateObj, period) {
+    const { year, month, day, hour } = dateObj;
+
+    if (period === 'day' && hour !== undefined) {
+      return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')} ${String(hour).padStart(2, '0')}:00`;
+    } else if ((period === 'week' || period === 'month') && day !== undefined) {
+      return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+    } else {
+      return `${year}-${String(month).padStart(2, '0')}`;
+    }
+  }
+
+  // ========== SUBORDER SPECIFIC STATISTICS ==========
+
+  /**
+   * Lấy doanh thu theo từng owner (chủ cho thuê)
+   */
+  async getRevenueByOwner(dateRange, limit = 10) {
+    const result = await SubOrder.aggregate([
+      {
+        $match: {
+          createdAt: { $gte: dateRange.start, $lte: dateRange.end },
+          status: 'COMPLETED'
+        }
+      },
+      {
+        $group: {
+          _id: '$owner',
+          totalRevenue: { $sum: '$pricing.subtotalRental' },
+          totalShipping: { $sum: '$pricing.shippingFee' },
+          totalDeposit: { $sum: '$pricing.subtotalDeposit' },
+          orderCount: { $sum: 1 }
+        }
+      },
+      {
+        $lookup: {
+          from: 'users',
+          localField: '_id',
+          foreignField: '_id',
+          as: 'ownerInfo'
+        }
+      },
+      {
+        $unwind: '$ownerInfo'
+      },
+      {
+        $project: {
+          ownerId: '$_id',
+          ownerName: '$ownerInfo.fullName',
+          ownerEmail: '$ownerInfo.email',
+          totalRevenue: 1,
+          totalShipping: 1,
+          totalDeposit: 1,
+          orderCount: 1,
+          averageOrderValue: { $divide: ['$totalRevenue', '$orderCount'] }
+        }
+      },
+      { $sort: { totalRevenue: -1 } },
+      { $limit: limit }
+    ]);
+
+    return result;
+  }
+
+  /**
+   * Lấy thống kê deposit (tiền cọc)
+   */
+  async getDepositStatistics(dateRange) {
+    const result = await SubOrder.aggregate([
+      {
+        $match: {
+          createdAt: { $gte: dateRange.start, $lte: dateRange.end },
+          status: { $in: ['COMPLETED', 'ACTIVE', 'DELIVERED'] }
+        }
+      },
+      {
+        $group: {
+          _id: null,
+          totalDeposit: { $sum: '$pricing.subtotalDeposit' },
+          totalRefunded: {
+            $sum: {
+              $cond: [{ $eq: ['$status', 'COMPLETED'] }, '$pricing.subtotalDeposit', 0]
+            }
+          },
+          totalHeld: {
+            $sum: {
+              $cond: [{ $in: ['$status', ['ACTIVE', 'DELIVERED']] }, '$pricing.subtotalDeposit', 0]
+            }
+          },
+          orderCount: { $sum: 1 }
+        }
+      }
+    ]);
+
+    return result.length > 0
+      ? result[0]
+      : {
+          totalDeposit: 0,
+          totalRefunded: 0,
+          totalHeld: 0,
+          orderCount: 0
+        };
+  }
+
+  /**
+   * Lấy sản phẩm được thuê nhiều nhất
+   */
+  async getTopRentalProducts(dateRange, limit = 10) {
+    const result = await SubOrder.aggregate([
+      {
+        $match: {
+          createdAt: { $gte: dateRange.start, $lte: dateRange.end },
+          status: 'COMPLETED'
+        }
+      },
+      { $unwind: '$products' },
+      {
+        $group: {
+          _id: '$products.product',
+          totalQuantity: { $sum: '$products.quantity' },
+          totalRevenue: { $sum: '$products.totalRental' },
+          orderCount: { $sum: 1 }
+        }
+      },
+      {
+        $lookup: {
+          from: 'products',
+          localField: '_id',
+          foreignField: '_id',
+          as: 'productInfo'
+        }
+      },
+      {
+        $unwind: '$productInfo'
+      },
+      {
+        $project: {
+          productId: '$_id',
+          productName: '$productInfo.title',
+          productImage: '$productInfo.images.0',
+          totalQuantity: 1,
+          totalRevenue: 1,
+          orderCount: 1,
+          averageRevenue: { $divide: ['$totalRevenue', '$orderCount'] }
+        }
+      },
+      { $sort: { totalQuantity: -1 } },
+      { $limit: limit }
+    ]);
+
+    return result;
+  }
+
+  /**
+   * Thống kê theo trạng thái SubOrder
+   */
+  async getSubOrderStatusBreakdown(dateRange) {
+    const result = await SubOrder.aggregate([
+      {
+        $match: {
+          createdAt: { $gte: dateRange.start, $lte: dateRange.end }
+        }
+      },
+      {
+        $group: {
+          _id: '$status',
+          count: { $sum: 1 },
+          totalRevenue: { $sum: '$pricing.subtotalRental' }
+        }
+      },
+      { $sort: { count: -1 } }
+    ]);
+
+    return result;
+  }
+
   // ========== USER MANAGEMENT ==========
   async getAllUsers(filters) {
     const { page = 1, limit = 10, search, role, status } = filters;
-    
+
     let query = {};
 
     // Search by name or email
@@ -183,12 +688,12 @@ class AdminService {
 
     if (stats && stats.length > 0) {
       const { statusStats, roleStats, total: totalCount } = stats[0];
-      
+
       // Total users
       userStats.total = totalCount && totalCount.length > 0 ? totalCount[0].count : 0;
-      
+
       // Status stats
-      statusStats.forEach(stat => {
+      statusStats.forEach((stat) => {
         if (stat._id === 'ACTIVE') {
           userStats.active = stat.count;
         } else if (stat._id === 'INACTIVE') {
@@ -197,9 +702,9 @@ class AdminService {
           userStats.suspended = stat.count;
         }
       });
-      
+
       // Role stats
-      roleStats.forEach(stat => {
+      roleStats.forEach((stat) => {
         if (stat._id === 'OWNER') {
           userStats.owners = stat.count;
         } else if (stat._id === 'RENTER') {
@@ -230,19 +735,23 @@ class AdminService {
     }
 
     try {
-      const user = await User.findById(userId).select('-password -address.coordinates -verification');
-      
+      const user = await User.findById(userId).select(
+        '-password -address.coordinates -verification'
+      );
+
       if (!user) {
         throw new Error('Không tìm thấy người dùng');
       }
 
       return user;
-      
     } catch (error) {
-      if (error.message === 'Không tìm thấy người dùng' || error.message === 'ID người dùng không hợp lệ') {
+      if (
+        error.message === 'Không tìm thấy người dùng' ||
+        error.message === 'ID người dùng không hợp lệ'
+      ) {
         throw error;
       }
-      
+
       throw new Error(`Lỗi server khi tải thông tin người dùng: ${error.message}`);
     }
   }
@@ -259,7 +768,7 @@ class AdminService {
 
     const user = await User.findByIdAndUpdate(
       userId,
-      { 
+      {
         status,
         updatedAt: new Date()
       },
@@ -285,7 +794,7 @@ class AdminService {
 
     const user = await User.findByIdAndUpdate(
       userId,
-      { 
+      {
         role,
         updatedAt: new Date()
       },
@@ -320,7 +829,7 @@ class AdminService {
 
       // Prepare update object with nested fields
       const updateFields = {};
-      
+
       // Handle direct fields
       if (updateData.email !== undefined) updateFields.email = updateData.email;
       if (updateData.phone !== undefined) updateFields.phone = updateData.phone;
@@ -334,23 +843,33 @@ class AdminService {
         }
         updateFields.creditScore = score;
       }
-      
+
       // Handle profile nested object
       if (updateData.profile) {
-        if (updateData.profile.firstName !== undefined) updateFields['profile.firstName'] = updateData.profile.firstName;
-        if (updateData.profile.lastName !== undefined) updateFields['profile.lastName'] = updateData.profile.lastName;
-        if (updateData.profile.avatar !== undefined) updateFields['profile.avatar'] = updateData.profile.avatar;
-        if (updateData.profile.dateOfBirth !== undefined) updateFields['profile.dateOfBirth'] = updateData.profile.dateOfBirth;
-        if (updateData.profile.gender !== undefined) updateFields['profile.gender'] = updateData.profile.gender;
+        if (updateData.profile.firstName !== undefined)
+          updateFields['profile.firstName'] = updateData.profile.firstName;
+        if (updateData.profile.lastName !== undefined)
+          updateFields['profile.lastName'] = updateData.profile.lastName;
+        if (updateData.profile.avatar !== undefined)
+          updateFields['profile.avatar'] = updateData.profile.avatar;
+        if (updateData.profile.dateOfBirth !== undefined)
+          updateFields['profile.dateOfBirth'] = updateData.profile.dateOfBirth;
+        if (updateData.profile.gender !== undefined)
+          updateFields['profile.gender'] = updateData.profile.gender;
       }
-      
-      // Handle address nested object  
+
+      // Handle address nested object
       if (updateData.address) {
-        if (updateData.address.streetAddress !== undefined) updateFields['address.streetAddress'] = updateData.address.streetAddress;
-        if (updateData.address.district !== undefined) updateFields['address.district'] = updateData.address.district;
-        if (updateData.address.city !== undefined) updateFields['address.city'] = updateData.address.city;
-        if (updateData.address.province !== undefined) updateFields['address.province'] = updateData.address.province;
-        if (updateData.address.country !== undefined) updateFields['address.country'] = updateData.address.country;
+        if (updateData.address.streetAddress !== undefined)
+          updateFields['address.streetAddress'] = updateData.address.streetAddress;
+        if (updateData.address.district !== undefined)
+          updateFields['address.district'] = updateData.address.district;
+        if (updateData.address.city !== undefined)
+          updateFields['address.city'] = updateData.address.city;
+        if (updateData.address.province !== undefined)
+          updateFields['address.province'] = updateData.address.province;
+        if (updateData.address.country !== undefined)
+          updateFields['address.country'] = updateData.address.country;
       }
 
       updateFields.updatedAt = new Date();
@@ -359,8 +878,8 @@ class AdminService {
       const updatedUser = await User.findByIdAndUpdate(
         userId,
         { $set: updateFields },
-        { 
-          new: true, 
+        {
+          new: true,
           runValidators: true,
           select: '-password'
         }
@@ -371,13 +890,12 @@ class AdminService {
       }
 
       return updatedUser;
-
     } catch (error) {
       if (error.name === 'ValidationError') {
-        const validationErrors = Object.values(error.errors).map(err => err.message);
+        const validationErrors = Object.values(error.errors).map((err) => err.message);
         throw new Error(`Dữ liệu không hợp lệ: ${validationErrors.join(', ')}`);
       }
-      
+
       throw new Error(`Lỗi cập nhật người dùng: ${error.message}`);
     }
   }
@@ -401,7 +919,7 @@ class AdminService {
 
   //   const user = await User.findByIdAndUpdate(
   //     userId,
-  //     { 
+  //     {
   //       creditScore: score,
   //       updatedAt: new Date()
   //     },
@@ -429,8 +947,8 @@ class AdminService {
     // Validate updateData
     const allowedFields = ['status', 'role'];
     const filteredUpdateData = {};
-    
-    Object.keys(updateData).forEach(key => {
+
+    Object.keys(updateData).forEach((key) => {
       if (allowedFields.includes(key)) {
         filteredUpdateData[key] = updateData[key];
       }
@@ -444,10 +962,7 @@ class AdminService {
     filteredUpdateData.updatedAt = new Date();
 
     // Perform bulk update
-    const result = await User.updateMany(
-      { _id: { $in: userIds } },
-      { $set: filteredUpdateData }
-    );
+    const result = await User.updateMany({ _id: { $in: userIds } }, { $set: filteredUpdateData });
 
     return {
       matchedCount: result.matchedCount,
@@ -473,7 +988,7 @@ class AdminService {
       // If user is OWNER, get orders containing their products through SubOrders
       if (user.role === 'OWNER') {
         const SubOrder = require('../models/SubOrder');
-        
+
         // Find all SubOrders where the product belongs to this owner
         const subOrders = await SubOrder.find({})
           .populate({
@@ -492,7 +1007,7 @@ class AdminService {
           .limit(50);
 
         // Filter out subOrders where product didn't match (owner is different)
-        const filteredSubOrders = subOrders.filter(subOrder => subOrder.product);
+        const filteredSubOrders = subOrders.filter((subOrder) => subOrder.product);
 
         return filteredSubOrders;
       } else {
@@ -516,7 +1031,10 @@ class AdminService {
         return orders;
       }
     } catch (error) {
-      if (error.message === 'Không tìm thấy người dùng' || error.message === 'ID người dùng không hợp lệ') {
+      if (
+        error.message === 'Không tìm thấy người dùng' ||
+        error.message === 'ID người dùng không hợp lệ'
+      ) {
         throw error;
       }
       throw new Error(`Lỗi khi lấy đơn hàng: ${error.message}`);
@@ -548,7 +1066,10 @@ class AdminService {
 
       return [];
     } catch (error) {
-      if (error.message === 'Không tìm thấy người dùng' || error.message === 'ID người dùng không hợp lệ') {
+      if (
+        error.message === 'Không tìm thấy người dùng' ||
+        error.message === 'ID người dùng không hợp lệ'
+      ) {
         throw error;
       }
       throw new Error(`Lỗi khi lấy sản phẩm: ${error.message}`);
@@ -573,7 +1094,10 @@ class AdminService {
         status: user.bankAccount?.status || 'PENDING'
       };
     } catch (error) {
-      if (error.message === 'Không tìm thấy người dùng' || error.message === 'ID người dùng không hợp lệ') {
+      if (
+        error.message === 'Không tìm thấy người dùng' ||
+        error.message === 'ID người dùng không hợp lệ'
+      ) {
         throw error;
       }
       throw new Error(`Lỗi khi lấy thông tin ngân hàng: ${error.message}`);
@@ -582,8 +1106,16 @@ class AdminService {
 
   // ========== PRODUCT MANAGEMENT ==========
   async getAllProducts(filters) {
-    const { page = 1, limit = 10, status, search, category, sortBy = 'createdAt', sortOrder = 'desc' } = filters;
-    
+    const {
+      page = 1,
+      limit = 10,
+      status,
+      search,
+      category,
+      sortBy = 'createdAt',
+      sortOrder = 'desc'
+    } = filters;
+
     let query = {};
 
     if (status && status !== 'all') {
@@ -601,7 +1133,7 @@ class AdminService {
       query.category = category;
     }
 
-     const skip = (parseInt(page) - 1) * parseInt(limit);
+    const skip = (parseInt(page) - 1) * parseInt(limit);
 
     const sortOptions = {};
     sortOptions[sortBy] = sortOrder === 'desc' ? -1 : 1;
@@ -636,7 +1168,7 @@ class AdminService {
     console.log('=== Admin Service getProductById ===');
     console.log('ProductId received:', productId);
     console.log('ProductId type:', typeof productId);
-    
+
     // Validate productId
     if (!productId) {
       console.log('ProductId is missing');
@@ -659,7 +1191,7 @@ class AdminService {
 
       console.log('Database query completed');
       console.log('Product found:', !!product);
-      
+
       if (!product) {
         console.log('Product not found in database');
         throw new Error('Không tìm thấy sản phẩm');
@@ -702,18 +1234,18 @@ class AdminService {
       console.log('Product status:', product.status);
       console.log('Product owner:', product.owner?.email);
       console.log('Product metrics:', product.metrics);
-      
+
       return product;
     } catch (error) {
       console.error('=== Admin Service getProductById ERROR ===');
       console.error('Error during database query:', error.message);
       console.error('Error stack:', error.stack);
       console.error('========================================');
-      
+
       if (error.message === 'Không tìm thấy sản phẩm') {
         throw error;
       }
-      
+
       throw new Error('Lỗi khi truy xuất dữ liệu sản phẩm');
     }
   }
@@ -721,7 +1253,7 @@ class AdminService {
   async updateProductStatus(productId, status, adminId) {
     console.log('=== Admin Service updateProductStatus ===');
     console.log('Input params:', { productId, status, adminId });
-    
+
     // Validate productId
     if (!productId) {
       throw new Error('ID sản phẩm không hợp lệ');
@@ -739,7 +1271,7 @@ class AdminService {
     }
 
     try {
-      const updateData = { 
+      const updateData = {
         status,
         updatedAt: new Date()
       };
@@ -754,14 +1286,13 @@ class AdminService {
       }
 
       console.log('Updating product with data:', updateData);
-      
-      const product = await Product.findByIdAndUpdate(
-        productId,
-        updateData,
-        { new: true, runValidators: true }
-      )
-      .populate('owner', 'fullName username email phone')
-      .populate('category', 'name slug');
+
+      const product = await Product.findByIdAndUpdate(productId, updateData, {
+        new: true,
+        runValidators: true
+      })
+        .populate('owner', 'fullName username email phone')
+        .populate('category', 'name slug');
 
       if (!product) {
         throw new Error('Không tìm thấy sản phẩm');
@@ -774,7 +1305,7 @@ class AdminService {
         try {
           const sendMail = require('../utils/mailer');
           const emailTemplates = require('../utils/emailTemplates');
-          
+
           const ownerName = product.owner.fullName || product.owner.username || 'Chủ sản phẩm';
           const suspendedAt = new Date().toLocaleString('vi-VN', {
             year: 'numeric',
@@ -783,9 +1314,10 @@ class AdminService {
             hour: '2-digit',
             minute: '2-digit'
           });
-          
-          const suspensionReason = product.moderation?.suspensionReason || 'Sản phẩm vi phạm quy định của hệ thống';
-          
+
+          const suspensionReason =
+            product.moderation?.suspensionReason || 'Sản phẩm vi phạm quy định của hệ thống';
+
           await sendMail({
             email: product.owner.email,
             subject: '⚠️ Thông báo: Sản phẩm của bạn đã bị đình chỉ',
@@ -796,7 +1328,7 @@ class AdminService {
               suspendedAt
             )
           });
-          
+
           console.log('Suspension notification email sent to:', product.owner.email);
         } catch (emailError) {
           console.error('Error sending suspension email:', emailError.message);
@@ -807,11 +1339,11 @@ class AdminService {
       return product;
     } catch (error) {
       console.error('Error updating product status:', error.message);
-      
+
       if (error.message === 'Không tìm thấy sản phẩm') {
         throw error;
       }
-      
+
       throw new Error('Lỗi khi cập nhật trạng thái sản phẩm');
     }
   }
@@ -819,7 +1351,7 @@ class AdminService {
   // async approveProduct(productId, adminId) {
   //   const product = await Product.findByIdAndUpdate(
   //     productId,
-  //     { 
+  //     {
   //       status: 'APPROVED',
   //       'moderation.approvedBy': adminId,
   //       'moderation.approvedAt': new Date(),
@@ -842,7 +1374,7 @@ class AdminService {
 
   //   const product = await Product.findByIdAndUpdate(
   //     productId,
-  //     { 
+  //     {
   //       status: 'REJECTED',
   //       'moderation.rejectedBy': adminId,
   //       'moderation.rejectedAt': new Date(),
@@ -862,7 +1394,7 @@ class AdminService {
   async suspendProduct(productId, adminId, reason = '') {
     console.log('=== Admin Service suspendProduct ===');
     console.log('Input params:', { productId, adminId, reason });
-    
+
     // Validate productId
     if (!productId) {
       throw new Error('ID sản phẩm không hợp lệ');
@@ -874,7 +1406,7 @@ class AdminService {
     }
 
     try {
-      const updateData = { 
+      const updateData = {
         status: 'SUSPENDED',
         updatedAt: new Date(),
         'moderation.suspendedBy': adminId,
@@ -886,14 +1418,13 @@ class AdminService {
       }
 
       console.log('Suspending product with data:', updateData);
-      
-      const product = await Product.findByIdAndUpdate(
-        productId,
-        updateData,
-        { new: true, runValidators: true }
-      )
-      .populate('owner', 'fullName username email phone')
-      .populate('category', 'name slug');
+
+      const product = await Product.findByIdAndUpdate(productId, updateData, {
+        new: true,
+        runValidators: true
+      })
+        .populate('owner', 'fullName username email phone')
+        .populate('category', 'name slug');
 
       if (!product) {
         throw new Error('Không tìm thấy sản phẩm');
@@ -906,7 +1437,7 @@ class AdminService {
         try {
           const sendMail = require('../utils/mailer');
           const emailTemplates = require('../utils/emailTemplates');
-          
+
           const ownerName = product.owner.fullName || product.owner.username || 'Chủ sản phẩm';
           const suspendedAt = new Date().toLocaleString('vi-VN', {
             year: 'numeric',
@@ -915,7 +1446,7 @@ class AdminService {
             hour: '2-digit',
             minute: '2-digit'
           });
-          
+
           await sendMail({
             email: product.owner.email,
             subject: '⚠️ Thông báo: Sản phẩm của bạn đã bị đình chỉ',
@@ -926,7 +1457,7 @@ class AdminService {
               suspendedAt
             )
           });
-          
+
           console.log('Suspension notification email sent to:', product.owner.email);
         } catch (emailError) {
           console.error('Error sending suspension email:', emailError.message);
@@ -937,11 +1468,11 @@ class AdminService {
       return product;
     } catch (error) {
       console.error('Error suspending product:', error.message);
-      
+
       if (error.message === 'Không tìm thấy sản phẩm') {
         throw error;
       }
-      
+
       throw new Error('Lỗi khi đình chỉ sản phẩm');
     }
   }
@@ -964,7 +1495,7 @@ class AdminService {
   // async updateCategory(categoryId, updateData, adminId) {
   //   const category = await Category.findByIdAndUpdate(
   //     categoryId,
-  //     { 
+  //     {
   //       ...updateData,
   //       updatedBy: adminId,
   //       updatedAt: new Date()
@@ -982,7 +1513,7 @@ class AdminService {
   // async deleteCategory(categoryId, adminId) {
   //   // Check if any products are using this category
   //   const productCount = await Product.countDocuments({ category: categoryId });
-    
+
   //   if (productCount > 0) {
   //     throw new Error(`Không thể xóa danh mục vì có ${productCount} sản phẩm đang sử dụng`);
   //   }
@@ -996,7 +1527,7 @@ class AdminService {
   // ========== ORDER MANAGEMENT ==========
   async getAllOrders(filters) {
     const { page = 1, limit = 10, status, search } = filters;
-    
+
     let query = {};
 
     if (status && status !== 'all') {
@@ -1043,11 +1574,15 @@ class AdminService {
       cancelled: 0
     };
 
-    stats.forEach(stat => {
+    stats.forEach((stat) => {
       statusStats.total += stat.count;
       if (stat._id === 'ACTIVE') {
         statusStats.active = stat.count;
-      } else if (stat._id === 'PENDING' || stat._id === 'PENDING_PAYMENT' || stat._id === 'PENDING_CONFIRMATION') {
+      } else if (
+        stat._id === 'PENDING' ||
+        stat._id === 'PENDING_PAYMENT' ||
+        stat._id === 'PENDING_CONFIRMATION'
+      ) {
         statusStats.pending += stat.count;
       } else if (stat._id === 'COMPLETED') {
         statusStats.completed = stat.count;
@@ -1074,12 +1609,12 @@ class AdminService {
       .populate({
         path: 'subOrders',
         populate: [
-          { 
-            path: 'owner', 
-            select: 'fullName username email phone profile' 
+          {
+            path: 'owner',
+            select: 'fullName username email phone profile'
           },
-          { 
-            path: 'products.product', 
+          {
+            path: 'products.product',
             select: 'title description images pricing status category',
             populate: {
               path: 'category',
@@ -1115,11 +1650,7 @@ class AdminService {
       throw new Error('Trạng thái không hợp lệ');
     }
 
-    const order = await Order.findByIdAndUpdate(
-      orderId,
-      { status },
-      { new: true }
-    )
+    const order = await Order.findByIdAndUpdate(orderId, { status }, { new: true })
       .populate('renter', 'fullName username email')
       .populate('subOrders');
 
@@ -1130,15 +1661,15 @@ class AdminService {
     return order;
   }
 
- // ========== REPORT MANAGEMENT ==========
+  // ========== REPORT MANAGEMENT ==========
   async getAllReports(filters) {
     try {
       const { page = 1, limit = 10, search, reportType, status } = filters;
       const skip = (page - 1) * limit;
-      
+
       // Build filter query
       let query = {};
-      
+
       if (search) {
         query.$or = [
           { reason: { $regex: search, $options: 'i' } },
@@ -1146,11 +1677,11 @@ class AdminService {
           { adminNotes: { $regex: search, $options: 'i' } }
         ];
       }
-      
+
       if (reportType) {
         query.reportType = reportType;
       }
-      
+
       if (status) {
         query.status = status;
       }
@@ -1182,8 +1713,14 @@ class AdminService {
   async getReportById(reportId) {
     try {
       const report = await Report.findById(reportId)
-        .populate('reporter', 'fullName username email avatar phone address status createdAt isKycVerified profile')
-        .populate('reportedItem', 'title description images price status owner category createdAt viewCount')
+        .populate(
+          'reporter',
+          'fullName username email avatar phone address status createdAt isKycVerified profile'
+        )
+        .populate(
+          'reportedItem',
+          'title description images price status owner category createdAt viewCount'
+        )
         .populate({
           path: 'reportedItem',
           populate: {
@@ -1221,11 +1758,7 @@ class AdminService {
         updateData.adminNotes = adminNotes;
       }
 
-      const updatedReport = await Report.findByIdAndUpdate(
-        reportId,
-        updateData,
-        { new: true }
-      )
+      const updatedReport = await Report.findByIdAndUpdate(reportId, updateData, { new: true })
         .populate('reporter', 'fullName email avatar')
         .populate('reportedItem', 'title images price status');
 
@@ -1278,13 +1811,7 @@ class AdminService {
    */
   async getAllBankAccounts(filters = {}) {
     try {
-      const {
-        page = 1,
-        limit = 10,
-        search,
-        status,
-        bankCode
-      } = filters;
+      const { page = 1, limit = 10, search, status, bankCode } = filters;
 
       const skip = (page - 1) * limit;
       const query = {
@@ -1349,7 +1876,7 @@ class AdminService {
 
       const statusCounts = {};
       if (stats[0]?.statusStats) {
-        stats[0].statusStats.forEach(stat => {
+        stats[0].statusStats.forEach((stat) => {
           statusCounts[stat._id?.toLowerCase() || 'pending'] = stat.count;
         });
       }
@@ -1403,7 +1930,7 @@ class AdminService {
   async verifyBankAccount(userId, adminNote = '') {
     try {
       console.log('verifyBankAccount service called with:', { userId, adminNote });
-      
+
       const user = await User.findById(userId);
       console.log('User found:', user ? 'Yes' : 'No');
 
@@ -1428,7 +1955,11 @@ class AdminService {
       user.bankAccount.adminNote = adminNote;
 
       // Clean invalid gender value if exists
-      if (user.profile && user.profile.gender && !['MALE', 'FEMALE', 'OTHER'].includes(user.profile.gender)) {
+      if (
+        user.profile &&
+        user.profile.gender &&
+        !['MALE', 'FEMALE', 'OTHER'].includes(user.profile.gender)
+      ) {
         console.log('Cleaning invalid gender value:', user.profile.gender);
         user.profile.gender = undefined;
       }
@@ -1470,7 +2001,11 @@ class AdminService {
       user.bankAccount.rejectedAt = new Date();
 
       // Clean invalid gender value if exists
-      if (user.profile && user.profile.gender && !['MALE', 'FEMALE', 'OTHER'].includes(user.profile.gender)) {
+      if (
+        user.profile &&
+        user.profile.gender &&
+        !['MALE', 'FEMALE', 'OTHER'].includes(user.profile.gender)
+      ) {
         user.profile.gender = undefined;
       }
 
@@ -1505,7 +2040,7 @@ class AdminService {
       // Update bank account status
       user.bankAccount.status = status.toUpperCase();
       user.bankAccount.isVerified = status.toUpperCase() === 'VERIFIED';
-      
+
       if (status.toUpperCase() === 'VERIFIED') {
         user.bankAccount.verifiedAt = new Date();
         user.bankAccount.adminNote = note;
@@ -1515,7 +2050,11 @@ class AdminService {
       }
 
       // Clean invalid gender value if exists
-      if (user.profile && user.profile.gender && !['MALE', 'FEMALE', 'OTHER'].includes(user.profile.gender)) {
+      if (
+        user.profile &&
+        user.profile.gender &&
+        !['MALE', 'FEMALE', 'OTHER'].includes(user.profile.gender)
+      ) {
         user.profile.gender = undefined;
       }
 
@@ -1528,7 +2067,7 @@ class AdminService {
   }
 
   // ========== WITHDRAWAL FINANCIAL ANALYSIS ==========
-  
+
   /**
    * Get detailed financial analysis for a withdrawal request
    * @param {string} withdrawalId - Withdrawal request ID
@@ -1605,7 +2144,7 @@ class AdminService {
    */
   async getUserWalletAnalysis(userId) {
     const wallet = await Wallet.findOne({ user: userId }).lean();
-    
+
     if (!wallet) {
       return {
         exists: false,
@@ -1613,7 +2152,10 @@ class AdminService {
       };
     }
 
-    const total = (wallet.balance.available || 0) + (wallet.balance.frozen || 0) + (wallet.balance.pending || 0);
+    const total =
+      (wallet.balance.available || 0) +
+      (wallet.balance.frozen || 0) +
+      (wallet.balance.pending || 0);
 
     return {
       exists: true,
@@ -1635,37 +2177,41 @@ class AdminService {
    */
   async getUserTransactionAnalysis(userId) {
     const last90Days = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000);
-    
+
     // Get all transactions in last 90 days
     const transactions = await Transaction.find({
       user: userId,
       createdAt: { $gte: last90Days }
     })
-    .sort({ createdAt: -1 })
-    .lean();
+      .sort({ createdAt: -1 })
+      .lean();
 
     // Categorize transactions
     const categories = {
-      deposits: transactions.filter(t => ['deposit', 'DEPOSIT'].includes(t.type)),
-      withdrawals: transactions.filter(t => ['withdrawal', 'WITHDRAWAL'].includes(t.type)),
-      payments: transactions.filter(t => ['payment', 'order_payment'].includes(t.type)),
-      refunds: transactions.filter(t => t.type === 'refund'),
-      penalties: transactions.filter(t => t.type === 'penalty'),
-      promotionRevenue: transactions.filter(t => t.type === 'PROMOTION_REVENUE'),
-      transfers: transactions.filter(t => ['TRANSFER_IN', 'TRANSFER_OUT'].includes(t.type))
+      deposits: transactions.filter((t) => ['deposit', 'DEPOSIT'].includes(t.type)),
+      withdrawals: transactions.filter((t) => ['withdrawal', 'WITHDRAWAL'].includes(t.type)),
+      payments: transactions.filter((t) => ['payment', 'order_payment'].includes(t.type)),
+      refunds: transactions.filter((t) => t.type === 'refund'),
+      penalties: transactions.filter((t) => t.type === 'penalty'),
+      promotionRevenue: transactions.filter((t) => t.type === 'PROMOTION_REVENUE'),
+      transfers: transactions.filter((t) => ['TRANSFER_IN', 'TRANSFER_OUT'].includes(t.type))
     };
 
     // Calculate totals and statistics
     const stats = {};
     for (const [category, txns] of Object.entries(categories)) {
-      const amounts = txns.map(t => t.amount);
+      const amounts = txns.map((t) => t.amount);
       stats[category] = {
         count: txns.length,
         total: amounts.reduce((sum, amt) => sum + amt, 0),
-        average: amounts.length > 0 ? amounts.reduce((sum, amt) => sum + amt, 0) / amounts.length : 0,
+        average:
+          amounts.length > 0 ? amounts.reduce((sum, amt) => sum + amt, 0) / amounts.length : 0,
         largest: amounts.length > 0 ? Math.max(...amounts) : 0,
         smallest: amounts.length > 0 ? Math.min(...amounts) : 0,
-        successRate: txns.length > 0 ? txns.filter(t => t.status === 'success').length / txns.length * 100 : 0
+        successRate:
+          txns.length > 0
+            ? (txns.filter((t) => t.status === 'success').length / txns.length) * 100
+            : 0
       };
     }
 
@@ -1693,14 +2239,14 @@ class AdminService {
 
     const stats = {
       totalRequests: withdrawals.length,
-      successful: withdrawals.filter(w => w.status === 'completed').length,
-      rejected: withdrawals.filter(w => w.status === 'rejected').length,
-      pending: withdrawals.filter(w => w.status === 'pending').length,
-      processing: withdrawals.filter(w => w.status === 'processing').length,
-      cancelled: withdrawals.filter(w => w.status === 'cancelled').length
+      successful: withdrawals.filter((w) => w.status === 'completed').length,
+      rejected: withdrawals.filter((w) => w.status === 'rejected').length,
+      pending: withdrawals.filter((w) => w.status === 'pending').length,
+      processing: withdrawals.filter((w) => w.status === 'processing').length,
+      cancelled: withdrawals.filter((w) => w.status === 'cancelled').length
     };
 
-    const amounts = withdrawals.filter(w => w.status === 'completed').map(w => w.amount);
+    const amounts = withdrawals.filter((w) => w.status === 'completed').map((w) => w.amount);
     const totalWithdrawn = amounts.reduce((sum, amt) => sum + amt, 0);
 
     // Pattern analysis
@@ -1716,7 +2262,8 @@ class AdminService {
       history: withdrawals,
       statistics: stats,
       patterns,
-      successRate: stats.totalRequests > 0 ? (stats.successful / stats.totalRequests * 100).toFixed(2) : 0
+      successRate:
+        stats.totalRequests > 0 ? ((stats.successful / stats.totalRequests) * 100).toFixed(2) : 0
     };
   }
 
@@ -1732,14 +2279,18 @@ class AdminService {
         { systemWalletAction: { $exists: true } }
       ]
     })
-    .sort({ createdAt: -1 })
-    .limit(50)
-    .lean();
+      .sort({ createdAt: -1 })
+      .limit(50)
+      .lean();
 
     const summary = {
       totalInteractions: systemInteractions.length,
-      receivedFromSystem: systemInteractions.filter(t => t.fromSystemWallet).reduce((sum, t) => sum + t.amount, 0),
-      paidToSystem: systemInteractions.filter(t => t.toSystemWallet).reduce((sum, t) => sum + t.amount, 0),
+      receivedFromSystem: systemInteractions
+        .filter((t) => t.fromSystemWallet)
+        .reduce((sum, t) => sum + t.amount, 0),
+      paidToSystem: systemInteractions
+        .filter((t) => t.toSystemWallet)
+        .reduce((sum, t) => sum + t.amount, 0),
       recentInteractions: systemInteractions.slice(0, 10)
     };
 
@@ -1769,10 +2320,10 @@ class AdminService {
         }
       ]
     })
-    .sort({ createdAt: -1 })
-    .limit(20)
-    .select('amount externalId orderCode createdAt description paymentMethod metadata type')
-    .lean();
+      .sort({ createdAt: -1 })
+      .limit(20)
+      .select('amount externalId orderCode createdAt description paymentMethod metadata type')
+      .lean();
 
     // Also get promotion payments from orders using PayOS
     const promotionOrders = await Order.find({
@@ -1780,14 +2331,14 @@ class AdminService {
       paymentMethod: 'payos',
       paymentStatus: 'COMPLETED'
     })
-    .select('totalAmount masterOrderNumber paymentInfo createdAt')
-    .sort({ createdAt: -1 })
-    .limit(10)
-    .lean();
+      .select('totalAmount masterOrderNumber paymentInfo createdAt')
+      .sort({ createdAt: -1 })
+      .limit(10)
+      .lean();
 
     // Combine and format all PayOS-related transactions
     const allPayOSActivity = [
-      ...payosTransactions.map(t => ({
+      ...payosTransactions.map((t) => ({
         amount: t.amount,
         orderCode: t.externalId || t.orderCode || 'N/A',
         date: t.createdAt,
@@ -1797,7 +2348,7 @@ class AdminService {
         source: 'transaction',
         metadata: t.metadata
       })),
-      ...promotionOrders.map(o => ({
+      ...promotionOrders.map((o) => ({
         amount: o.totalAmount,
         orderCode: o.paymentInfo?.orderCode || o.masterOrderNumber,
         date: o.createdAt,
@@ -1810,9 +2361,7 @@ class AdminService {
     ];
 
     // Sort by date and return most recent
-    return allPayOSActivity
-      .sort((a, b) => new Date(b.date) - new Date(a.date))
-      .slice(0, 20);
+    return allPayOSActivity.sort((a, b) => new Date(b.date) - new Date(a.date)).slice(0, 20);
   }
 
   /**
@@ -1825,7 +2374,7 @@ class AdminService {
     // 1. Account age (newer accounts = higher risk)
     const user = await User.findById(userId).select('createdAt').lean();
     const accountAgeDays = (Date.now() - user.createdAt) / (24 * 60 * 60 * 1000);
-    
+
     if (accountAgeDays < 7) {
       riskScore += 30;
       riskFactors.push('Tài khoản mới (< 7 ngày)');
@@ -1849,8 +2398,10 @@ class AdminService {
 
     // 3. Withdrawal amount vs. typical activity
     const wallet = await Wallet.findOne({ user: userId }).lean();
-    const balanceRatio = wallet ? (requestedAmount / (wallet.balance.available + requestedAmount)) : 1;
-    
+    const balanceRatio = wallet
+      ? requestedAmount / (wallet.balance.available + requestedAmount)
+      : 1;
+
     if (balanceRatio > 0.8) {
       riskScore += 20;
       riskFactors.push('Rút số tiền lớn so với số dư (>80%)');
@@ -1865,7 +2416,7 @@ class AdminService {
       status: 'failed',
       createdAt: { $gte: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000) }
     });
-    
+
     if (recentFailures > 3) {
       riskScore += 25;
       riskFactors.push('Nhiều giao dịch thất bại gần đây');
@@ -1876,9 +2427,11 @@ class AdminService {
 
     // 5. Previous rejection rate
     const withdrawals = await Withdrawal.find({ user: userId }).lean();
-    const rejectionRate = withdrawals.length > 0 ? 
-      withdrawals.filter(w => w.status === 'rejected').length / withdrawals.length : 0;
-    
+    const rejectionRate =
+      withdrawals.length > 0
+        ? withdrawals.filter((w) => w.status === 'rejected').length / withdrawals.length
+        : 0;
+
     if (rejectionRate > 0.5) {
       riskScore += 30;
       riskFactors.push('Tỷ lệ từ chối rút tiền cao (>50%)');
@@ -1916,12 +2469,12 @@ class AdminService {
       user: userId,
       createdAt: { $gte: last30Days }
     })
-    .sort({ createdAt: -1 })
-    .limit(20)
-    .select('type amount status createdAt description')
-    .lean();
+      .sort({ createdAt: -1 })
+      .limit(20)
+      .select('type amount status createdAt description')
+      .lean();
 
-    recentTransactions.forEach(t => {
+    recentTransactions.forEach((t) => {
       activities.push({
         type: 'transaction',
         action: t.type,
@@ -1937,12 +2490,12 @@ class AdminService {
       user: userId,
       createdAt: { $gte: last30Days }
     })
-    .sort({ createdAt: -1 })
-    .limit(10)
-    .select('amount status createdAt')
-    .lean();
+      .sort({ createdAt: -1 })
+      .limit(10)
+      .select('amount status createdAt')
+      .lean();
 
-    recentWithdrawals.forEach(w => {
+    recentWithdrawals.forEach((w) => {
       activities.push({
         type: 'withdrawal',
         action: 'withdrawal_request',
@@ -1969,8 +2522,8 @@ class AdminService {
 
   groupTransactionsByMonth(transactions) {
     const monthlyData = {};
-    
-    transactions.forEach(t => {
+
+    transactions.forEach((t) => {
       const month = new Date(t.createdAt).toISOString().slice(0, 7); // YYYY-MM
       if (!monthlyData[month]) {
         monthlyData[month] = { count: 0, total: 0, types: {} };
@@ -1984,7 +2537,7 @@ class AdminService {
   }
 
   calculateAverageProcessingTime(withdrawals) {
-    const completed = withdrawals.filter(w => w.status === 'completed' && w.processedAt);
+    const completed = withdrawals.filter((w) => w.status === 'completed' && w.processedAt);
     if (completed.length === 0) return null;
 
     const totalTime = completed.reduce((sum, w) => {
@@ -1993,7 +2546,7 @@ class AdminService {
 
     const avgMs = totalTime / completed.length;
     const avgHours = Math.round(avgMs / (1000 * 60 * 60));
-    
+
     return `${avgHours} hours`;
   }
 
@@ -2002,7 +2555,7 @@ class AdminService {
 
     const intervals = [];
     for (let i = 1; i < withdrawals.length; i++) {
-      const interval = new Date(withdrawals[i-1].createdAt) - new Date(withdrawals[i].createdAt);
+      const interval = new Date(withdrawals[i - 1].createdAt) - new Date(withdrawals[i].createdAt);
       intervals.push(interval);
     }
 
@@ -2032,16 +2585,22 @@ class AdminService {
 
   getWithdrawalRecommendation(riskAssessment) {
     const { level, score, factors } = riskAssessment;
-    
+
     return {
-      action: level === 'LOW' ? 'DUYỆT' : 
-              level === 'MEDIUM' ? 'ĐIỀU TRA' : 
-              level === 'HIGH' ? 'KIỂM TRA THỦ CÔNG' : 'TỪ CHỐI',
-      confidence: level === 'LOW' ? 'CAO' : 
-                  level === 'MEDIUM' ? 'TRUNG BÌNH' : 'THẤP',
-      reasoning: factors.length > 0 ? factors.join(', ') : 'Không có yếu tố rủi ro đáng kể nào được xác định',
-      priority: level === 'VERY_HIGH' ? 'KHẨN CẤP' : 
-                level === 'HIGH' ? 'CAO' : 'BÌNH THƯỜNG'
+      action:
+        level === 'LOW'
+          ? 'DUYỆT'
+          : level === 'MEDIUM'
+            ? 'ĐIỀU TRA'
+            : level === 'HIGH'
+              ? 'KIỂM TRA THỦ CÔNG'
+              : 'TỪ CHỐI',
+      confidence: level === 'LOW' ? 'CAO' : level === 'MEDIUM' ? 'TRUNG BÌNH' : 'THẤP',
+      reasoning:
+        factors.length > 0
+          ? factors.join(', ')
+          : 'Không có yếu tố rủi ro đáng kể nào được xác định',
+      priority: level === 'VERY_HIGH' ? 'KHẨN CẤP' : level === 'HIGH' ? 'CAO' : 'BÌNH THƯỜNG'
     };
   }
 
@@ -2207,19 +2766,19 @@ class AdminService {
       let dateFormat;
       switch (period) {
         case 'hour':
-          dateFormat = { $dateToString: { format: "%Y-%m-%d %H:00", date: "$createdAt" } };
+          dateFormat = { $dateToString: { format: '%Y-%m-%d %H:00', date: '$createdAt' } };
           break;
         case 'day':
-          dateFormat = { $dateToString: { format: "%Y-%m-%d", date: "$createdAt" } };
+          dateFormat = { $dateToString: { format: '%Y-%m-%d', date: '$createdAt' } };
           break;
         case 'week':
-          dateFormat = { $dateToString: { format: "%Y-W%V", date: "$createdAt" } };
+          dateFormat = { $dateToString: { format: '%Y-W%V', date: '$createdAt' } };
           break;
         case 'month':
-          dateFormat = { $dateToString: { format: "%Y-%m", date: "$createdAt" } };
+          dateFormat = { $dateToString: { format: '%Y-%m', date: '$createdAt' } };
           break;
         default:
-          dateFormat = { $dateToString: { format: "%Y-%m-%d", date: "$createdAt" } };
+          dateFormat = { $dateToString: { format: '%Y-%m-%d', date: '$createdAt' } };
       }
 
       // Aggregate transaction stats
@@ -2350,10 +2909,11 @@ class AdminService {
           'Updated At'
         ];
 
-        const csvRows = transactions.map(transaction => [
+        const csvRows = transactions.map((transaction) => [
           transaction.externalId || transaction._id,
           transaction.user?.email || 'N/A',
-          `${transaction.user?.profile?.firstName || ''} ${transaction.user?.profile?.lastName || ''}`.trim() || 'N/A',
+          `${transaction.user?.profile?.firstName || ''} ${transaction.user?.profile?.lastName || ''}`.trim() ||
+            'N/A',
           transaction.type,
           transaction.status,
           transaction.amount.toLocaleString('vi-VN'),
@@ -2363,7 +2923,7 @@ class AdminService {
         ]);
 
         const csvContent = [csvHeaders, ...csvRows]
-          .map(row => row.map(field => `"${field}"`).join(','))
+          .map((row) => row.map((field) => `"${field}"`).join(','))
           .join('\n');
 
         return csvContent;
@@ -2512,7 +3072,8 @@ class AdminService {
         .limit(limit)
         .lean();
 
-      // Enrich shipper data with shipment statistics
+      // Enrich shipper data with shipment statistics and ratings
+      const Review = require('../models/Review');
       const enrichedShippers = await Promise.all(
         shippers.map(async (shipper) => {
           const shipmentStats = await Shipment.aggregate([
@@ -2535,11 +3096,27 @@ class AdminService {
             totalFee: 0
           };
 
+          // Calculate average rating for shipper
+          const ratingStats = await Review.aggregate([
+            { $match: { targetType: 'SHIPPER', targetId: shipper._id } },
+            {
+              $group: {
+                _id: null,
+                avgRating: { $avg: '$rating' },
+                totalReviews: { $sum: 1 }
+              }
+            }
+          ]);
+
+          const rating = ratingStats[0] || { avgRating: 0, totalReviews: 0 };
+
           return {
             ...shipper,
             totalShipments: stats.totalShipments,
             completedShipments: stats.completedShipments,
-            revenue: stats.totalFee
+            revenue: stats.totalFee,
+            averageRating: rating.avgRating ? parseFloat(rating.avgRating.toFixed(1)) : 0,
+            totalReviews: rating.totalReviews
           };
         })
       );
@@ -2558,6 +3135,96 @@ class AdminService {
     } catch (error) {
       console.error('Error getting shippers:', error);
       throw new Error(`Lỗi khi lấy danh sách shipper: ${error.message}`);
+    }
+  }
+
+  async getShipperById(shipperId) {
+    try {
+      const Shipment = require('../models/Shipment');
+      const Review = require('../models/Review');
+
+      // Get shipper details
+      const shipper = await User.findOne({ _id: shipperId, role: 'SHIPPER' })
+        .select('profile email phone address status createdAt')
+        .lean();
+
+      if (!shipper) {
+        throw new Error('Không tìm thấy shipper');
+      }
+
+      // Get shipment statistics
+      const shipmentStats = await Shipment.aggregate([
+        { $match: { shipper: shipper._id } },
+        {
+          $group: {
+            _id: null,
+            totalShipments: { $sum: 1 },
+            completedShipments: {
+              $sum: { $cond: [{ $eq: ['$status', 'DELIVERED'] }, 1, 0] }
+            },
+            cancelledShipments: {
+              $sum: { $cond: [{ $eq: ['$status', 'CANCELLED'] }, 1, 0] }
+            },
+            failedShipments: {
+              $sum: { $cond: [{ $eq: ['$status', 'DELIVERY_FAILED'] }, 1, 0] }
+            },
+            totalFee: { $sum: '$fee' }
+          }
+        }
+      ]);
+
+      const stats = shipmentStats[0] || {
+        totalShipments: 0,
+        completedShipments: 0,
+        cancelledShipments: 0,
+        failedShipments: 0,
+        totalFee: 0
+      };
+
+      // Calculate average rating for shipper
+      const ratingStats = await Review.aggregate([
+        { $match: { targetType: 'SHIPPER', targetId: shipper._id } },
+        {
+          $group: {
+            _id: null,
+            avgRating: { $avg: '$rating' },
+            totalReviews: { $sum: 1 }
+          }
+        }
+      ]);
+
+      const rating = ratingStats[0] || { avgRating: 0, totalReviews: 0 };
+
+      // Get recent shipments
+      const recentShipments = await Shipment.find({ shipper: shipper._id })
+        .populate('masterOrder', 'orderNumber')
+        .populate('subOrder', 'subOrderNumber')
+        .sort({ createdAt: -1 })
+        .limit(20)
+        .lean();
+
+      // Get recent reviews
+      const recentReviews = await Review.find({ targetType: 'SHIPPER', targetId: shipper._id })
+        .populate('userId', 'profile.fullName profile.firstName')
+        .sort({ createdAt: -1 })
+        .limit(10)
+        .lean();
+
+      return {
+        ...shipper,
+        totalShipments: stats.totalShipments,
+        completedShipments: stats.completedShipments,
+        cancelledShipments: stats.cancelledShipments,
+        failedShipments: stats.failedShipments,
+        revenue: stats.totalFee,
+        averageRating: rating.avgRating ? parseFloat(rating.avgRating.toFixed(1)) : 0,
+        totalReviews: rating.totalReviews,
+        recentShipments,
+        recentReviews
+      };
+    } catch (error) {
+      console.error('Error getting shipper details:', error);
+      throw new Error(`Lỗi khi lấy thông tin shipper: ${error.message}`);
     }
   }
 }

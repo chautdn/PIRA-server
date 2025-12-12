@@ -2,9 +2,7 @@ const express = require('express');
 const router = express.Router();
 const adminController = require('../controllers/admin.controller');
 const { authMiddleware } = require('../middleware/auth');
-const { 
-  requireRole
-} = require('../middleware/validation');
+const { requireRole } = require('../middleware/validation');
 const { registerRoute } = require('./register.routes');
 
 router.use(authMiddleware.verifyToken);
@@ -12,6 +10,14 @@ router.use(requireRole('ADMIN'));
 
 // ========== DASHBOARD ==========
 router.get('/dashboard', adminController.getDashboard);
+router.get('/statistics/revenue', adminController.getRevenueStatistics);
+router.get('/statistics/profit', adminController.getProfitStatistics);
+
+// ========== SUBORDER STATISTICS ==========
+router.get('/statistics/revenue-by-owner', adminController.getRevenueByOwner);
+router.get('/statistics/deposit', adminController.getDepositStatistics);
+router.get('/statistics/top-products', adminController.getTopRentalProducts);
+router.get('/statistics/suborder-status', adminController.getSubOrderStatusBreakdown);
 
 // ========== TEST ROUTES ==========
 
@@ -66,7 +72,10 @@ router.get('/transactions/:transactionId', adminController.getTransactionById);
 
 // ========== WITHDRAWAL FINANCIAL ANALYSIS ==========
 router.get('/withdrawals/enhanced', adminController.getEnhancedWithdrawalRequests);
-router.get('/withdrawals/:withdrawalId/financial-analysis', adminController.getWithdrawalFinancialAnalysis);
+router.get(
+  '/withdrawals/:withdrawalId/financial-analysis',
+  adminController.getWithdrawalFinancialAnalysis
+);
 router.get('/users/:userId/financial-profile', adminController.getUserFinancialProfile);
 
 // ========== SYSTEM SETTINGS ==========
@@ -76,6 +85,7 @@ router.put('/settings', adminController.updateSystemSettings);
 // ========== SHIPMENT MANAGEMENT ==========
 router.get('/shipment-stats', adminController.getShipmentStats);
 router.get('/shippers', adminController.getAllShippers);
+router.get('/shippers/:shipperId', adminController.getShipperById);
 
 // Đăng ký routes với prefix /admin
 registerRoute('/admin', router);

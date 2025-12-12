@@ -268,9 +268,148 @@ class ContractService {
 
     // Update SubOrder status
     if (contract.subOrder) {
-      await SubOrder.findByIdAndUpdate(contract.subOrder._id, {
-        status: 'CONTRACT_SIGNED'
-      });
+      const subOrder = await SubOrder.findById(contract.subOrder._id);
+      subOrder.status = 'CONTRACT_SIGNED';
+      await subOrder.save();
+
+      // ✅ Process refund for rejected products if renterDecision indicates partial acceptance
+      const hasRenterDecision = !!subOrder.renterDecision;
+      const isAccepted = subOrder.renterDecision?.status === 'ACCEPTED';
+      const isContinuePartial = subOrder.renterDecision?.choice === 'CONTINUE_PARTIAL';
+      const notYetProcessed = !subOrder.renterDecision?.refundProcessed;
+      const hasRejectedProducts = subOrder.products?.some((p) => p.productStatus === 'REJECTED');
+      const shouldProcessRefund =
+        (hasRenterDecision && isAccepted && isContinuePartial && notYetProcessed) ||
+        (!hasRenterDecision && hasRejectedProducts && subOrder.ownerDecision?.status === 'PARTIAL');
+
+      if (shouldProcessRefund) {
+        let refundDetails = subOrder.renterDecision?.refundDetails || {};
+
+        // ✅ FALLBACK: Calculate refund from products if not in renterDecision
+        if (!refundDetails.totalRefund || refundDetails.totalRefund === 0) {
+          let depositRefund = 0;
+          let rentalRefund = 0;
+          let shippingRefund = 0;
+          const confirmedProductIds = [];
+
+          // Calculate from products
+          for (const productItem of subOrder.products) {
+            if (productItem.productStatus === 'REJECTED') {
+              depositRefund += productItem.totalDeposit || 0;
+              rentalRefund += productItem.totalRental || 0;
+            } else if (productItem.productStatus === 'CONFIRMED') {
+              confirmedProductIds.push(productItem._id);
+            }
+          }
+
+          // Calculate shipping from deliveryBatches
+          if (subOrder.deliveryBatches && subOrder.deliveryBatches.length > 0) {
+            subOrder.deliveryBatches.forEach((batch) => {
+              const hasConfirmed = batch.products.some((batchProductId) =>
+                confirmedProductIds.some((pid) => pid.toString() === batchProductId.toString())
+              );
+
+              if (!hasConfirmed) {
+                shippingRefund += batch.shippingFee.finalFee || 0;
+              }
+            });
+          }
+
+          refundDetails = {
+            depositRefund,
+            rentalRefund,
+            shippingRefund,
+            totalRefund: depositRefund + rentalRefund + shippingRefund
+          };
+        }
+
+        const totalRefund =
+          (refundDetails.depositRefund || 0) +
+          (refundDetails.rentalRefund || 0) +
+          (refundDetails.shippingRefund || 0);
+
+        if (totalRefund > 0) {
+          console.log(
+            `💰 Processing deferred refund after renter signed contract: ${totalRefund.toLocaleString('vi-VN')}đ`
+          );
+
+          const Wallet = require('../models/Wallet');
+          const Transaction = require('../models/Transaction');
+          const SystemWallet = require('../models/SystemWallet');
+
+          const renterId = contract.renter._id;
+
+          // Get wallet
+          const wallet = await Wallet.findOne({ user: renterId });
+          if (wallet) {
+            // Add refund to wallet
+            wallet.balance.available += totalRefund;
+            await wallet.save();
+
+            // Deduct from system wallet
+            const systemWallet = await SystemWallet.findOne({});
+            if (systemWallet && systemWallet.balance.available >= totalRefund) {
+              systemWallet.balance.available -= totalRefund;
+              await systemWallet.save();
+            }
+
+            // Create transaction record
+            const transaction = new Transaction({
+              user: renterId,
+              wallet: wallet._id,
+              type: 'refund',
+              amount: totalRefund,
+              status: 'success',
+              description: `Hoàn tiền phần bị từ chối - Đơn ${subOrder.subOrderNumber} (sau khi ký hợp đồng)`,
+              reference: subOrder.subOrderNumber,
+              paymentMethod: 'wallet',
+              fromSystemWallet: true,
+              systemWalletAction: 'refund',
+              metadata: {
+                subOrderId: subOrder._id,
+                contractId: contract._id,
+                refundType: 'partial_rejection_after_contract',
+                refundBreakdown: {
+                  depositRefund: refundDetails.depositRefund || 0,
+                  rentalRefund: refundDetails.rentalRefund || 0,
+                  shippingRefund: refundDetails.shippingRefund || 0
+                }
+              },
+              processedAt: new Date()
+            });
+            await transaction.save();
+
+            // Update renterDecision to mark refund as processed
+            if (subOrder.renterDecision) {
+              subOrder.renterDecision.refundProcessed = true;
+              if (subOrder.renterDecision.refundDetails) {
+                subOrder.renterDecision.refundDetails.processedAt = new Date();
+              }
+            } else {
+              // Create renterDecision if not exists (fallback case)
+              subOrder.renterDecision = {
+                status: 'ACCEPTED',
+                decidedAt: new Date(),
+                choice: 'CONTINUE_PARTIAL',
+                refundProcessed: true,
+                refundDetails: {
+                  ...refundDetails,
+                  processedAt: new Date()
+                }
+              };
+            }
+            await subOrder.save();
+
+            console.log(
+              `✅ Refunded ${totalRefund.toLocaleString('vi-VN')}đ after contract signing`
+            );
+          } else {
+            console.error(`❌ Wallet not found for renter ${renterId}`);
+          }
+        } else {
+          console.log(`⚠️ No refund needed (totalRefund = 0)`);
+        }
+      }
     }
 
     return contract;

@@ -533,18 +533,21 @@ class RentalOrderController {
 
       // Populate shipments for each subOrder separately
       const Shipment = require('../models/Shipment');
-      for (let subOrder of masterOrder.subOrders) {
-        const shipments = await Shipment.find({ subOrder: subOrder._id })
+      const masterOrderObj = masterOrder.toObject();
+      
+      for (let i = 0; i < masterOrderObj.subOrders.length; i++) {
+        const shipments = await Shipment.find({ subOrder: masterOrderObj.subOrders[i]._id })
           .select(
             'shipmentNumber type status shipper estimatedDeliveryDate actualDeliveryDate fromAddress toAddress contactInfo'
           )
-          .populate('shipper', 'name email phone profile');
-        subOrder.shipments = shipments;
+          .populate('shipper', 'email phone profile')
+          .lean();
+        masterOrderObj.subOrders[i].shipments = shipments;
       }
 
       return new SuccessResponse(
         {
-          masterOrder
+          masterOrder: masterOrderObj
         },
         'Lấy chi tiết đơn hàng thành công'
       ).send(res);

@@ -3,6 +3,8 @@ const router = express.Router();
 const multer = require('multer');
 const ClarifaiService = require('../services/ai/clarifai.service');
 const CategoryMappingService = require('../services/ai/categoryMapping.service');
+const VisualSearchService = require('../services/ai/visualSearch.service');
+const ChatbotService = require('../services/ai/chatbot.service');
 const { registerRoute } = require('./register.routes');
 
 // Cấu hình multer để upload file
@@ -103,6 +105,134 @@ function extractLabelsFromAnalysis(analysisResult) {
     return [];
   }
 }
+
+/**
+ * POST /api/ai/visual-search
+ * Tìm kiếm sản phẩm dựa trên hình ảnh
+ * Phân tích hình ảnh → Match với categories → Tìm products phù hợp
+ */
+router.post('/visual-search', upload.single('image'), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({
+        success: false,
+        message: 'Vui lòng upload ảnh'
+      });
+    }
+
+    console.log('🖼️ Visual search for image:', req.file.originalname);
+
+    // 1. Phân tích ảnh với Clarifai
+    const analysisResult = await ClarifaiService.analyzeImageWithWorkflow(req.file.buffer);
+
+    // 2. Check NSFW
+    if (!analysisResult.nsfwDetection.safe) {
+      return res.status(400).json({
+        success: false,
+        message: 'Hình ảnh không phù hợp (chứa nội dung không phù hợp)'
+      });
+    }
+
+    // 3. Trích xuất concepts
+    const concepts =
+      analysisResult.conceptDetection.rawConcepts
+        ?.filter((c) => c.value >= 0.5)
+        .map((c) => ({
+          name: c.name,
+          value: c.value,
+          id: c.id || c.name
+        }))
+        .slice(0, 20) || []; // Top 20 concepts
+
+    if (concepts.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Không thể nhận diện được nội dung trong ảnh'
+      });
+    }
+
+    console.log(
+      '🏷️ Extracted concepts:',
+      concepts.map((c) => `${c.name}(${(c.value * 100).toFixed(0)}%)`)
+    );
+
+    // 4. Tìm kiếm products dựa trên concepts
+    const searchOptions = {
+      limit: parseInt(req.query.limit) || 20,
+      minScore: parseFloat(req.query.minScore) || 0.1,
+      includeInactive: req.query.includeInactive === 'true'
+    };
+
+    const searchResult = await VisualSearchService.searchByImageConcepts(concepts, searchOptions);
+
+    console.log(`✅ Found ${searchResult.totalFound} products`);
+
+    res.json({
+      success: true,
+      data: {
+        products: searchResult.products,
+        matchedCategories: searchResult.matchedCategories.map((mc) => ({
+          id: mc.category._id,
+          name: mc.category.name,
+          slug: mc.category.slug,
+          score: mc.score.toFixed(2),
+          matchedConcepts: mc.matchedConcepts.map((c) => c.name)
+        })),
+        searchInfo: {
+          totalFound: searchResult.totalFound,
+          concepts: searchResult.searchConcepts,
+          topConcepts: concepts.slice(0, 5).map((c) => ({
+            name: c.name,
+            confidence: (c.value * 100).toFixed(1) + '%'
+          }))
+        }
+      },
+      message: 'Tìm kiếm thành công'
+    });
+  } catch (error) {
+    console.error('❌ Visual search error:', error);
+    res.status(500).json({
+      success: false,
+      message: error.message || 'Lỗi khi tìm kiếm bằng hình ảnh'
+    });
+  }
+});
+
+/**
+ * POST /api/ai/chat
+ * Chatbot AI - Trả lời câu hỏi của khách hàng
+ */
+router.post('/chat', async (req, res) => {
+  try {
+    const { message, conversationHistory } = req.body;
+
+    if (!message || !message.trim()) {
+      return res.status(400).json({
+        success: false,
+        message: 'Vui lòng nhập tin nhắn'
+      });
+    }
+
+    console.log('💬 User message:', message);
+
+    // Process message with chatbot service
+    const response = await ChatbotService.processMessage(message, conversationHistory || []);
+
+    console.log('🤖 Bot response:', response.reply.substring(0, 100) + '...');
+
+    res.json({
+      success: true,
+      data: response,
+      message: 'Xử lý thành công'
+    });
+  } catch (error) {
+    console.error('❌ Chatbot error:', error);
+    res.status(500).json({
+      success: false,
+      message: error.message || 'Lỗi khi xử lý tin nhắn'
+    });
+  }
+});
 
 // Register route
 registerRoute('/ai', router);

@@ -22,8 +22,8 @@ class OTPController {
 
       // Find contract
       const contract = await Contract.findById(contractId)
-        .populate('renter', 'firstName lastName email')
-        .populate('owner', 'firstName lastName email')
+        .populate('renter', 'profile.firstName profile.lastName email')
+        .populate('owner', 'profile.firstName profile.lastName email')
         .populate('subOrder', 'subOrderNumber');
 
       if (!contract) {
@@ -42,7 +42,7 @@ class OTPController {
 
       if (contract.owner._id.toString() === userId.toString()) {
         userRole = 'owner';
-        userName = `${contract.owner.firstName} ${contract.owner.lastName}`.trim();
+        userName = `${contract.owner.profile.firstName} ${contract.owner.profile.lastName}`.trim();
         userEmail = contract.owner.email;
 
         // Check if owner has already signed
@@ -51,7 +51,8 @@ class OTPController {
         }
       } else if (contract.renter._id.toString() === userId.toString()) {
         userRole = 'renter';
-        userName = contract.renter.fullName;
+        userName =
+          `${contract.renter.profile.firstName} ${contract.renter.profile.lastName}`.trim();
         userEmail = contract.renter.email;
 
         // Check if renter has already signed
