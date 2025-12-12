@@ -4493,6 +4493,516 @@ class RentalOrderService {
       console.error('❌ Error sending accept partial notification:', error);
     }
   }
+
+  /**
+   * Chủ quyết định HỦY TOÀN BỘ suborder khi đã xác nhận một phần
+   * → Hoàn 100% tất cả tiền đã thanh toán (deposit + rental + shipping)
+   */
+  async ownerCancelPartialOrder(
+    subOrderId,
+    ownerId,
+    reason = 'Chủ hủy đơn sau khi xác nhận một phần'
+  ) {
+    const session = await mongoose.startSession();
+    session.startTransaction();
+
+    try {
+      // 1. Lấy SubOrder và validate
+      const subOrder = await SubOrder.findOne({
+        _id: subOrderId
+      })
+        .populate('masterOrder')
+        .populate('products.product')
+        .session(session);
+
+      if (!subOrder) {
+        throw new Error('Không tìm thấy đơn hàng');
+      }
+
+      // Kiểm tra status: chỉ cho phép hủy khi ở trạng thái PARTIALLY_CONFIRMED hoặc PENDING_RENTER_DECISION
+      const allowedStatuses = ['PARTIALLY_CONFIRMED', 'PENDING_RENTER_DECISION'];
+      if (!allowedStatuses.includes(subOrder.status)) {
+        throw new Error(`Không thể hủy đơn hàng ở trạng thái ${subOrder.status}`);
+      }
+
+      const masterOrder = await MasterOrder.findById(subOrder.masterOrder._id).session(session);
+
+      // Verify ownerId
+      if (subOrder.owner.toString() !== ownerId.toString()) {
+        throw new Error('Bạn không có quyền thực hiện thao tác này');
+      }
+
+      const renterId = masterOrder.renter;
+
+      // 2. Tính toán tổng số tiền cần hoàn (100% tất cả)
+      let totalDeposit = 0;
+      let totalRental = 0;
+      let totalShipping = 0;
+
+      // Calculate rental and deposit from products
+      for (const productItem of subOrder.products) {
+        totalDeposit += productItem.totalDeposit || 0;
+        totalRental += productItem.totalRental || 0;
+      }
+
+      // Calculate shipping from deliveryBatches (all batches)
+      if (subOrder.deliveryBatches && subOrder.deliveryBatches.length > 0) {
+        totalShipping = subOrder.deliveryBatches.reduce(
+          (sum, batch) => sum + (batch.shippingFee.finalFee || 0),
+          0
+        );
+      }
+
+      const totalRefund = totalDeposit + totalRental + totalShipping;
+
+      console.log(`💰 Owner cancelled partial order - refunding 100%:`, {
+        deposit: totalDeposit,
+        rental: totalRental,
+        shipping: totalShipping,
+        total: totalRefund
+      });
+
+      // 3. Hoàn tiền 100% cho renter
+      const wallet = await Wallet.findOne({ user: renterId }).session(session);
+      if (!wallet) {
+        throw new Error('Không tìm thấy ví của người thuê');
+      }
+
+      // Cộng tiền vào available balance
+      wallet.balance.available += totalRefund;
+      await wallet.save({ session });
+
+      // 4. Trừ tiền từ system wallet
+      const SystemWallet = require('../models/SystemWallet');
+      const systemWallet = await SystemWallet.findOne({}).session(session);
+      if (systemWallet && systemWallet.balance.available >= totalRefund) {
+        systemWallet.balance.available -= totalRefund;
+        await systemWallet.save({ session });
+      }
+
+      // 5. Tạo transaction record
+      const transaction = new Transaction({
+        user: renterId,
+        wallet: wallet._id,
+        type: 'refund',
+        amount: totalRefund,
+        status: 'success',
+        description: `Hoàn tiền 100% - Chủ hủy đơn ${subOrder.subOrderNumber} (sau khi xác nhận một phần)`,
+        reference: subOrder.subOrderNumber,
+        paymentMethod: 'wallet',
+        fromSystemWallet: true,
+        systemWalletAction: 'refund',
+        metadata: {
+          masterOrderId: masterOrder._id,
+          subOrderId: subOrder._id,
+          subOrderNumber: subOrder.subOrderNumber,
+          reason: reason,
+          refundType: 'owner_cancel_partial_order',
+          feeBreakdown: {
+            deposit: totalDeposit,
+            rental: totalRental,
+            shipping: totalShipping
+          },
+          refundBreakdown: {
+            depositRefund: totalDeposit,
+            rentalRefund: totalRental,
+            shippingRefund: totalShipping
+          }
+        },
+        processedAt: new Date()
+      });
+      await transaction.save({ session });
+
+      // 6. Cập nhật SubOrder
+      subOrder.status = 'OWNER_REJECTED';
+      subOrder.cancelledAt = new Date();
+      subOrder.cancelReason = reason;
+      subOrder.ownerRejection = {
+        rejectedAt: new Date(),
+        reason: reason
+      };
+      await subOrder.save({ session });
+
+      // 7. Xóa hợp đồng đã tạo (nếu có)
+      const Contract = require('../models/Contract');
+      const existingContract = await Contract.findOne({
+        subOrder: subOrder._id
+      }).session(session);
+
+      if (existingContract) {
+        existingContract.status = 'CANCELLED';
+        existingContract.cancelledAt = new Date();
+        existingContract.cancelReason = 'Chủ hủy đơn hàng sau khi xác nhận một phần';
+        await existingContract.save({ session });
+
+        console.log(
+          `🗑️ Contract ${existingContract._id} marked as CANCELLED - Owner cancelled partial order`
+        );
+      }
+
+      // 8. Cập nhật MasterOrder
+      await this.updateMasterOrderConfirmationSummary(masterOrder._id, session);
+      await this.updateMasterOrderStatus(masterOrder._id, session);
+      await this.checkAndCancelMasterOrderIfAllRejected(masterOrder._id, session);
+
+      // 9. Gửi thông báo cho người thuê
+      const Notification = require('../models/Notification');
+      await Notification.create({
+        recipient: renterId,
+        title: 'Chủ đã hủy đơn hàng',
+        message: `Chủ đã quyết định hủy toàn bộ đơn hàng ${subOrder.subOrderNumber} sau khi xác nhận một phần. Bạn đã được hoàn 100% tiền (${totalRefund.toLocaleString('vi-VN')} VNĐ).`,
+        type: 'ORDER',
+        category: 'WARNING',
+        relatedOrder: masterOrder._id,
+        status: 'PENDING',
+        data: {
+          subOrderId: subOrder._id,
+          refundAmount: totalRefund,
+          type: 'owner_cancel_partial'
+        }
+      });
+
+      await session.commitTransaction();
+      session.endSession();
+
+      return {
+        success: true,
+        subOrder: await SubOrder.findById(subOrderId)
+          .populate('masterOrder')
+          .populate('products.product'),
+        refundAmount: totalRefund,
+        message: 'Đã hủy đơn hàng và hoàn tiền 100% thành công'
+      };
+    } catch (error) {
+      await session.abortTransaction();
+      session.endSession();
+      console.error('❌ Error in ownerCancelPartialOrder:', error);
+      throw new Error('Không thể hủy đơn hàng: ' + error.message);
+    }
+  }
+
+  /**
+   * Chủ từ chối TOÀN BỘ đơn hàng (không xác nhận bất kỳ sản phẩm nào)
+   * Khi đơn đang ở trạng thái PENDING_CONFIRMATION
+   */
+  async ownerRejectAllProducts(subOrderId, ownerId, reason) {
+    const session = await mongoose.startSession();
+    session.startTransaction();
+
+    try {
+      // 1. Lấy SubOrder và validate
+      const subOrder = await SubOrder.findOne({
+        _id: subOrderId,
+        status: 'PENDING_CONFIRMATION'
+      })
+        .populate('masterOrder')
+        .populate('products.product')
+        .session(session);
+
+      if (!subOrder) {
+        throw new Error('Không tìm thấy đơn hàng hoặc đơn hàng không ở trạng thái chờ xác nhận');
+      }
+
+      const masterOrder = await MasterOrder.findById(subOrder.masterOrder._id).session(session);
+
+      // Verify ownerId
+      if (subOrder.owner.toString() !== ownerId.toString()) {
+        throw new Error('Bạn không có quyền thực hiện thao tác này');
+      }
+
+      const renterId = masterOrder.renter;
+
+      // 2. Tính toán tổng số tiền cần hoàn (100% tất cả)
+      let totalDeposit = 0;
+      let totalRental = 0;
+      let totalShipping = 0;
+
+      // Calculate rental and deposit from products
+      for (const productItem of subOrder.products) {
+        totalDeposit += productItem.totalDeposit || 0;
+        totalRental += productItem.totalRental || 0;
+      }
+
+      // Calculate shipping from deliveryBatches (all batches)
+      if (subOrder.deliveryBatches && subOrder.deliveryBatches.length > 0) {
+        totalShipping = subOrder.deliveryBatches.reduce(
+          (sum, batch) => sum + (batch.shippingFee.finalFee || 0),
+          0
+        );
+      }
+
+      const totalRefund = totalDeposit + totalRental + totalShipping;
+
+      console.log(`💰 Owner rejected all products - refunding 100%:`, {
+        deposit: totalDeposit,
+        rental: totalRental,
+        shipping: totalShipping,
+        total: totalRefund
+      });
+
+      // 3. Hoàn tiền 100% cho renter
+      const wallet = await Wallet.findOne({ user: renterId }).session(session);
+      if (!wallet) {
+        throw new Error('Không tìm thấy ví của người thuê');
+      }
+
+      wallet.balance.available += totalRefund;
+      await wallet.save({ session });
+
+      // 4. Trừ tiền từ system wallet
+      const SystemWallet = require('../models/SystemWallet');
+      const systemWallet = await SystemWallet.findOne({}).session(session);
+      if (systemWallet && systemWallet.balance.available >= totalRefund) {
+        systemWallet.balance.available -= totalRefund;
+        await systemWallet.save({ session });
+      }
+
+      // 5. Tạo transaction record
+      const transaction = new Transaction({
+        user: renterId,
+        wallet: wallet._id,
+        type: 'refund',
+        amount: totalRefund,
+        status: 'success',
+        description: `Hoàn tiền 100% - Chủ từ chối toàn bộ đơn ${subOrder.subOrderNumber}`,
+        reference: subOrder.subOrderNumber,
+        paymentMethod: 'wallet',
+        fromSystemWallet: true,
+        systemWalletAction: 'refund',
+        metadata: {
+          masterOrderId: masterOrder._id,
+          subOrderId: subOrder._id,
+          subOrderNumber: subOrder.subOrderNumber,
+          reason: reason,
+          refundType: 'owner_reject_all',
+          feeBreakdown: {
+            deposit: totalDeposit,
+            rental: totalRental,
+            shipping: totalShipping
+          },
+          refundBreakdown: {
+            depositRefund: totalDeposit,
+            rentalRefund: totalRental,
+            shippingRefund: totalShipping
+          }
+        },
+        processedAt: new Date()
+      });
+      await transaction.save({ session });
+
+      // 6. Cập nhật SubOrder
+      subOrder.status = 'OWNER_REJECTED';
+      subOrder.cancelledAt = new Date();
+      subOrder.cancelReason = reason;
+      subOrder.ownerRejection = {
+        rejectedAt: new Date(),
+        reason: reason
+      };
+
+      // Đánh dấu tất cả sản phẩm là REJECTED
+      for (const productItem of subOrder.products) {
+        productItem.productStatus = 'REJECTED';
+        productItem.rejectionReason = reason;
+      }
+
+      await subOrder.save({ session });
+
+      // 7. Cập nhật MasterOrder
+      await this.updateMasterOrderConfirmationSummary(masterOrder._id, session);
+      await this.updateMasterOrderStatus(masterOrder._id, session);
+      await this.checkAndCancelMasterOrderIfAllRejected(masterOrder._id, session);
+
+      // 8. Gửi thông báo cho người thuê
+      const Notification = require('../models/Notification');
+      await Notification.create({
+        recipient: renterId,
+        title: 'Chủ đã từ chối đơn hàng',
+        message: `Chủ đã từ chối toàn bộ đơn hàng ${subOrder.subOrderNumber}. Lý do: ${reason}. Bạn đã được hoàn 100% tiền (${totalRefund.toLocaleString('vi-VN')} VNĐ).`,
+        type: 'ORDER',
+        category: 'WARNING',
+        relatedOrder: masterOrder._id,
+        status: 'PENDING',
+        data: {
+          subOrderId: subOrder._id,
+          refundAmount: totalRefund,
+          type: 'owner_reject_all'
+        }
+      });
+
+      await session.commitTransaction();
+      session.endSession();
+
+      return {
+        success: true,
+        subOrder: await SubOrder.findById(subOrderId)
+          .populate('masterOrder')
+          .populate('products.product'),
+        refundAmount: totalRefund,
+        message: 'Đã từ chối đơn hàng và hoàn tiền 100% thành công'
+      };
+    } catch (error) {
+      await session.abortTransaction();
+      session.endSession();
+      console.error('❌ Error in ownerRejectAllProducts:', error);
+      throw new Error('Không thể từ chối đơn hàng: ' + error.message);
+    }
+  }
+
+  /**
+   * Người thuê hủy đơn hàng khi đang PENDING_CONFIRMATION (trước khi owner xác nhận)
+   */
+  async renterCancelPendingOrder(
+    subOrderId,
+    renterId,
+    reason = 'Người thuê hủy đơn trước khi chủ xác nhận'
+  ) {
+    const session = await mongoose.startSession();
+    session.startTransaction();
+
+    try {
+      // 1. Lấy SubOrder và validate
+      const subOrder = await SubOrder.findOne({
+        _id: subOrderId,
+        status: 'PENDING_CONFIRMATION'
+      })
+        .populate('masterOrder')
+        .populate('products.product')
+        .session(session);
+
+      if (!subOrder) {
+        throw new Error('Không tìm thấy đơn hàng hoặc đơn hàng không ở trạng thái chờ xác nhận');
+      }
+
+      const masterOrder = await MasterOrder.findById(subOrder.masterOrder._id).session(session);
+
+      // Verify renterId
+      if (masterOrder.renter.toString() !== renterId.toString()) {
+        throw new Error('Bạn không có quyền thực hiện thao tác này');
+      }
+
+      // 2. Tính toán tổng số tiền cần hoàn (100% tất cả)
+      let totalDeposit = 0;
+      let totalRental = 0;
+      let totalShipping = 0;
+
+      // Calculate rental and deposit from products
+      for (const productItem of subOrder.products) {
+        totalDeposit += productItem.totalDeposit || 0;
+        totalRental += productItem.totalRental || 0;
+      }
+
+      // Calculate shipping from deliveryBatches (all batches)
+      if (subOrder.deliveryBatches && subOrder.deliveryBatches.length > 0) {
+        totalShipping = subOrder.deliveryBatches.reduce(
+          (sum, batch) => sum + (batch.shippingFee.finalFee || 0),
+          0
+        );
+      }
+
+      const totalRefund = totalDeposit + totalRental + totalShipping;
+
+      console.log(`💰 Renter cancelled pending order - refunding 100%:`, {
+        deposit: totalDeposit,
+        rental: totalRental,
+        shipping: totalShipping,
+        total: totalRefund
+      });
+
+      // 3. Hoàn tiền 100%
+      const wallet = await Wallet.findOne({ user: renterId }).session(session);
+      if (!wallet) {
+        throw new Error('Không tìm thấy ví của người thuê');
+      }
+
+      wallet.balance.available += totalRefund;
+      await wallet.save({ session });
+
+      // 4. Trừ tiền từ system wallet
+      const SystemWallet = require('../models/SystemWallet');
+      const systemWallet = await SystemWallet.findOne({}).session(session);
+      if (systemWallet && systemWallet.balance.available >= totalRefund) {
+        systemWallet.balance.available -= totalRefund;
+        await systemWallet.save({ session });
+      }
+
+      // 5. Tạo transaction record
+      const transaction = new Transaction({
+        user: renterId,
+        wallet: wallet._id,
+        type: 'refund',
+        amount: totalRefund,
+        status: 'success',
+        description: `Hoàn tiền 100% - Hủy đơn ${subOrder.subOrderNumber} trước khi chủ xác nhận`,
+        reference: subOrder.subOrderNumber,
+        paymentMethod: 'wallet',
+        fromSystemWallet: true,
+        systemWalletAction: 'refund',
+        metadata: {
+          masterOrderId: masterOrder._id,
+          subOrderId: subOrder._id,
+          subOrderNumber: subOrder.subOrderNumber,
+          reason: reason,
+          refundType: 'renter_cancel_pending',
+          feeBreakdown: {
+            deposit: totalDeposit,
+            rental: totalRental,
+            shipping: totalShipping
+          },
+          refundBreakdown: {
+            depositRefund: totalDeposit,
+            rentalRefund: totalRental,
+            shippingRefund: totalShipping
+          }
+        },
+        processedAt: new Date()
+      });
+      await transaction.save({ session });
+
+      // 6. Cập nhật SubOrder
+      subOrder.status = 'CANCELLED';
+      subOrder.cancelledAt = new Date();
+      subOrder.cancelReason = reason;
+      await subOrder.save({ session });
+
+      // 7. Cập nhật MasterOrder
+      await this.updateMasterOrderConfirmationSummary(masterOrder._id, session);
+      await this.updateMasterOrderStatus(masterOrder._id, session);
+      await this.checkAndCancelMasterOrderIfAllRejected(masterOrder._id, session);
+
+      // 8. Gửi thông báo cho owner
+      const Notification = require('../models/Notification');
+      await Notification.create({
+        recipient: subOrder.owner,
+        title: 'Người thuê đã hủy đơn hàng',
+        message: `Người thuê đã hủy đơn hàng ${subOrder.subOrderNumber} trước khi bạn xác nhận. Lý do: ${reason}`,
+        type: 'ORDER',
+        category: 'WARNING',
+        relatedOrder: masterOrder._id,
+        status: 'PENDING',
+        data: {
+          subOrderId: subOrder._id,
+          type: 'renter_cancel_pending'
+        }
+      });
+
+      await session.commitTransaction();
+      session.endSession();
+
+      return {
+        success: true,
+        subOrder: await SubOrder.findById(subOrderId)
+          .populate('masterOrder')
+          .populate('products.product'),
+        refundAmount: totalRefund,
+        message: 'Đã hủy đơn hàng và hoàn tiền 100% thành công'
+      };
+    } catch (error) {
+      await session.abortTransaction();
+      session.endSession();
+      console.error('❌ Error in renterCancelPendingOrder:', error);
+      throw new Error('Không thể hủy đơn hàng: ' + error.message);
+    }
+  }
 }
 
 module.exports = new RentalOrderService();

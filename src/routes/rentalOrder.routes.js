@@ -457,6 +457,51 @@ router.post(
 );
 
 /**
+ * Người thuê hủy đơn hàng khi đang PENDING_CONFIRMATION (trước khi owner xác nhận)
+ * POST /api/rental-orders/suborders/:subOrderId/renter-cancel-pending
+ * Body: { reason?: string }
+ */
+router.post(
+  '/suborders/:subOrderId/renter-cancel-pending',
+  [
+    param('subOrderId').isMongoId().withMessage('ID SubOrder không hợp lệ'),
+    body('reason').optional().isString().withMessage('Lý do phải là chuỗi'),
+    validateRequest
+  ],
+  RentalOrderController.renterCancelPendingOrder
+);
+
+/**
+ * Chủ quyết định HỦY TOÀN BỘ đơn khi đã xác nhận một phần
+ * POST /api/rental-orders/suborders/:subOrderId/owner-cancel-partial
+ * Body: { reason?: string }
+ */
+router.post(
+  '/suborders/:subOrderId/owner-cancel-partial',
+  [
+    param('subOrderId').isMongoId().withMessage('ID SubOrder không hợp lệ'),
+    body('reason').optional().isString().withMessage('Lý do phải là chuỗi'),
+    validateRequest
+  ],
+  RentalOrderController.ownerCancelPartialOrder
+);
+
+/**
+ * Chủ từ chối TOÀN BỘ đơn hàng (không xác nhận bất kỳ sản phẩm nào)
+ * POST /api/rental-orders/suborders/:subOrderId/owner-reject-all
+ * Body: { reason: string }
+ */
+router.post(
+  '/suborders/:subOrderId/owner-reject-all',
+  [
+    param('subOrderId').isMongoId().withMessage('ID SubOrder không hợp lệ'),
+    body('reason').notEmpty().withMessage('Lý do từ chối không được trống'),
+    validateRequest
+  ],
+  RentalOrderController.ownerRejectAllProducts
+);
+
+/**
  * Lấy danh sách SubOrder cần xác nhận của owner
  * GET /api/rental-orders/owner/pending-confirmation
  */
