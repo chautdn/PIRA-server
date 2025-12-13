@@ -479,8 +479,9 @@ class ShipmentService {
 
     await shipment.save();
 
+    // Transfer shipping fee to shipper for DELIVERY shipments only
     try {
-      if (shipment.type === 'RETURN' && shipment.shipper && shipment.fee > 0) {
+      if (shipment.type === 'DELIVERY' && shipment.shipper && shipment.fee > 0) {
         const SystemWalletService = require('./systemWallet.service');
         const adminId = process.env.SYSTEM_ADMIN_ID || 'SYSTEM_AUTO_TRANSFER';
 
@@ -488,9 +489,11 @@ class ShipmentService {
           adminId,
           shipment.shipper,
           shipment.fee,
-          `Shipping fee for return shipment ${shipment.shipmentId}`
+          `Shipping fee for delivery shipment ${shipment.shipmentId}`
         );
-      } else if (shipment.type === 'DELIVERY') {
+        console.log(`   💰 Paid ${shipment.fee}đ shipping fee to shipper for DELIVERY`);
+      } else if (shipment.type === 'RETURN') {
+        console.log(`   ℹ️  RETURN shipment - no shipping fee paid to shipper (fee paid by renter)`);
       }
     } catch (err) {
       console.error(`   ❌ Failed to transfer shipping fee: ${err.message}`);
@@ -855,18 +858,8 @@ class ShipmentService {
               );
             }
 
-            // Calculate return shipping fee (same logic as delivery)
+            // RETURN shipment fee is always 0đ (renter pays shipping for return)
             let returnShipmentFee = 0;
-            if (returnBatch && returnBatch.shippingFee) {
-              const productsInBatch = returnBatch.products.length;
-              returnShipmentFee =
-                productsInBatch > 0
-                  ? Math.round(returnBatch.shippingFee.finalFee / productsInBatch)
-                  : returnBatch.shippingFee.finalFee;
-            } else {
-              // Fallback for old orders
-              returnShipmentFee = subOrder.pricing?.shippingFee || 0;
-            }
 
             const returnPayload = {
               subOrder: subOrder._id,
