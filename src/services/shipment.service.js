@@ -313,23 +313,45 @@ class ShipmentService {
         shipment.subOrder.status = 'ACTIVE';
         await shipment.subOrder.save();
 
-      // Transfer 80% of rental fee to owner (frozen 24h)
+      // Transfer 80% of rental fee to owner (frozen until order completed)
       try {
         const SystemWalletService = require('./systemWallet.service');
         const rentalAmount = shipment.subOrder.pricing?.subtotalRental || 0;
-        const ownerCompensation = Math.floor(rentalAmount * 0.8); // 80% of rental fee
+        const ownerCompensation = Math.floor(rentalAmount * 0.9); // 80% of rental fee
 
         if (ownerCompensation > 0 && shipment.subOrder.owner) {
           const adminId = process.env.SYSTEM_ADMIN_ID || 'SYSTEM_AUTO_TRANSFER';
 
-          // Transfer 80% of rental fee to owner's frozen wallet (24h unlock)
+          // Transfer 80% of rental fee to owner's frozen wallet
+          // Will be unlocked 24h after order completion (not 24h from now)
           const transferResult = await SystemWalletService.transferToUserFrozen(
             adminId,
             shipment.subOrder.owner,
             ownerCompensation,
-            `Rental fee (80%) for shipment ${shipment.shipmentId} - frozen 24h`,
-            24 * 60 * 60 * 1000
+            `Rental fee (90%) for shipment ${shipment.shipmentId} - frozen until order completed`,
+            365 * 24 * 60 * 60 * 1000 // Set very long duration, will be updated when order completes
           );
+
+          // Update transaction metadata to include subOrderId for later unlock
+          const Transaction = require('../models/Transaction');
+          await Transaction.updateMany(
+            {
+              user: shipment.subOrder.owner,
+              amount: ownerCompensation,
+              'metadata.action': 'RECEIVED_FROM_SYSTEM_FROZEN',
+              createdAt: { $gte: new Date(Date.now() - 60000) } // Last 1 minute
+            },
+            {
+              $set: {
+                'metadata.subOrderId': shipment.subOrder._id,
+                'metadata.shipmentId': shipment._id,
+                'metadata.shipmentType': 'DELIVERY'
+              }
+            }
+          );
+          
+          console.log(`   💰 Owner will receive ${ownerCompensation.toLocaleString()} VND (80% rental fee)`);
+          console.log(`   🔒 Funds frozen until order completed, then unlock after 24h`);
         } else {
           console.log(
             `   ⚠️  Skipped transfer: ownerCompensation=${ownerCompensation}, owner=${shipment.subOrder.owner}`
@@ -460,20 +482,26 @@ class ShipmentService {
           console.error(`   ⚠️  Failed to update loyaltyPoints:`, loyaltyErr.message);
         }
 
-      // Set masterOrder status to COMPLETED (all items returned)
+      // Schedule order completion after 24h (not immediately)
+      // When order completes, frozen funds will also be unlocked at the same time
       try {
-        const MasterOrder = require('../models/MasterOrder');
+        const OrderScheduler = require('./orderScheduler.service');
         const masterOrderId = shipment.subOrder.masterOrder;
 
         if (masterOrderId) {
-          const masterOrder = await MasterOrder.findById(masterOrderId);
-          if (masterOrder && masterOrder.status !== 'COMPLETED') {
-            masterOrder.status = 'COMPLETED';
-            await masterOrder.save();
-          }
+          console.log('\n⏰ Scheduling order completion + funds unlock after 24h from return delivery...');
+          await OrderScheduler.scheduleOrderCompletion(
+            masterOrderId,
+            shipment.subOrder._id,
+            24 // 24 hours delay
+          );
+          console.log('   ✅ After 24h:');
+          console.log('      - Order will be marked as COMPLETED');
+          console.log('      - Frozen funds (rental + extension) will be unlocked simultaneously');
+          console.log('      - Owner can withdraw money');
         }
-      } catch (moErr) {
-        console.error('   ⚠️ Failed to update MasterOrder status:', moErr.message || moErr);
+      } catch (scheduleErr) {
+        console.error('   ⚠️ Failed to schedule order completion:', scheduleErr.message || scheduleErr);
       }
     }
 

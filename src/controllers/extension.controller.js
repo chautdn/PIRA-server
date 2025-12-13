@@ -500,6 +500,53 @@ class ExtensionController {
         throw new BadRequest('Failed to deduct extension fee from renter wallet');
       }
 
+      // Transfer 90% extension fee to owner (frozen until order completed)
+      try {
+        const ownerCompensation = Math.floor(productToApprove.extensionFee * 0.9); // 90% of extension fee
+        const adminId = process.env.SYSTEM_ADMIN_ID || 'SYSTEM_AUTO_TRANSFER';
+
+        if (ownerCompensation > 0) {
+          await SystemWalletService.transferToUserFrozen(
+            adminId,
+            ownerId,
+            ownerCompensation,
+            `Extension fee (90%) for product: ${productToApprove.productName} - ${productToApprove.extensionDays} days`,
+            365 * 24 * 60 * 60 * 1000 // Set very long duration, will be updated when order completes
+          );
+
+          // Update transaction metadata to include subOrderId for later unlock
+          const Transaction = require('../models/Transaction');
+          await Transaction.updateMany(
+            {
+              user: ownerId,
+              amount: ownerCompensation,
+              'metadata.action': 'RECEIVED_FROM_SYSTEM_FROZEN',
+              createdAt: { $gte: new Date(Date.now() - 60000) } // Last 1 minute
+            },
+            {
+              $set: {
+                'metadata.subOrderId': subOrderId,
+                'metadata.action': 'RECEIVED_EXTENSION_FEE',
+                'metadata.extensionId': extension._id,
+                'metadata.extensionDays': productToApprove.extensionDays
+              }
+            }
+          );
+          
+          console.log('💰 Owner received 90% extension fee (frozen until order completed):', {
+            owner: ownerId,
+            amount: ownerCompensation,
+            extensionFee: productToApprove.extensionFee,
+            productName: productToApprove.productName,
+            extensionDays: productToApprove.extensionDays
+          });
+        }
+      } catch (ownerPaymentError) {
+        console.error('Owner payment error:', ownerPaymentError);
+        // Don't throw - extension is already approved, just log the error
+        console.warn('⚠️ Extension approved but owner payment failed. Manual intervention required.');
+      }
+
       // Update product rental period in subOrder
       const subOrderProduct = subOrder.products.find(p => p._id.toString() === productToApprove.productId.toString());
       if (subOrderProduct && subOrderProduct.rentalPeriod) {
