@@ -1,0 +1,209 @@
+# TEST CASE DOCUMENT - UT-57
+
+| **Function Code** | UT-57 |  | **Function Name** | Confirm Return to Owner (Shipper) |
+|-------------------|-------|--|-------------------|-----------------------------------|
+| **Created By** | TuanNDQ |  | **Executed By** | QA Tester |
+| **Lines of code** | 40 |  | **Lack of test cases** |  |
+| **Test requirement** | **SHIPPER** confirms returning product to owner, completing delivery cycle |  |  |  |
+
+| **Passed** | **Failed** |  | **Untested** |  | **N/A/B** |  |  | **Total Test Cases** |
+|------------|------------|--|--------------|--|-----------|--|--|----------------------|
+| 4 | 0 |  | 0 |  | 3/0/1 | 0 | 0 | 4 |
+
+---
+
+## TEST MATRIX
+ 
+**Legend**: `O` = precondition/result is being tested / expected. Blank = not applicable / not supplied.
+
+### ACTION DESCRIPTIONS
+**Use Case Flow**: **SHIPPER** trả sản phẩm về owner, xác nhận với photo, complete task, trigger payment release và reviews.
+
+- **ACTION 1** (N): Shipper confirms return to owner → PASSED ✅
+- **ACTION 2** (N): Rental marked as COMPLETED → PASSED ✅
+- **ACTION 3** (N): Payment released to owner → PASSED ✅
+- **ACTION 4** (B): Return triggers review request → PASSED ✅
+
+---
+
+### PRECONDITION
+
+| **Precondition** | **A1** | **A2** | **A3** | **A4** |
+|:-----------------|:------:|:------:|:------:|:------:|
+| Server online & DB connected | O | O | O | O |
+| User authenticated | O | O | O | O |
+| API: POST /api/shipper/tasks/:id/confirm-return-owner | O | O | O | O |
+| **Authorization** |  |  |  |  |
+| - User is assigned shipper | O | O | O | O |
+| **Task State** |  |  |  |  |
+| - Task type = RETURN_TO_OWNER | O | O | O | O |
+| - Pickup from renter confirmed | O | O | O | O |
+| - Task status = IN_TRANSIT | O | O | O | O |
+| **Request Data** |  |  |  |  |
+| - Photo proof | O | O | O | O |
+| - Owner signature | O | O | O | O |
+
+---
+
+### CONFIRM - RETURN
+
+| **Return** | **A1** | **A2** | **A3** | **A4** |
+|:-----------|:------:|:------:|:------:|:------:|
+| **Success (200 OK)** | O | O | O | O |
+| - success: true | O | O | O | O |
+| - message: "Đã trả hàng cho chủ" | O |  |  |  |
+| - rental status = COMPLETED |  | O |  |  |
+| - payment released |  |  | O |  |
+| - review request sent |  |  |  | O |
+| - task status = COMPLETED | O |  |  |  |
+
+---
+
+### EXCEPTION
+
+| **Exception** | **A1** | **A2** | **A3** | **A4** |
+|:--------------|:------:|:------:|:------:|:------:|
+| None | O | O | O | O |
+
+---
+
+### LOG MESSAGE
+
+| **Log message** | **A1** | **A2** | **A3** | **A4** |
+|:----------------|:------:|:------:|:------:|:------:|
+| "✅ Verifying pickup from renter completed..." | O | O | O | O |
+| "✅ Uploading return proof..." | O |  |  |  |
+| "✅ Completing rental..." |  | O |  |  |
+| "✅ Releasing payment..." |  |  | O |  |
+| "✅ Sending review requests..." |  |  |  | O |
+| "✅ Return confirmed" | O | O | O | O |
+
+---
+
+### RESULT
+
+| **Result** | **A1** | **A2** | **A3** | **A4** |
+|:-----------|:------:|:------:|:------:|:------:|
+| **Type** | N | N | N | B |
+| **Passed/Failed** | P | P | P | P |
+| **Defect ID** |  |  |  |  |
+| **Executed Date** | 11/12/2025 | 11/12/2025 | 11/12/2025 | 11/12/2025 |
+
+---
+
+## DETAILED TEST SCENARIOS
+
+### **ACTION 1: Shipper confirms return to owner** ✅ PASSED
+
+**Type**: Normal (N)
+
+**Input**:
+```json
+POST /api/shipper/tasks/674ftask123/confirm-return-owner
+Authorization: Bearer <shipper_token>
+Body: {
+  "photo": [return_photo.jpg],
+  "ownerSignature": "base64_signature",
+  "note": "Đã trả hàng cho chủ, tình trạng tốt",
+  "gps": {...}
+}
+```
+
+**Expected**: 200 OK, return confirmed
+
+**Actual**: 
+- ✅ 200 OK
+- ✅ Photo and signature saved
+- ✅ Return timestamp recorded
+- ✅ Task completed
+
+**Result**: PASSED
+
+---
+
+### **ACTION 2: Rental marked as COMPLETED** ✅ PASSED
+
+**Type**: Normal (N)
+
+**Expected**: SubOrder status = ACTIVE → COMPLETED
+
+**Actual**:
+```json
+{
+  "rental": {
+    "status": "COMPLETED",
+    "completedAt": "2025-12-11T18:00:00Z",
+    "actualEndDate": "2025-12-11"
+  }
+}
+```
+- ✅ Rental status updated
+- ✅ Completion timestamp
+- ✅ Rental cycle finished
+
+**Result**: PASSED
+
+---
+
+### **ACTION 3: Payment released to owner** ✅ PASSED
+
+**Type**: Normal (N)
+
+**Expected**: Payment transferred to owner account
+
+**Actual**:
+- ✅ Payment status: PENDING → RELEASED
+- ✅ Amount: 450,000 VND (after platform fee)
+- ✅ Owner wallet updated
+- ✅ Transaction recorded
+
+**Result**: PASSED
+
+---
+
+### **ACTION 4: Return triggers review request** ✅ PASSED
+
+**Type**: Boundary (B)
+
+**Expected**: Review requests sent to both parties
+
+**Actual**:
+- ✅ Renter receives: "Đánh giá sản phẩm"
+- ✅ Owner receives: "Đánh giá người thuê"
+- ✅ Both can now leave reviews
+- ✅ 7-day review window started
+
+**Result**: PASSED
+
+---
+
+## DEFECT SUMMARY
+
+| **Defect ID** | **Severity** | **Description** | **Action** |
+|---------------|--------------|-----------------|------------|
+| N/A | N/A | No defects found | N/A |
+
+---
+
+## SUMMARY
+
+**Total**: 4 test cases | **Passed**: 4 (100%) | **Failed**: 0 (0%)
+
+**By Type**:
+- Normal (N): 3 tests → 3 Passed ✅
+- Abnormal (A): 0 tests
+- Boundary (B): 1 test → 1 Passed ✅
+
+**Critical Issues**:
+- ✅ ALL TESTS PASSED
+- ✅ Complete delivery workflow working
+- ✅ Payment and review systems integrated
+
+**Recommendations**:
+- Maintain current implementation quality
+- Consider: Auto-complete if owner doesn't confirm within 24h
+- Add: Delivery quality rating for shipper
+
+---
+
+**Version**: 2.0 | **Updated**: 11/12/2025 | **Status**: Testing Complete - All Tests Passed ✅
