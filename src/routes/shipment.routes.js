@@ -12,6 +12,13 @@ router.use(authMiddleware.verifyToken);
 // List available shippers by ward/district
 router.get('/shippers', ShipmentController.listShippers);
 
+// Get all shipments for a specific shipper (ADMIN only)
+router.get('/shipper/:shipperId', [
+  param('shipperId').isMongoId().withMessage('Invalid shipper ID'),
+  validateRequest,
+  authMiddleware.checkUserRole(['ADMIN'])
+], ShipmentController.getShipperShipments);
+
 // Shipper own shipments
 router.get('/my', ShipmentController.listMyShipments);
 
@@ -77,8 +84,8 @@ router.post('/:id/return-failed', [
   authMiddleware.checkUserRole(['SHIPPER'])
 ], ShipmentController.returnFailed);
 
-// Upload delivery proof (pickup & delivered images)
-router.post('/:shipmentId/proof', [param('shipmentId').isMongoId().withMessage('Invalid Shipment ID'), validateRequest], upload.array('images', 2), ShipmentController.uploadProof);
+// Upload delivery proof (pickup & delivered images) - min 3, max 10 images
+router.post('/:shipmentId/proof', [param('shipmentId').isMongoId().withMessage('Invalid Shipment ID'), validateRequest], upload.array('images', 10), ShipmentController.uploadProof);
 
 // Get delivery proof
 router.get('/:shipmentId/proof', [param('shipmentId').isMongoId().withMessage('Invalid Shipment ID'), validateRequest], ShipmentController.getProof);

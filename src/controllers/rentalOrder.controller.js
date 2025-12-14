@@ -533,18 +533,21 @@ class RentalOrderController {
 
       // Populate shipments for each subOrder separately
       const Shipment = require('../models/Shipment');
-      for (let subOrder of masterOrder.subOrders) {
-        const shipments = await Shipment.find({ subOrder: subOrder._id })
+      const masterOrderObj = masterOrder.toObject();
+      
+      for (let i = 0; i < masterOrderObj.subOrders.length; i++) {
+        const shipments = await Shipment.find({ subOrder: masterOrderObj.subOrders[i]._id })
           .select(
             'shipmentNumber type status shipper estimatedDeliveryDate actualDeliveryDate fromAddress toAddress contactInfo'
           )
-          .populate('shipper', 'name email phone profile');
-        subOrder.shipments = shipments;
+          .populate('shipper', 'email phone profile')
+          .lean();
+        masterOrderObj.subOrders[i].shipments = shipments;
       }
 
       return new SuccessResponse(
         {
-          masterOrder
+          masterOrder: masterOrderObj
         },
         'Lấy chi tiết đơn hàng thành công'
       ).send(res);
@@ -1228,6 +1231,111 @@ class RentalOrderController {
       return res.status(400).json({
         success: false,
         message: error.message || 'Không thể chấp nhận đơn hàng'
+      });
+    }
+  }
+
+  /**
+   * Chủ quyết định HỦY TOÀN BỘ đơn khi đã xác nhận một phần
+   * POST /api/rental-orders/suborders/:subOrderId/owner-cancel-partial
+   */
+  async ownerCancelPartialOrder(req, res) {
+    try {
+      const ownerId = req.user.id;
+      const { subOrderId } = req.params;
+      const { reason } = req.body;
+
+      console.log('📥 POST /api/rental-orders/suborders/:subOrderId/owner-cancel-partial');
+      console.log('SubOrder ID:', subOrderId);
+      console.log('Owner ID:', ownerId);
+
+      const result = await RentalOrderService.ownerCancelPartialOrder(
+        subOrderId,
+        ownerId,
+        reason || 'Chủ hủy đơn sau khi xác nhận một phần'
+      );
+
+      return new SuccessResponse({
+        message: result.message,
+        metadata: {
+          subOrder: result.subOrder,
+          refundAmount: result.refundAmount
+        }
+      }).send(res);
+    } catch (error) {
+      console.error('❌ Error in ownerCancelPartialOrder:', error);
+      return res.status(400).json({
+        success: false,
+        message: error.message || 'Không thể hủy đơn hàng'
+      });
+    }
+  }
+
+  /**
+   * Chủ từ chối TOÀN BỘ đơn hàng (không xác nhận bất kỳ sản phẩm nào)
+   * POST /api/rental-orders/suborders/:subOrderId/owner-reject-all
+   */
+  async ownerRejectAllProducts(req, res) {
+    try {
+      const ownerId = req.user.id;
+      const { subOrderId } = req.params;
+      const { reason } = req.body;
+
+      console.log('📥 POST /api/rental-orders/suborders/:subOrderId/owner-reject-all');
+      console.log('SubOrder ID:', subOrderId);
+      console.log('Owner ID:', ownerId);
+      console.log('Reason:', reason);
+
+      const result = await RentalOrderService.ownerRejectAllProducts(subOrderId, ownerId, reason);
+
+      return new SuccessResponse({
+        message: result.message,
+        metadata: {
+          subOrder: result.subOrder,
+          refundAmount: result.refundAmount
+        }
+      }).send(res);
+    } catch (error) {
+      console.error('❌ Error in ownerRejectAllProducts:', error);
+      return res.status(400).json({
+        success: false,
+        message: error.message || 'Không thể từ chối đơn hàng'
+      });
+    }
+  }
+
+  /**
+   * Người thuê hủy đơn hàng khi đang PENDING_CONFIRMATION
+   * POST /api/rental-orders/suborders/:subOrderId/renter-cancel-pending
+   */
+  async renterCancelPendingOrder(req, res) {
+    try {
+      const renterId = req.user.id;
+      const { subOrderId } = req.params;
+      const { reason } = req.body;
+
+      console.log('📥 POST /api/rental-orders/suborders/:subOrderId/renter-cancel-pending');
+      console.log('SubOrder ID:', subOrderId);
+      console.log('Renter ID:', renterId);
+
+      const result = await RentalOrderService.renterCancelPendingOrder(
+        subOrderId,
+        renterId,
+        reason || 'Người thuê hủy đơn trước khi chủ xác nhận'
+      );
+
+      return new SuccessResponse({
+        message: result.message,
+        metadata: {
+          subOrder: result.subOrder,
+          refundAmount: result.refundAmount
+        }
+      }).send(res);
+    } catch (error) {
+      console.error('❌ Error in renterCancelPendingOrder:', error);
+      return res.status(400).json({
+        success: false,
+        message: error.message || 'Không thể hủy đơn hàng'
       });
     }
   }

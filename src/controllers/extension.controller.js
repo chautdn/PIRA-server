@@ -99,7 +99,43 @@ class ExtensionController {
       // Find max extension days for overall status
       const maxExtensionDays = Math.max(...productsList.map(p => p.extensionDays));
 
-      // Create extension request
+      // Get renter's wallet and check balance
+      const renter = await User.findById(renterId).populate('wallet');
+      if (!renter || !renter.wallet) {
+        throw new BadRequest('Không tìm thấy ví của người dùng');
+      }
+
+      const wallet = renter.wallet;
+      if (wallet.balance.available < totalExtensionFee) {
+        throw new BadRequest(
+          `Ví không đủ số dư. Hiện có: ${wallet.balance.available.toLocaleString('vi-VN')}đ, cần: ${totalExtensionFee.toLocaleString('vi-VN')}đ`
+        );
+      }
+
+      // Deduct from wallet immediately
+      const transactionId = `EXT_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`;
+      wallet.balance.available = Math.round(wallet.balance.available - totalExtensionFee);
+
+      // Add transaction log
+      if (!wallet.transactions) {
+        wallet.transactions = [];
+      }
+      wallet.transactions.push({
+        type: 'PAYMENT',
+        amount: Math.round(totalExtensionFee),
+        description: `Thanh toán gia hạn thuê - ${productsList.length} sản phẩm`,
+        timestamp: new Date(),
+        status: 'COMPLETED',
+        metadata: {
+          subOrderId: subOrderId.toString(),
+          masterOrderId: subOrder.masterOrder._id.toString()
+        }
+      });
+
+      await wallet.save();
+      console.log(`💰 Deducted ${totalExtensionFee}đ from renter wallet - Transaction: ${transactionId}`);
+
+      // Create extension request with payment info
       const extension = new Extension({
         masterOrder: subOrder.masterOrder._id,
         subOrder: subOrderId,
@@ -108,7 +144,15 @@ class ExtensionController {
         extensionDays: maxExtensionDays,
         totalExtensionFee,
         notes,
-        status: 'PENDING'
+        status: 'PENDING',
+        paymentMethod: 'WALLET',
+        paymentStatus: 'PAID',
+        paymentInfo: {
+          transactionId,
+          paymentDate: new Date(),
+          amount: totalExtensionFee,
+          method: 'WALLET'
+        }
       });
 
       await extension.save();
@@ -456,6 +500,60 @@ class ExtensionController {
         throw new BadRequest('Failed to deduct extension fee from renter wallet');
       }
 
+      // Transfer 90% extension fee to owner (frozen until order completed)
+      // Queue in background to avoid blocking response
+      const PaymentQueue = require('../services/paymentQueue.service');
+      const ownerCompensation = Math.floor(productToApprove.extensionFee * 0.9); // 90% of extension fee
+
+      if (ownerCompensation > 0) {
+        console.log('💰 Queuing extension payment:', {
+          owner: ownerId,
+          amount: ownerCompensation,
+          extensionFee: productToApprove.extensionFee,
+          productName: productToApprove.productName,
+          extensionDays: productToApprove.extensionDays
+        });
+
+        PaymentQueue.add(async () => {
+          try {
+            const Transaction = require('../models/Transaction');
+            const adminId = process.env.SYSTEM_ADMIN_ID || 'SYSTEM_AUTO_TRANSFER';
+
+            const transferResult = await SystemWalletService.transferToUserFrozen(
+              adminId,
+              ownerId,
+              ownerCompensation,
+              `Extension fee (90%) for product: ${productToApprove.productName} - ${productToApprove.extensionDays} days`,
+              365 * 24 * 60 * 60 * 1000
+            );
+
+            // Update transaction metadata
+            if (transferResult?.transactions?.user?._id) {
+              await Transaction.findByIdAndUpdate(
+                transferResult.transactions.user._id,
+                {
+                  $set: {
+                    'metadata.subOrderId': subOrderId,
+                    'metadata.action': 'RECEIVED_EXTENSION_FEE',
+                    'metadata.extensionId': extension._id,
+                    'metadata.extensionDays': productToApprove.extensionDays
+                  }
+                }
+              );
+            }
+
+            console.log(`   ✅ Extension payment completed: ${ownerCompensation.toLocaleString()} VND to owner ${ownerId}`);
+          } catch (err) {
+            console.error(`   ❌ Extension payment failed:`, err.message);
+          }
+        }, {
+          type: 'EXTENSION_FEE',
+          amount: ownerCompensation,
+          ownerId,
+          extensionId: extension._id
+        });
+      }
+
       // Update product rental period in subOrder
       const subOrderProduct = subOrder.products.find(p => p._id.toString() === productToApprove.productId.toString());
       if (subOrderProduct && subOrderProduct.rentalPeriod) {
@@ -651,8 +749,75 @@ class ExtensionController {
       // - Otherwise keep current status
       if (rejectedCount === extension.products.length) {
         extension.status = 'REJECTED';
+        
+        // Refund full amount if ALL products are rejected
+        if (extension.paymentStatus === 'PAID') {
+          try {
+            const renter = await User.findById(extension.renter).populate('wallet');
+            if (renter && renter.wallet) {
+              const refundAmount = extension.totalExtensionFee;
+              renter.wallet.balance.available = Math.round(renter.wallet.balance.available + refundAmount);
+              
+              // Add refund transaction
+              if (!renter.wallet.transactions) {
+                renter.wallet.transactions = [];
+              }
+              renter.wallet.transactions.push({
+                type: 'REFUND',
+                amount: Math.round(refundAmount),
+                description: `Hoàn tiền gia hạn - Tất cả sản phẩm bị từ chối`,
+                timestamp: new Date(),
+                status: 'COMPLETED',
+                metadata: {
+                  extensionId: extension._id.toString(),
+                  reason: rejectionReason
+                }
+              });
+              
+              await renter.wallet.save();
+              console.log(`💰 Refunded ${refundAmount}đ to renter ${extension.renter} - All products rejected`);
+            }
+          } catch (refundError) {
+            console.error('❌ Error refunding payment:', refundError.message);
+            // Continue even if refund fails
+          }
+        }
       } else if (pendingCount > 0 || approvedCount > 0 || rejectedCount > 0) {
         extension.status = 'PARTIALLY_APPROVED';
+        
+        // Partial refund for rejected product
+        if (extension.paymentStatus === 'PAID') {
+          try {
+            const renter = await User.findById(extension.renter).populate('wallet');
+            if (renter && renter.wallet) {
+              const refundAmount = productToReject.extensionFee;
+              renter.wallet.balance.available = Math.round(renter.wallet.balance.available + refundAmount);
+              
+              // Add partial refund transaction
+              if (!renter.wallet.transactions) {
+                renter.wallet.transactions = [];
+              }
+              renter.wallet.transactions.push({
+                type: 'REFUND',
+                amount: Math.round(refundAmount),
+                description: `Hoàn tiền gia hạn - Sản phẩm "${productToReject.productName}" bị từ chối`,
+                timestamp: new Date(),
+                status: 'COMPLETED',
+                metadata: {
+                  extensionId: extension._id.toString(),
+                  productId: productToReject.productId.toString(),
+                  reason: rejectionReason
+                }
+              });
+              
+              await renter.wallet.save();
+              console.log(`💰 Partial refund ${refundAmount}đ to renter ${extension.renter} - Product rejected: ${productToReject.productName}`);
+            }
+          } catch (refundError) {
+            console.error('❌ Error processing partial refund:', refundError.message);
+            // Continue even if refund fails
+          }
+        }
       }
 
       extension.rejectionReason = rejectionReason;
