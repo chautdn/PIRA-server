@@ -1300,6 +1300,92 @@ class SystemWalletService {
       session.endSession();
     }
   }
+
+  /**
+   * Unlock all frozen funds for a specific order after it's completed
+   * This will find all frozen transactions related to the order and schedule them to unlock after 24h
+   */
+  async unlockFrozenFundsForOrder(subOrderId, delayHours = 24) {
+    console.log(`\n🔓 Unlocking frozen funds for order: ${subOrderId}`);
+    
+    try {
+      // Find all frozen transactions related to this order
+      const Transaction = require('../models/Transaction');
+      const mongoose = require('mongoose');
+      
+      // Convert subOrderId to ObjectId if it's a string
+      const subOrderObjectId = typeof subOrderId === 'string' 
+        ? new mongoose.Types.ObjectId(subOrderId) 
+        : subOrderId;
+      
+      // Find transactions with subOrderId in metadata
+      const frozenTransactions = await Transaction.find({
+        type: 'TRANSFER_IN',
+        status: 'success',
+        'metadata.subOrderId': subOrderObjectId,
+        'metadata.action': { $in: ['RECEIVED_FROM_SYSTEM_FROZEN', 'RECEIVED_EXTENSION_FEE'] }
+      }).populate('wallet');
+
+      console.log(`   Found ${frozenTransactions.length} frozen transactions for order ${subOrderId}`);
+
+      if (frozenTransactions.length === 0) {
+        console.log('   No frozen transactions found for this order');
+        return { success: true, unlockedCount: 0 };
+      }
+
+      const unlockAt = new Date(Date.now() + delayHours * 60 * 60 * 1000);
+      let totalAmount = 0;
+      let walletId = null;
+      let userId = null;
+
+      // Update unfreezedAt in metadata for all transactions
+      for (const transaction of frozenTransactions) {
+        transaction.metadata.unfreezedAt = unlockAt;
+        transaction.metadata.unlockScheduledAt = new Date();
+        transaction.metadata.unlockReason = 'ORDER_COMPLETED';
+        await transaction.save();
+        
+        totalAmount += transaction.amount;
+        walletId = transaction.wallet._id;
+        userId = transaction.user;
+      }
+
+      console.log(`   Total frozen amount: ${totalAmount.toLocaleString()} VND`);
+      console.log(`   Will unlock at: ${unlockAt.toLocaleString('vi-VN')}`);
+
+      // Schedule Bull job to unfreeze funds
+      try {
+        const Bull = require('bull');
+        const unfreezeQueue = new Bull('wallet-unfreeze', process.env.REDIS_URL || 'redis://127.0.0.1:6379');
+        
+        await unfreezeQueue.add(
+          { 
+            walletId: walletId.toString(), 
+            amount: totalAmount,
+            subOrderId: subOrderId,
+            reason: 'ORDER_COMPLETED'
+          },
+          { delay: delayHours * 60 * 60 * 1000 }
+        );
+        
+        console.log(`   ⏰ Scheduled unfreeze job for ${delayHours}h from now`);
+      } catch (jobErr) {
+        console.error(`   ⚠️  Failed to schedule unfreeze job: ${jobErr.message}`);
+      }
+
+      return {
+        success: true,
+        unlockedCount: frozenTransactions.length,
+        totalAmount: totalAmount,
+        unlockAt: unlockAt,
+        walletId: walletId,
+        userId: userId
+      };
+    } catch (error) {
+      console.error('   ❌ Error unlocking frozen funds:', error);
+      throw error;
+    }
+  }
 }
 
 module.exports = new SystemWalletService();

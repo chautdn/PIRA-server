@@ -103,7 +103,7 @@ const shipmentSchema = new mongoose.Schema(
         'DELIVERED', // Đã giao thành công
         'DELIVERY_FAILED', // Giao hàng thất bại (sản phẩm có vấn đề)
         'FAILED', // Giao/trả thất bại - không liên lạc được
-        'CANCELLED' // Đã hủy
+        'CANCELLED', // Đã hủy
       ],
       default: 'PENDING'
     },

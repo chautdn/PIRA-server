@@ -1,5 +1,5 @@
 const mongoose = require('mongoose');
-const ExtensionRequest = require('../models/ExtensionRequest');
+const ExtensionRequest = require('../models/Extension'); // Extension model
 const SubOrder = require('../models/SubOrder');
 const MasterOrder = require('../models/MasterOrder');
 const Product = require('../models/Product');
@@ -485,9 +485,12 @@ class ExtensionService {
       };
       extensionRequest.rejectedAt = new Date();
 
-      // Refund payment
+      // Refund payment with reason
       if (extensionRequest.paymentStatus === 'PAID') {
-        await this.refundExtensionPayment(extensionRequest);
+        await this.refundExtensionPayment(
+          extensionRequest,
+          `Chủ sở hữu từ chối yêu cầu gia hạn - ${rejectionReason || 'Không có lý do'}`
+        );
       }
 
       await extensionRequest.save();
@@ -499,20 +502,37 @@ class ExtensionService {
   }
 
   /**
-   * Refund payment khi từ chối
+   * Refund payment khi từ chối hoặc hết hạn
    */
-  async refundExtensionPayment(extensionRequest) {
+  async refundExtensionPayment(extensionRequest, reason = 'Hoàn tiền yêu cầu gia hạn') {
     try {
       const { renter, paymentMethod, totalCost } = extensionRequest;
 
       if (paymentMethod === 'WALLET') {
         const user = await User.findById(renter).populate('wallet');
         if (user && user.wallet) {
+          // Refund to wallet
           user.wallet.balance.available += totalCost;
+          
+          // Add transaction record
+          if (!user.wallet.transactions) {
+            user.wallet.transactions = [];
+          }
+          user.wallet.transactions.push({
+            type: 'REFUND',
+            amount: Math.round(totalCost),
+            description: reason,
+            timestamp: new Date(),
+            status: 'COMPLETED'
+          });
+          
           await user.wallet.save();
+          console.log(`✅ Refunded ${totalCost}đ to renter ${renter} wallet - Reason: ${reason}`);
         }
       }
+      // For other payment methods (PAYOS, COD), handle separately if needed
     } catch (error) {
+      console.error('❌ Error refunding extension payment:', error.message);
       // Continue even if refund fails
     }
   }
@@ -536,14 +556,94 @@ class ExtensionService {
       extensionRequest.status = 'CANCELLED';
       await extensionRequest.save();
 
-      // Refund payment
+      // Refund payment with reason
       if (extensionRequest.paymentStatus === 'PAID') {
-        await this.refundExtensionPayment(extensionRequest);
+        await this.refundExtensionPayment(
+          extensionRequest,
+          'Người thuê hủy yêu cầu gia hạn'
+        );
       }
 
       return extensionRequest;
     } catch (error) {
       throw new Error('Không thể hủy yêu cầu gia hạn: ' + error.message);
+    }
+  }
+
+  /**
+   * Auto-reject expired extension requests (owner didn't respond by old endDate)
+   */
+  async autoRejectExpiredExtensions() {
+    try {
+      const now = new Date();
+      
+      // Find all PENDING extension requests where currentEndDate has passed
+      const expiredRequests = await ExtensionRequest.find({
+        status: 'PENDING',
+        paymentStatus: 'PAID',
+        currentEndDate: { $lt: now }
+      }).populate('renter owner');
+
+      if (!expiredRequests || expiredRequests.length === 0) {
+        return {
+          success: true,
+          processedCount: 0,
+          message: 'No expired extension requests to process'
+        };
+      }
+
+      console.log(`🔄 Processing ${expiredRequests.length} expired extension requests...`);
+
+      const results = [];
+      for (const request of expiredRequests) {
+        try {
+          // Update status to EXPIRED
+          request.status = 'EXPIRED';
+          request.ownerResponse = {
+            status: 'EXPIRED',
+            respondedAt: new Date(),
+            rejectionReason: 'Hết thời gian phản hồi - tự động từ chối',
+            notes: 'Chủ sở hữu không xác nhận hoặc từ chối trước ngày kết thúc cũ'
+          };
+          request.expiredAt = new Date();
+
+          // Refund payment
+          await this.refundExtensionPayment(
+            request,
+            'Chủ sở hữu không phản hồi trước ngày kết thúc - hoàn tiền tự động'
+          );
+
+          await request.save();
+          
+          results.push({
+            requestId: request._id,
+            renter: request.renter?.email || 'N/A',
+            refundAmount: request.totalCost,
+            status: 'SUCCESS'
+          });
+
+          console.log(`✅ Auto-rejected and refunded request ${request._id} - ${request.totalCost}đ to ${request.renter?.email}`);
+        } catch (error) {
+          console.error(`❌ Error processing request ${request._id}:`, error.message);
+          results.push({
+            requestId: request._id,
+            status: 'FAILED',
+            error: error.message
+          });
+        }
+      }
+
+      return {
+        success: true,
+        processedCount: expiredRequests.length,
+        results
+      };
+    } catch (error) {
+      console.error('❌ Error in autoRejectExpiredExtensions:', error);
+      return {
+        success: false,
+        error: error.message
+      };
     }
   }
 

@@ -105,7 +105,7 @@ const extensionSchema = new mongoose.Schema(
     // Overall status
     status: {
       type: String,
-      enum: ['PENDING', 'APPROVED', 'REJECTED', 'CANCELLED', 'PARTIALLY_APPROVED'],
+      enum: ['PENDING', 'APPROVED', 'REJECTED', 'CANCELLED', 'PARTIALLY_APPROVED', 'EXPIRED'],
       default: 'PENDING',
       index: true
     },
@@ -119,6 +119,7 @@ const extensionSchema = new mongoose.Schema(
     approvedAt: Date,
     rejectedAt: Date,
     cancelledAt: Date,
+    expiredAt: Date,
     deletedAt: Date
   },
   {

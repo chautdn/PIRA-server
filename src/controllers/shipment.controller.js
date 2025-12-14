@@ -2,6 +2,7 @@ const ShipmentService = require('../services/shipment.service');
 const RentalOrderService = require('../services/rentalOrder.service');
 const User = require('../models/User');
 const SubOrder = require('../models/SubOrder');
+const Shipment = require('../models/Shipment');
 
 class ShipmentController {
   async createShipment(req, res) {
@@ -181,7 +182,6 @@ class ShipmentController {
       }
 
       const shipment = await ShipmentService.markDelivered(shipmentId, req.body);
-      console.log('✅ Shipment marked as delivered successfully');
       return res.json({ status: 'success', data: shipment });
     } catch (err) {
       console.error('deliver error', err.message);
@@ -357,8 +357,21 @@ class ShipmentController {
         return res.status(403).json({ status: 'error', message: 'Only assigned shipper can upload proof' });
       }
 
+      // Validate: minimum 3 images, maximum 10 images
       if (files.length === 0) {
-        return res.status(400).json({ status: 'error', message: 'At least one image is required' });
+        return res.status(400).json({ status: 'error', message: 'At least 3 images are required' });
+      }
+      if (files.length < 3) {
+        return res.status(400).json({ 
+          status: 'error', 
+          message: `Minimum 3 images required. You uploaded ${files.length} image(s)` 
+        });
+      }
+      if (files.length > 10) {
+        return res.status(400).json({ 
+          status: 'error', 
+          message: `Maximum 10 images allowed. You uploaded ${files.length} image(s)` 
+        });
       }
 
       // Upload all files to Cloudinary in parallel
@@ -393,13 +406,11 @@ class ShipmentController {
         proof.imagesBeforeDelivery = imageUrls;
         // Also keep first image in imageBeforeDelivery for backward compatibility
         proof.imageBeforeDelivery = imageUrls[0];
-        console.log(`✅ Updated imagesBeforeDelivery with ${imageUrls.length} image(s)`);
       } else if (shipment.status === 'IN_TRANSIT') {
         // Deliver phase - save as after delivery images
         proof.imagesAfterDelivery = imageUrls;
         // Also keep first image in imageAfterDelivery for backward compatibility
         proof.imageAfterDelivery = imageUrls[0];
-        console.log(`✅ Updated imagesAfterDelivery with ${imageUrls.length} image(s)`);
       } else {
         return res.status(400).json({ status: 'error', message: 'Shipment must be in SHIPPER_CONFIRMED or IN_TRANSIT status' });
       }
@@ -409,12 +420,10 @@ class ShipmentController {
         try {
           proof.geolocation = JSON.parse(req.body.geolocation);
         } catch (e) {
-          console.log('Invalid geolocation format');
         }
       }
 
       await proof.save();
-      console.log(`✅ ShipmentProof saved: ${proof._id}`);
 
       return res.json({ status: 'success', message: 'Proof uploaded successfully', data: proof });
     } catch (err) {
@@ -587,6 +596,112 @@ class ShipmentController {
     } catch (err) {
       console.error('returnFailed error', err.message);
       return res.status(400).json({ status: 'error', message: err.message });
+    }
+  }
+
+  async getShipperShipments(req, res) {
+    try {
+      const { shipperId } = req.params;
+
+      console.log(`\n📥 GET /shipments/shipper/${shipperId}`);
+      console.log(`👤 Admin User ID: ${req.user._id}`);
+      console.log(`👤 Admin Role: ${req.user.role}`);
+
+      // Only ADMIN can view shipper's shipments
+      if (req.user.role !== 'ADMIN') {
+        return res.status(403).json({ 
+          status: 'error', 
+          message: 'Only admins can view shipper shipments' 
+        });
+      }
+
+      // Get all shipments for this shipper with full details
+      const shipments = await Shipment.find({ shipper: shipperId })
+        .populate({
+          path: 'subOrder',
+          populate: [
+            {
+              path: 'masterOrder',
+              select: 'masterOrderNumber rentalPeriod renter',
+              populate: {
+                path: 'renter',
+                select: 'profile email phone'
+              }
+            },
+            {
+              path: 'owner',
+              select: 'profile email phone'
+            },
+            {
+              path: 'products.product',
+              select: 'name images'
+            }
+          ]
+        })
+        .populate('shipper', 'profile email phone')
+        .sort({ createdAt: -1 });
+
+      // Get shipment proofs for all shipments
+      const ShipmentProof = require('../models/Shipment_Proof');
+      const shipmentIds = shipments.map(s => s._id);
+      const proofs = await ShipmentProof.find({ 
+        shipment: { $in: shipmentIds } 
+      });
+
+      // Map proofs to shipments
+      const proofsMap = {};
+      proofs.forEach(proof => {
+        proofsMap[proof.shipment.toString()] = proof;
+      });
+
+      // Enrich shipments with proof data
+      const enrichedShipments = shipments.map(shipment => {
+        const shipmentObj = shipment.toObject();
+        const proof = proofsMap[shipment._id.toString()];
+        
+        return {
+          ...shipmentObj,
+          proof: proof ? {
+            imagesBeforeDelivery: proof.imagesBeforeDelivery || [],
+            imagesAfterDelivery: proof.imagesAfterDelivery || [],
+            imageBeforeDelivery: proof.imageBeforeDelivery,
+            imageAfterDelivery: proof.imageAfterDelivery,
+            notes: proof.notes,
+            geolocation: proof.geolocation
+          } : null,
+          // Add formatted dates for easier display
+          formattedDates: {
+            scheduled: shipment.scheduledAt ? new Date(shipment.scheduledAt).toLocaleString('vi-VN') : null,
+            pickedUp: shipment.tracking?.pickedUpAt ? new Date(shipment.tracking.pickedUpAt).toLocaleString('vi-VN') : null,
+            delivered: shipment.tracking?.deliveredAt ? new Date(shipment.tracking.deliveredAt).toLocaleString('vi-VN') : null,
+            cancelled: shipment.tracking?.cancelledAt ? new Date(shipment.tracking.cancelledAt).toLocaleString('vi-VN') : null
+          }
+        };
+      });
+
+      console.log(`✅ Found ${enrichedShipments.length} shipments for shipper ${shipperId}`);
+      
+      return res.json({ 
+        status: 'success', 
+        data: {
+          shipments: enrichedShipments,
+          total: enrichedShipments.length,
+          stats: {
+            total: enrichedShipments.length,
+            pending: enrichedShipments.filter(s => s.status === 'PENDING').length,
+            shipperConfirmed: enrichedShipments.filter(s => s.status === 'SHIPPER_CONFIRMED').length,
+            inTransit: enrichedShipments.filter(s => s.status === 'IN_TRANSIT').length,
+            delivered: enrichedShipments.filter(s => s.status === 'DELIVERED').length,
+            cancelled: enrichedShipments.filter(s => s.status === 'CANCELLED').length,
+            delivery: enrichedShipments.filter(s => s.type === 'DELIVERY').length,
+            return: enrichedShipments.filter(s => s.type === 'RETURN').length
+          }
+        }
+      });
+    } catch (err) {
+      console.error('❌ getShipperShipments error:', err);
+      console.error('Error stack:', err.stack);
+      return res.status(500).json({ status: 'error', message: err.message, stack: process.env.NODE_ENV === 'development' ? err.stack : undefined });
     }
   }
 }
