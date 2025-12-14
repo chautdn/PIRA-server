@@ -313,53 +313,64 @@ class ShipmentService {
         shipment.subOrder.status = 'ACTIVE';
         await shipment.subOrder.save();
 
-      // Transfer 80% of rental fee to owner (frozen until order completed)
-      try {
-        const SystemWalletService = require('./systemWallet.service');
-        const rentalAmount = shipment.subOrder.pricing?.subtotalRental || 0;
-        const ownerCompensation = Math.floor(rentalAmount * 0.9); // 80% of rental fee
+      // Transfer 90% of rental fee to owner (frozen until order completed)
+      // Process in background to avoid blocking response
+      const PaymentQueue = require('./paymentQueue.service');
+      const rentalAmount = shipment.subOrder.pricing?.subtotalRental || 0;
+      const ownerCompensation = Math.floor(rentalAmount * 0.9); // 90% of rental fee
 
-        if (ownerCompensation > 0 && shipment.subOrder.owner) {
-          const adminId = process.env.SYSTEM_ADMIN_ID || 'SYSTEM_AUTO_TRANSFER';
+      if (ownerCompensation > 0 && shipment.subOrder.owner) {
+        const ownerId = shipment.subOrder.owner;
+        const subOrderId = shipment.subOrder._id;
+        const shipmentIdForLog = shipment.shipmentId;
+        const shipmentDbId = shipment._id;
 
-          // Transfer 80% of rental fee to owner's frozen wallet
-          // Will be unlocked 24h after order completion (not 24h from now)
-          const transferResult = await SystemWalletService.transferToUserFrozen(
-            adminId,
-            shipment.subOrder.owner,
-            ownerCompensation,
-            `Rental fee (90%) for shipment ${shipment.shipmentId} - frozen until order completed`,
-            365 * 24 * 60 * 60 * 1000 // Set very long duration, will be updated when order completes
-          );
+        console.log(`   💰 Queuing payment: ${ownerCompensation.toLocaleString()} VND (90% rental fee)`);
+        console.log(`   🔒 Will be frozen until order completed`);
 
-          // Update transaction metadata to include subOrderId for later unlock
-          const Transaction = require('../models/Transaction');
-          await Transaction.updateMany(
-            {
-              user: shipment.subOrder.owner,
-              amount: ownerCompensation,
-              'metadata.action': 'RECEIVED_FROM_SYSTEM_FROZEN',
-              createdAt: { $gte: new Date(Date.now() - 60000) } // Last 1 minute
-            },
-            {
-              $set: {
-                'metadata.subOrderId': shipment.subOrder._id,
-                'metadata.shipmentId': shipment._id,
-                'metadata.shipmentType': 'DELIVERY'
-              }
+        // Queue transfer to run in background (non-blocking)
+        PaymentQueue.add(async () => {
+          try {
+            const SystemWalletService = require('./systemWallet.service');
+            const Transaction = require('../models/Transaction');
+            const adminId = process.env.SYSTEM_ADMIN_ID || 'SYSTEM_AUTO_TRANSFER';
+
+            const transferResult = await SystemWalletService.transferToUserFrozen(
+              adminId,
+              ownerId,
+              ownerCompensation,
+              `Rental fee (90%) for shipment ${shipmentIdForLog} - frozen until order completed`,
+              365 * 24 * 60 * 60 * 1000
+            );
+
+            // Update transaction metadata
+            if (transferResult?.transactions?.user?._id) {
+              await Transaction.findByIdAndUpdate(
+                transferResult.transactions.user._id,
+                {
+                  $set: {
+                    'metadata.subOrderId': subOrderId,
+                    'metadata.shipmentId': shipmentDbId,
+                    'metadata.shipmentType': 'DELIVERY'
+                  }
+                }
+              );
             }
-          );
-          
-          console.log(`   💰 Owner will receive ${ownerCompensation.toLocaleString()} VND (80% rental fee)`);
-          console.log(`   🔒 Funds frozen until order completed, then unlock after 24h`);
-        } else {
-          console.log(
-            `   ⚠️  Skipped transfer: ownerCompensation=${ownerCompensation}, owner=${shipment.subOrder.owner}`
-          );
-        }
-      } catch (ownerErr) {
-        console.error(`   ❌ OWNER PAYMENT ERROR:`, ownerErr);
-        throw ownerErr;
+
+            console.log(`   ✅ Payment completed: ${ownerCompensation.toLocaleString()} VND to owner ${ownerId}`);
+          } catch (err) {
+            console.error(`   ❌ Payment failed for shipment ${shipmentIdForLog}:`, err.message);
+          }
+        }, {
+          type: 'RENTAL_FEE',
+          amount: ownerCompensation,
+          ownerId,
+          shipmentId: shipmentIdForLog
+        });
+      } else {
+        console.log(
+          `   ⚠️  Skipped transfer: ownerCompensation=${ownerCompensation}, owner=${shipment.subOrder.owner}`
+        );
       }
 
       // Also update MasterOrder status to ACTIVE (rental starts)
@@ -368,8 +379,8 @@ class ShipmentService {
         const SubOrder = require('../models/SubOrder');
         const masterOrderId = shipment.subOrder.masterOrder;
         if (masterOrderId) {
-          // Check if all suborders have been delivered
-          const allSubOrders = await SubOrder.find({ masterOrder: masterOrderId });
+          // Check if all suborders have been delivered (only select status field for performance)
+          const allSubOrders = await SubOrder.find({ masterOrder: masterOrderId }).select('status').lean();
           const allDelivered = allSubOrders.every(
             (sub) => sub.status === 'ACTIVE' || sub.status === 'COMPLETED'
           );
@@ -405,31 +416,44 @@ class ShipmentService {
         // Get deposit amount to refund
         const depositAmount = product.totalDeposit || 0;
 
-        // Refund deposit to renter
+        // Refund deposit to renter (queue in background)
         if (depositAmount > 0) {
-          try {
-            const SystemWalletService = require('./systemWallet.service');
-            const renter = shipment.subOrder.masterOrder?.renter;
+          const PaymentQueue = require('./paymentQueue.service');
+          const renter = shipment.subOrder.masterOrder?.renter;
 
-            if (renter && renter._id) {
-              const adminId = process.env.SYSTEM_ADMIN_ID || 'SYSTEM_AUTO_TRANSFER';
+          if (renter && renter._id) {
+            const renterId = renter._id;
+            const shipmentIdForLog = shipment.shipmentId;
 
-              // Refund 100% deposit to renter's frozen wallet (24h unlock)
-              const transferResult = await SystemWalletService.transferToUserFrozen(
-                adminId,
-                renter._id,
-                depositAmount,
-                `Return deposit refund - shipment ${shipment.shipmentId}`,
-                24 * 60 * 60 * 1000
-              );
-            } else {
-              console.log(
-                `   ⚠️  Skipped renter refund: renter=${renter}, renter._id=${renter?._id}`
-              );
-            }
-          } catch (depositErr) {
-            console.error(`   ❌ DEPOSIT REFUND ERROR:`, depositErr);
-            throw depositErr;
+            console.log(`   💰 Queuing deposit refund: ${depositAmount.toLocaleString()} VND to renter`);
+
+            PaymentQueue.add(async () => {
+              try {
+                const SystemWalletService = require('./systemWallet.service');
+                const adminId = process.env.SYSTEM_ADMIN_ID || 'SYSTEM_AUTO_TRANSFER';
+
+                await SystemWalletService.transferToUserFrozen(
+                  adminId,
+                  renterId,
+                  depositAmount,
+                  `Return deposit refund - shipment ${shipmentIdForLog}`,
+                  24 * 60 * 60 * 1000
+                );
+
+                console.log(`   ✅ Deposit refund completed: ${depositAmount.toLocaleString()} VND to renter ${renterId}`);
+              } catch (err) {
+                console.error(`   ❌ Deposit refund failed for shipment ${shipmentIdForLog}:`, err.message);
+              }
+            }, {
+              type: 'DEPOSIT_REFUND',
+              amount: depositAmount,
+              renterId,
+              shipmentId: shipmentIdForLog
+            });
+          } else {
+            console.log(
+              `   ⚠️  Skipped renter refund: renter=${renter}, renter._id=${renter?._id}`
+            );
           }
         } else {
         }
@@ -1324,7 +1348,7 @@ class ShipmentService {
 
         // Transfer 80% of 1 day rental to owner (frozen for 24h)
         try {
-          const ownerRewardAmount = Math.floor(oneDayRental * 0.8); // 80% of 1 day rental
+          const ownerRewardAmount = Math.floor(oneDayRental * 0.9); // 80% of 1 day rental
           if (ownerRewardAmount > 0 && subOrder.owner && subOrder.owner._id) {
             const SystemWalletService = require('./systemWallet.service');
             const adminId = process.env.SYSTEM_ADMIN_ID || 'SYSTEM_AUTO_TRANSFER';
@@ -1829,7 +1853,7 @@ class ShipmentService {
 
       // 7. Transfer 80% of 1 day rental to owner
       try {
-        const ownerRewardAmount = Math.floor(oneDayRental * 0.8); // 80% of 1 day rental
+        const ownerRewardAmount = Math.floor(oneDayRental * 0.9); // 80% of 1 day rental
         if (ownerRewardAmount > 0 && subOrder.owner && subOrder.owner._id) {
           const SystemWalletService = require('./systemWallet.service');
           const adminId = process.env.SYSTEM_ADMIN_ID || 'SYSTEM_AUTO_TRANSFER';

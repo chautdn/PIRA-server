@@ -501,50 +501,57 @@ class ExtensionController {
       }
 
       // Transfer 90% extension fee to owner (frozen until order completed)
-      try {
-        const ownerCompensation = Math.floor(productToApprove.extensionFee * 0.9); // 90% of extension fee
-        const adminId = process.env.SYSTEM_ADMIN_ID || 'SYSTEM_AUTO_TRANSFER';
+      // Queue in background to avoid blocking response
+      const PaymentQueue = require('../services/paymentQueue.service');
+      const ownerCompensation = Math.floor(productToApprove.extensionFee * 0.9); // 90% of extension fee
 
-        if (ownerCompensation > 0) {
-          await SystemWalletService.transferToUserFrozen(
-            adminId,
-            ownerId,
-            ownerCompensation,
-            `Extension fee (90%) for product: ${productToApprove.productName} - ${productToApprove.extensionDays} days`,
-            365 * 24 * 60 * 60 * 1000 // Set very long duration, will be updated when order completes
-          );
+      if (ownerCompensation > 0) {
+        console.log('💰 Queuing extension payment:', {
+          owner: ownerId,
+          amount: ownerCompensation,
+          extensionFee: productToApprove.extensionFee,
+          productName: productToApprove.productName,
+          extensionDays: productToApprove.extensionDays
+        });
 
-          // Update transaction metadata to include subOrderId for later unlock
-          const Transaction = require('../models/Transaction');
-          await Transaction.updateMany(
-            {
-              user: ownerId,
-              amount: ownerCompensation,
-              'metadata.action': 'RECEIVED_FROM_SYSTEM_FROZEN',
-              createdAt: { $gte: new Date(Date.now() - 60000) } // Last 1 minute
-            },
-            {
-              $set: {
-                'metadata.subOrderId': subOrderId,
-                'metadata.action': 'RECEIVED_EXTENSION_FEE',
-                'metadata.extensionId': extension._id,
-                'metadata.extensionDays': productToApprove.extensionDays
-              }
+        PaymentQueue.add(async () => {
+          try {
+            const Transaction = require('../models/Transaction');
+            const adminId = process.env.SYSTEM_ADMIN_ID || 'SYSTEM_AUTO_TRANSFER';
+
+            const transferResult = await SystemWalletService.transferToUserFrozen(
+              adminId,
+              ownerId,
+              ownerCompensation,
+              `Extension fee (90%) for product: ${productToApprove.productName} - ${productToApprove.extensionDays} days`,
+              365 * 24 * 60 * 60 * 1000
+            );
+
+            // Update transaction metadata
+            if (transferResult?.transactions?.user?._id) {
+              await Transaction.findByIdAndUpdate(
+                transferResult.transactions.user._id,
+                {
+                  $set: {
+                    'metadata.subOrderId': subOrderId,
+                    'metadata.action': 'RECEIVED_EXTENSION_FEE',
+                    'metadata.extensionId': extension._id,
+                    'metadata.extensionDays': productToApprove.extensionDays
+                  }
+                }
+              );
             }
-          );
-          
-          console.log('💰 Owner received 90% extension fee (frozen until order completed):', {
-            owner: ownerId,
-            amount: ownerCompensation,
-            extensionFee: productToApprove.extensionFee,
-            productName: productToApprove.productName,
-            extensionDays: productToApprove.extensionDays
-          });
-        }
-      } catch (ownerPaymentError) {
-        console.error('Owner payment error:', ownerPaymentError);
-        // Don't throw - extension is already approved, just log the error
-        console.warn('⚠️ Extension approved but owner payment failed. Manual intervention required.');
+
+            console.log(`   ✅ Extension payment completed: ${ownerCompensation.toLocaleString()} VND to owner ${ownerId}`);
+          } catch (err) {
+            console.error(`   ❌ Extension payment failed:`, err.message);
+          }
+        }, {
+          type: 'EXTENSION_FEE',
+          amount: ownerCompensation,
+          ownerId,
+          extensionId: extension._id
+        });
       }
 
       // Update product rental period in subOrder

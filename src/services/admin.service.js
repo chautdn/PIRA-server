@@ -3195,13 +3195,99 @@ class AdminService {
 
       const rating = ratingStats[0] || { avgRating: 0, totalReviews: 0 };
 
-      // Get recent shipments
+      // Get recent shipments with full details
       const recentShipments = await Shipment.find({ shipper: shipper._id })
-        .populate('masterOrder', 'orderNumber')
-        .populate('subOrder', 'subOrderNumber')
+        .populate({
+          path: 'subOrder',
+          populate: [
+            {
+              path: 'masterOrder',
+              select: 'masterOrderNumber renter',
+              populate: {
+                path: 'renter',
+                select: 'profile email phone'
+              }
+            },
+            {
+              path: 'owner',
+              select: 'profile email phone'
+            },
+            {
+              path: 'products.product',
+              select: 'title images category'
+            }
+          ]
+        })
+        .populate('shipper', 'profile email phone')
         .sort({ createdAt: -1 })
-        .limit(20)
+        .limit(50)
         .lean();
+
+      // Products are now populated via query, no need to fetch separately
+
+      // Get shipment proofs for images
+      const ShipmentProof = require('../models/Shipment_Proof');
+      const shipmentIds = recentShipments.map(s => s._id);
+      const proofs = await ShipmentProof.find({ shipment: { $in: shipmentIds } })
+        .select('shipment imagesBeforeDelivery imagesAfterDelivery')
+        .lean();
+
+      // Map proofs to shipments
+      const proofsMap = {};
+      proofs.forEach(proof => {
+        proofsMap[proof.shipment.toString()] = proof;
+      });
+
+      // Enrich shipments with proof images and formatted data
+      const enrichedShipments = recentShipments.map(shipment => {
+        const proof = proofsMap[shipment._id.toString()];
+        const subOrder = shipment.subOrder;
+        const masterOrder = subOrder?.masterOrder;
+        
+        return {
+          _id: shipment._id,
+          type: shipment.type,
+          status: shipment.status,
+          fee: shipment.fee,
+          scheduledAt: shipment.scheduledAt,
+          createdAt: shipment.createdAt,
+          tracking: shipment.tracking,
+          // Order info
+          masterOrderNumber: masterOrder?.masterOrderNumber || 'N/A',
+          subOrderNumber: subOrder?.subOrderNumber || 'N/A',
+          // Customer info (renter for DELIVERY, owner for RETURN)
+          customer: shipment.type === 'DELIVERY' 
+            ? {
+                name: masterOrder?.renter?.profile ? 
+                  `${masterOrder.renter.profile.firstName} ${masterOrder.renter.profile.lastName}` : 'N/A',
+                email: masterOrder?.renter?.email || '',
+                phone: masterOrder?.renter?.phone || ''
+              }
+            : {
+                name: subOrder?.owner?.profile ? 
+                  `${subOrder.owner.profile.firstName} ${subOrder.owner.profile.lastName}` : 'N/A',
+                email: subOrder?.owner?.email || '',
+                phone: subOrder?.owner?.phone || ''
+              },
+          // Products info
+          products: subOrder?.products?.length > 0 ? subOrder.products.map(p => ({
+            name: p.product?.title || 'N/A',
+            image: p.product?.images?.[0]?.url || null,
+            quantity: p.quantity || 1
+          })) : [],
+          // Proof images
+          proofImages: proof ? {
+            before: proof.imagesBeforeDelivery || [],
+            after: proof.imagesAfterDelivery || []
+          } : null,
+          // Formatted dates
+          formattedDates: {
+            scheduled: shipment.scheduledAt ? new Date(shipment.scheduledAt).toLocaleString('vi-VN') : null,
+            pickedUp: shipment.tracking?.pickedUpAt ? new Date(shipment.tracking.pickedUpAt).toLocaleString('vi-VN') : null,
+            delivered: shipment.tracking?.deliveredAt ? new Date(shipment.tracking.deliveredAt).toLocaleString('vi-VN') : null
+          }
+        };
+      });
 
       // Get recent reviews
       const recentReviews = await Review.find({ targetType: 'SHIPPER', targetId: shipper._id })
@@ -3219,7 +3305,7 @@ class AdminService {
         revenue: stats.totalFee,
         averageRating: rating.avgRating ? parseFloat(rating.avgRating.toFixed(1)) : 0,
         totalReviews: rating.totalReviews,
-        recentShipments,
+        recentShipments: enrichedShipments,
         recentReviews
       };
     } catch (error) {
