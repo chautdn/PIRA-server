@@ -115,22 +115,21 @@ class AdminService {
 
       // Get detailed revenue breakdown
       const [
-        orderRevenue,
-        shippingRevenue,
-        promotionRevenue,
-        platformFees,
+        orderRevenue, // 10% platform fee from rental orders
+        shippingRevenue, // Full shipping fees collected from renters
+        promotionRevenue, // Promotion/advertising fees from owners
         timeSeriesData,
         previousRevenue
       ] = await Promise.all([
         this.getOrderRevenue(dateRange),
         this.getShippingRevenue(dateRange),
         this.getPromotionRevenue(dateRange),
-        this.getPlatformFees(dateRange),
         this.getTimeSeriesRevenue(dateRange, period),
         this.getTotalRevenue(previousDateRange)
       ]);
 
-      const totalRevenue = orderRevenue + shippingRevenue + promotionRevenue + platformFees;
+      // Platform's total revenue = 10% order fee + shipping fees + promotion fees
+      const totalRevenue = orderRevenue + shippingRevenue + promotionRevenue;
 
       // Calculate growth rate
       const growthRate =
@@ -141,18 +140,17 @@ class AdminService {
       return {
         summary: {
           total: totalRevenue,
-          orderRevenue,
-          shippingRevenue,
-          promotionRevenue,
-          platformFees,
+          orderRevenue, // 10% platform commission from rental orders
+          shippingRevenue, // Shipping fees collected
+          promotionRevenue, // Promotion/advertising fees
+          platformFees: orderRevenue, // Same as orderRevenue (10% commission)
           growthRate: parseFloat(growthRate)
         },
         breakdown: {
           bySource: [
-            { name: 'Đơn hàng', value: orderRevenue },
+            { name: 'Phí nền tảng (10%)', value: orderRevenue },
             { name: 'Phí vận chuyển', value: shippingRevenue },
-            { name: 'Quảng cáo', value: promotionRevenue },
-            { name: 'Phí nền tảng', value: platformFees }
+            { name: 'Phí quảng cáo', value: promotionRevenue }
           ]
         },
         timeSeries: timeSeriesData,
@@ -253,14 +251,13 @@ class AdminService {
   }
 
   async getTotalRevenue(dateRange) {
-    const [orderRevenue, shippingRevenue, promotionRevenue, platformFees] = await Promise.all([
+    const [orderRevenue, shippingRevenue, promotionRevenue] = await Promise.all([
       this.getOrderRevenue(dateRange),
       this.getShippingRevenue(dateRange),
-      this.getPromotionRevenue(dateRange),
-      this.getPlatformFees(dateRange)
+      this.getPromotionRevenue(dateRange)
     ]);
 
-    return orderRevenue + shippingRevenue + promotionRevenue + platformFees;
+    return orderRevenue + shippingRevenue + promotionRevenue;
   }
 
   async getProfit(dateRange) {
@@ -270,7 +267,7 @@ class AdminService {
   }
 
   async getOrderRevenue(dateRange) {
-    // Sử dụng SubOrder để tính doanh thu chi tiết hơn
+    // Calculate platform's revenue from completed orders (10% platform fee)
     const result = await SubOrder.aggregate([
       {
         $match: {
@@ -281,16 +278,22 @@ class AdminService {
       {
         $group: {
           _id: null,
-          total: { $sum: '$pricing.subtotalRental' } // Chỉ tính tiền thuê, không bao gồm deposit
+          totalRental: { $sum: '$pricing.subtotalRental' } // Total rental amount
         }
       }
     ]);
 
-    return result.length > 0 ? result[0].total : 0;
+    if (result.length === 0) return 0;
+
+    // Platform gets 10% of the rental amount as commission
+    const totalRental = result[0].totalRental || 0;
+    const platformCommission = totalRental * 0.1; // 10% platform fee
+
+    return platformCommission;
   }
 
   async getShippingRevenue(dateRange) {
-    // Sử dụng SubOrder để tính phí ship chi tiết từ pricing.shippingFee
+    // Platform collects shipping fees from renters
     const result = await SubOrder.aggregate([
       {
         $match: {
@@ -330,20 +333,22 @@ class AdminService {
   }
 
   async getPlatformFees(dateRange) {
-    // Platform fee is typically 5-10% of order revenue
+    // Platform fee is 10% of completed rental orders
     const orderRevenue = await this.getOrderRevenue(dateRange);
-    const platformFeeRate = 0.05; // 5%
+    const platformFeeRate = 0.1; // 10%
     return orderRevenue * platformFeeRate;
   }
 
   async getOperatingCosts(dateRange) {
-    // Calculate refunds and penalties as costs
-    const refunds = await Transaction.aggregate([
+    // Only real cost is shipper payments (shipping fees paid out)
+    // We get this from system wallet transfers to shippers for DELIVERY shipments
+    const shipperPayments = await Transaction.aggregate([
       {
         $match: {
           createdAt: { $gte: dateRange.start, $lte: dateRange.end },
-          type: 'refund',
-          status: 'success'
+          type: 'TRANSFER_OUT',
+          status: 'success',
+          description: { $regex: /shipping fee/i }
         }
       },
       {
@@ -354,12 +359,13 @@ class AdminService {
       }
     ]);
 
-    const refundTotal = refunds.length > 0 ? refunds[0].total : 0;
+    const shipperPaymentTotal = shipperPayments.length > 0 ? shipperPayments[0].total : 0;
 
     return {
-      total: refundTotal,
+      total: shipperPaymentTotal,
       breakdown: {
-        refunds: refundTotal,
+        shipperPayments: shipperPaymentTotal,
+        refunds: 0,
         maintenance: 0,
         support: 0
       }
@@ -410,7 +416,7 @@ class AdminService {
       {
         $group: {
           _id: groupBy,
-          revenue: { $sum: '$pricing.subtotalRental' },
+          totalRental: { $sum: '$pricing.subtotalRental' }, // Total rental amount
           shippingFee: { $sum: '$pricing.shippingFee' },
           orderCount: { $sum: 1 }
         }
@@ -418,20 +424,157 @@ class AdminService {
       { $sort: { '_id.year': 1, '_id.month': 1, '_id.day': 1, '_id.hour': 1 } }
     ]);
 
+    // Get promotion revenue for the same period
+    const promotionData = await this.getTimeSeriesPromotion(dateRange, period);
+    const promotionMap = new Map(promotionData.map((p) => [p.date, p.amount]));
+
+    return data.map((item) => {
+      const date = this.formatDate(item._id, period);
+      const platformCommission = (item.totalRental || 0) * 0.1; // 10% platform fee
+      const promotionRevenue = promotionMap.get(date) || 0;
+
+      return {
+        date,
+        revenue: platformCommission + item.shippingFee + promotionRevenue,
+        orderRevenue: platformCommission,
+        shippingFee: item.shippingFee,
+        promotionRevenue: promotionRevenue,
+        orderCount: item.orderCount
+      };
+    });
+  }
+
+  async getTimeSeriesPromotion(dateRange, period) {
+    let groupBy;
+
+    switch (period) {
+      case 'day':
+        groupBy = {
+          year: { $year: '$createdAt' },
+          month: { $month: '$createdAt' },
+          day: { $dayOfMonth: '$createdAt' },
+          hour: { $hour: '$createdAt' }
+        };
+        break;
+      case 'week':
+      case 'month':
+        groupBy = {
+          year: { $year: '$createdAt' },
+          month: { $month: '$createdAt' },
+          day: { $dayOfMonth: '$createdAt' }
+        };
+        break;
+      case 'quarter':
+      case 'year':
+        groupBy = {
+          year: { $year: '$createdAt' },
+          month: { $month: '$createdAt' }
+        };
+        break;
+      default:
+        groupBy = {
+          year: { $year: '$createdAt' },
+          month: { $month: '$createdAt' }
+        };
+    }
+
+    const data = await Transaction.aggregate([
+      {
+        $match: {
+          createdAt: { $gte: dateRange.start, $lte: dateRange.end },
+          type: 'PROMOTION_REVENUE',
+          status: 'success'
+        }
+      },
+      {
+        $group: {
+          _id: groupBy,
+          amount: { $sum: '$amount' }
+        }
+      },
+      { $sort: { '_id.year': 1, '_id.month': 1, '_id.day': 1, '_id.hour': 1 } }
+    ]);
+
     return data.map((item) => ({
       date: this.formatDate(item._id, period),
-      revenue: item.revenue,
-      shippingFee: item.shippingFee,
-      orderCount: item.orderCount
+      amount: item.amount
     }));
   }
 
   async getTimeSeriesProfit(dateRange, period) {
     const revenueData = await this.getTimeSeriesRevenue(dateRange, period);
 
-    return revenueData.map((item) => ({
-      ...item,
-      profit: item.revenue * 0.95 // Simplified: 95% profit margin
+    // Get shipper payments grouped by time period
+    const shipperPaymentsData = await this.getTimeSeriesShipperPayments(dateRange, period);
+    const shipperPaymentsMap = new Map(shipperPaymentsData.map((p) => [p.date, p.amount]));
+
+    return revenueData.map((item) => {
+      const shipperCost = shipperPaymentsMap.get(item.date) || 0;
+      const profit = item.revenue - shipperCost;
+
+      return {
+        ...item,
+        cost: shipperCost,
+        profit: profit
+      };
+    });
+  }
+
+  async getTimeSeriesShipperPayments(dateRange, period) {
+    let groupBy;
+
+    switch (period) {
+      case 'day':
+        groupBy = {
+          year: { $year: '$createdAt' },
+          month: { $month: '$createdAt' },
+          day: { $dayOfMonth: '$createdAt' },
+          hour: { $hour: '$createdAt' }
+        };
+        break;
+      case 'week':
+      case 'month':
+        groupBy = {
+          year: { $year: '$createdAt' },
+          month: { $month: '$createdAt' },
+          day: { $dayOfMonth: '$createdAt' }
+        };
+        break;
+      case 'quarter':
+      case 'year':
+        groupBy = {
+          year: { $year: '$createdAt' },
+          month: { $month: '$createdAt' }
+        };
+        break;
+      default:
+        groupBy = {
+          year: { $year: '$createdAt' },
+          month: { $month: '$createdAt' }
+        };
+    }
+
+    const data = await Transaction.aggregate([
+      {
+        $match: {
+          createdAt: { $gte: dateRange.start, $lte: dateRange.end },
+          type: 'TRANSFER_OUT',
+          status: 'success',
+          description: { $regex: /shipping fee/i }
+        }
+      },
+      {
+        $group: {
+          _id: groupBy,
+          amount: { $sum: '$amount' }
+        }
+      },
+      { $sort: { '_id.year': 1, '_id.month': 1, '_id.day': 1, '_id.hour': 1 } }
+    ]);
+
+    return data.map((item) => ({
+      date: this.formatDate(item._id, period),
+      amount: item.amount
     }));
   }
 
@@ -3012,7 +3155,7 @@ class AdminService {
       ]);
 
       // Format top shippers with profile info
-      const formattedTopShippers = topShippers.map(s => ({
+      const formattedTopShippers = topShippers.map((s) => ({
         _id: s._id,
         profile: s.shipperInfo.profile,
         address: s.shipperInfo.address,
@@ -3026,7 +3169,7 @@ class AdminService {
         totalShipments: stats.total,
         successRate: stats.total > 0 ? ((stats.delivered / stats.total) * 100).toFixed(1) : 0,
         totalRevenue: stats.totalFee,
-        dailyData: dailyStats.map(d => ({
+        dailyData: dailyStats.map((d) => ({
           date: d._id,
           count: d.count
         })),
@@ -3227,23 +3370,23 @@ class AdminService {
 
       // Get shipment proofs for images
       const ShipmentProof = require('../models/Shipment_Proof');
-      const shipmentIds = recentShipments.map(s => s._id);
+      const shipmentIds = recentShipments.map((s) => s._id);
       const proofs = await ShipmentProof.find({ shipment: { $in: shipmentIds } })
         .select('shipment imagesBeforeDelivery imagesAfterDelivery')
         .lean();
 
       // Map proofs to shipments
       const proofsMap = {};
-      proofs.forEach(proof => {
+      proofs.forEach((proof) => {
         proofsMap[proof.shipment.toString()] = proof;
       });
 
       // Enrich shipments with proof images and formatted data
-      const enrichedShipments = recentShipments.map(shipment => {
+      const enrichedShipments = recentShipments.map((shipment) => {
         const proof = proofsMap[shipment._id.toString()];
         const subOrder = shipment.subOrder;
         const masterOrder = subOrder?.masterOrder;
-        
+
         return {
           _id: shipment._id,
           type: shipment.type,
@@ -3256,35 +3399,49 @@ class AdminService {
           masterOrderNumber: masterOrder?.masterOrderNumber || 'N/A',
           subOrderNumber: subOrder?.subOrderNumber || 'N/A',
           // Customer info (renter for DELIVERY, owner for RETURN)
-          customer: shipment.type === 'DELIVERY' 
-            ? {
-                name: masterOrder?.renter?.profile ? 
-                  `${masterOrder.renter.profile.firstName} ${masterOrder.renter.profile.lastName}` : 'N/A',
-                email: masterOrder?.renter?.email || '',
-                phone: masterOrder?.renter?.phone || ''
-              }
-            : {
-                name: subOrder?.owner?.profile ? 
-                  `${subOrder.owner.profile.firstName} ${subOrder.owner.profile.lastName}` : 'N/A',
-                email: subOrder?.owner?.email || '',
-                phone: subOrder?.owner?.phone || ''
-              },
+          customer:
+            shipment.type === 'DELIVERY'
+              ? {
+                  name: masterOrder?.renter?.profile
+                    ? `${masterOrder.renter.profile.firstName} ${masterOrder.renter.profile.lastName}`
+                    : 'N/A',
+                  email: masterOrder?.renter?.email || '',
+                  phone: masterOrder?.renter?.phone || ''
+                }
+              : {
+                  name: subOrder?.owner?.profile
+                    ? `${subOrder.owner.profile.firstName} ${subOrder.owner.profile.lastName}`
+                    : 'N/A',
+                  email: subOrder?.owner?.email || '',
+                  phone: subOrder?.owner?.phone || ''
+                },
           // Products info
-          products: subOrder?.products?.length > 0 ? subOrder.products.map(p => ({
-            name: p.product?.title || 'N/A',
-            image: p.product?.images?.[0]?.url || null,
-            quantity: p.quantity || 1
-          })) : [],
+          products:
+            subOrder?.products?.length > 0
+              ? subOrder.products.map((p) => ({
+                  name: p.product?.title || 'N/A',
+                  image: p.product?.images?.[0]?.url || null,
+                  quantity: p.quantity || 1
+                }))
+              : [],
           // Proof images
-          proofImages: proof ? {
-            before: proof.imagesBeforeDelivery || [],
-            after: proof.imagesAfterDelivery || []
-          } : null,
+          proofImages: proof
+            ? {
+                before: proof.imagesBeforeDelivery || [],
+                after: proof.imagesAfterDelivery || []
+              }
+            : null,
           // Formatted dates
           formattedDates: {
-            scheduled: shipment.scheduledAt ? new Date(shipment.scheduledAt).toLocaleString('vi-VN') : null,
-            pickedUp: shipment.tracking?.pickedUpAt ? new Date(shipment.tracking.pickedUpAt).toLocaleString('vi-VN') : null,
-            delivered: shipment.tracking?.deliveredAt ? new Date(shipment.tracking.deliveredAt).toLocaleString('vi-VN') : null
+            scheduled: shipment.scheduledAt
+              ? new Date(shipment.scheduledAt).toLocaleString('vi-VN')
+              : null,
+            pickedUp: shipment.tracking?.pickedUpAt
+              ? new Date(shipment.tracking.pickedUpAt).toLocaleString('vi-VN')
+              : null,
+            delivered: shipment.tracking?.deliveredAt
+              ? new Date(shipment.tracking.deliveredAt).toLocaleString('vi-VN')
+              : null
           }
         };
       });
