@@ -5,7 +5,7 @@ const User = require('../models/User');
 const Wallet = require('../models/Wallet');
 const SystemWallet = require('../models/SystemWallet');
 const Transaction = require('../models/Transaction');
-const { generateDisputeId } = require('../utils/idGenerator');
+const { generateDisputeId, generateShipmentId } = require('../utils/idGenerator');
 const notificationService = require('./notification.service');
 const ChatGateway = require('../socket/chat.gateway');
 
@@ -31,7 +31,8 @@ class DisputeService {
       'PRODUCT_DEFECT': 'Sản phẩm lỗi khi sử dụng',
       'DAMAGED_ON_RETURN': 'Hư hại khi trả hàng',
       'LATE_RETURN': 'Trả muộn',
-      'RETURN_FAILED_OWNER': 'Trả hàng thất bại'
+      'RETURN_FAILED_OWNER': 'Trả hàng thất bại',
+      'RENTER_NO_RETURN': 'Renter không trả hàng'
     };
     return labels[type] || type;
   }
@@ -43,10 +44,9 @@ class DisputeService {
     try {
       const notification = await notificationService.createNotification(notificationData);
       
-      // Emit notification qua socket
-      const chatGateway = ChatGateway.getInstance();
-      if (chatGateway) {
-        chatGateway.emitNotification(notificationData.recipient.toString(), notification);
+      // Emit notification qua socket (global.chatGateway được set trong app.js)
+      if (global.chatGateway) {
+        global.chatGateway.emitNotification(notificationData.recipient.toString(), notification);
       }
       
       return notification;
@@ -316,7 +316,11 @@ class DisputeService {
     // Lấy thông tin SubOrder
     const subOrder = await SubOrder.findById(subOrderId)
       .populate('owner')
-      .populate('masterOrder');
+      .populate({
+        path: 'masterOrder',
+        select: '_id renter' // Lấy _id và renter
+      })
+      .lean(); // Dùng lean() để không trigger Mongoose middleware khi save
     
     if (!subOrder) {
       throw new Error('SubOrder không tồn tại');
@@ -328,6 +332,16 @@ class DisputeService {
       throw new Error('Product không tồn tại trong SubOrder');
     }
 
+    // Validation đặc biệt cho RENTER_NO_RETURN: chỉ cho phép khi SubOrder và Product đều có status RETURN_FAILED
+    if (type === 'RENTER_NO_RETURN') {
+      if (subOrder.status !== 'RETURN_FAILED') {
+        throw new Error('Dispute RENTER_NO_RETURN chỉ có thể được tạo khi SubOrder có trạng thái RETURN_FAILED');
+      }
+      if (product.productStatus !== 'RETURN_FAILED') {
+        throw new Error('Dispute RENTER_NO_RETURN chỉ có thể được tạo khi Product có trạng thái RETURN_FAILED');
+      }
+    }
+
     // Xác định respondent dựa trên shipmentType
     let respondentId;
     if (shipmentType === 'DELIVERY') {
@@ -335,12 +349,14 @@ class DisputeService {
       respondentId = subOrder.owner._id;
       
       // Kiểm tra complainant phải là renter
-      if (complainantId.toString() !== subOrder.masterOrder.renter.toString()) {
+      const masterOrderRenterId = subOrder.masterOrder?.renter?._id || subOrder.masterOrder?.renter;
+      if (complainantId.toString() !== masterOrderRenterId.toString()) {
         throw new Error('Chỉ renter mới có thể mở dispute trong giai đoạn giao hàng');
       }
     } else if (shipmentType === 'RETURN') {
       // Owner mở dispute -> Renter là respondent
-      respondentId = subOrder.masterOrder.renter;
+      const masterOrderRenterId = subOrder.masterOrder?.renter?._id || subOrder.masterOrder?.renter;
+      respondentId = masterOrderRenterId;
       
       // Kiểm tra complainant phải là owner
       if (complainantId.toString() !== subOrder.owner._id.toString()) {
@@ -405,16 +421,22 @@ class DisputeService {
 
     await dispute.save();
 
-    // Cập nhật product status sang DISPUTED
-    product.productStatus = 'DISPUTED';
-    
-    // Thêm dispute vào product.disputes array
-    if (!product.disputes) {
-      product.disputes = [];
-    }
-    product.disputes.push(dispute._id);
-    
-    await subOrder.save();
+    // Cập nhật product status sang DISPUTED (dùng findByIdAndUpdate để tránh validation conflict)
+    await SubOrder.findOneAndUpdate(
+      { 
+        _id: subOrderId,
+        'products.product': productId
+      },
+      {
+        $set: {
+          'products.$.productStatus': 'DISPUTED'
+        },
+        $push: {
+          'products.$.disputes': dispute._id
+        }
+      },
+      { new: true }
+    );
 
     // Gửi notification
     try {
@@ -1663,6 +1685,1127 @@ class DisputeService {
       }
 
       return updatedDispute;
+
+    } catch (error) {
+      await session.abortTransaction();
+      session.endSession();
+      throw error;
+    }
+  }
+
+  /**
+   * Renter đề xuất reschedule cho dispute RENTER_NO_RETURN
+   * @param {String} disputeId - ID của dispute
+   * @param {String} renterId - ID của renter
+   * @param {Object} requestData - { proposedReturnDate, reason, evidence }
+   * @returns {Promise<Dispute>}
+   */
+  async renterProposeReschedule(disputeId, renterId, requestData) {
+    const { proposedReturnDate, reason, evidence } = requestData;
+
+    const dispute = await Dispute.findOne(this._buildDisputeQuery(disputeId))
+      .populate('complainant respondent subOrder');
+
+    if (!dispute) {
+      throw new Error('Dispute không tồn tại');
+    }
+
+    if (dispute.type !== 'RENTER_NO_RETURN') {
+      throw new Error('Chỉ áp dụng cho dispute RENTER_NO_RETURN');
+    }
+
+    if (dispute.status !== 'OPEN') {
+      throw new Error('Dispute không ở trạng thái OPEN');
+    }
+
+    // Kiểm tra quyền - chỉ renter (respondent) mới được đề xuất
+    if (dispute.respondent._id.toString() !== renterId.toString()) {
+      throw new Error('Chỉ renter mới có quyền đề xuất reschedule');
+    }
+
+    // Kiểm tra ngày đề xuất phải sau ngày hiện tại
+    const proposedDate = new Date(proposedReturnDate);
+    if (proposedDate <= new Date()) {
+      throw new Error('Ngày trả hàng đề xuất phải sau ngày hiện tại');
+    }
+
+    // Cập nhật reschedule request
+    dispute.rescheduleRequest = {
+      requestedBy: renterId,
+      requestedAt: new Date(),
+      proposedReturnDate: proposedDate,
+      reason,
+      evidence: evidence || {},
+      status: 'PENDING',
+      ownerResponse: {}
+    };
+
+    dispute.timeline.push({
+      action: 'RESCHEDULE_REQUESTED',
+      performedBy: renterId,
+      details: `Renter đề xuất trả hàng vào ${proposedDate.toLocaleDateString('vi-VN')}. Lý do: ${reason}`,
+      timestamp: new Date()
+    });
+
+    await dispute.save();
+
+    // Gửi notification cho owner
+    try {
+      const renter = await User.findById(renterId);
+      await this._createAndEmitNotification({
+        recipient: dispute.complainant,
+        type: 'DISPUTE',
+        category: 'INFO',
+        title: 'Renter đề xuất lịch trả hàng mới',
+        message: `${renter.profile?.fullName || 'Renter'} đề xuất trả hàng vào ${proposedDate.toLocaleDateString('vi-VN')}. Lý do: ${reason}`,
+        relatedDispute: dispute._id,
+        relatedOrder: dispute.subOrder.masterOrder,
+        actions: [{
+          label: 'Xem chi tiết',
+          url: `/disputes/${dispute._id}`,
+          action: 'VIEW_RESCHEDULE_REQUEST'
+        }],
+        data: {
+          disputeId: dispute.disputeId,
+          proposedReturnDate: proposedDate.toISOString(),
+          reason
+        },
+        status: 'SENT'
+      });
+    } catch (error) {
+      console.error('Failed to send reschedule notification:', error);
+    }
+
+    return dispute.populate(['complainant', 'respondent']);
+  }
+
+  /**
+   * Owner phản hồi reschedule request
+   * @param {String} disputeId - ID của dispute
+   * @param {String} ownerId - ID của owner
+   * @param {Object} responseData - { decision: 'APPROVED'|'REJECTED', reason }
+   * @returns {Promise<Dispute>}
+   */
+  async ownerRespondToReschedule(disputeId, ownerId, responseData) {
+    const { decision, reason } = responseData;
+
+    const dispute = await Dispute.findOne(this._buildDisputeQuery(disputeId))
+      .populate('complainant respondent subOrder');
+
+    if (!dispute) {
+      throw new Error('Dispute không tồn tại');
+    }
+
+    if (dispute.type !== 'RENTER_NO_RETURN') {
+      throw new Error('Chỉ áp dụng cho dispute RENTER_NO_RETURN');
+    }
+
+    if (!dispute.rescheduleRequest || dispute.rescheduleRequest.status !== 'PENDING') {
+      throw new Error('Không có reschedule request đang chờ xử lý');
+    }
+
+    // Kiểm tra quyền - chỉ owner (complainant) mới được phản hồi
+    if (dispute.complainant._id.toString() !== ownerId.toString()) {
+      throw new Error('Chỉ owner mới có quyền phản hồi reschedule request');
+    }
+
+    const session = await mongoose.startSession();
+    session.startTransaction();
+
+    // Biến để lưu thông tin cần dùng sau transaction
+    let newShipment = null;
+    let penaltyAmount = 0;
+
+    try {
+      // Cập nhật owner response
+      dispute.rescheduleRequest.status = decision;
+      dispute.rescheduleRequest.ownerResponse = {
+        decision,
+        respondedAt: new Date(),
+        reason: reason || ''
+      };
+
+      if (decision === 'APPROVED') {
+        // Owner chấp nhận reschedule
+        // Tạo shipment mới với ngày đã đề xuất
+        const Shipment = require('../models/Shipment');
+        
+        // Lấy thông tin cần thiết từ subOrder
+        const subOrder = await SubOrder.findById(dispute.subOrder._id)
+          .populate('masterOrder')
+          .populate('owner')
+          .populate('products.product') // Populate product details
+          .session(session);
+        
+        const masterOrder = subOrder.masterOrder;
+        const renter = await User.findById(masterOrder.renter).session(session);
+        const owner = subOrder.owner;
+        
+        // Lấy địa chỉ renter (pickup address)
+        const renterAddress = masterOrder.deliveryAddress || {};
+        
+        // Lấy địa chỉ owner (delivery address)
+        const ownerAddress = subOrder.ownerAddress || owner.addresses?.[0] || {};
+        
+        const productItem = subOrder.products[dispute.productIndex];
+        const product = productItem.product; // Populated product
+        
+        console.log('[Dispute Service] 📦 Creating reschedule shipment for product:', product?.name || 'Unknown');
+        
+        newShipment = new Shipment({
+          shipmentId: generateShipmentId(),
+          subOrder: dispute.subOrder._id,
+          productId: dispute.productId,
+          productIndex: dispute.productIndex,
+          shipper: null, // Sẽ được assign sau
+          type: 'RETURN',
+          returnType: 'NORMAL', // Reschedule vẫn là return bình thường
+          fromAddress: {
+            streetAddress: renterAddress.streetAddress || '',
+            ward: renterAddress.ward || '',
+            district: renterAddress.district || '',
+            city: renterAddress.city || '',
+            province: renterAddress.province || '',
+            coordinates: renterAddress.coordinates || {}
+          },
+          toAddress: {
+            streetAddress: ownerAddress.streetAddress || '',
+            ward: ownerAddress.ward || '',
+            district: ownerAddress.district || '',
+            city: ownerAddress.city || '',
+            province: ownerAddress.province || '',
+            coordinates: ownerAddress.coordinates || {}
+          },
+          contactInfo: {
+            name: renterAddress.contactName || renter.profile?.fullName || 'Renter',
+            phone: renterAddress.contactPhone || renter.phone || '',
+            notes: `Reschedule từ dispute ${dispute.disputeId} - Trả hàng`
+          },
+          customerInfo: {
+            userId: renter._id,
+            name: renter.profile?.fullName || renter.profile?.firstName || 'Renter',
+            phone: renter.phone || '',
+            email: renter.email || ''
+          },
+          fee: product.shipping?.fee?.totalFee || 0,
+          scheduledAt: dispute.rescheduleRequest.proposedReturnDate,
+          status: 'PENDING',
+          tracking: {
+            notes: `Lịch trả hàng mới sau khi owner chấp nhận reschedule request`
+          }
+        });
+        await newShipment.save({ session });
+
+        // Tạo ShipmentProof cho shipment mới
+        const ShipmentProof = require('../models/Shipment_Proof');
+        const newShipmentProof = new ShipmentProof({
+          shipment: newShipment._id,
+          imageBeforeDelivery: '',
+          imageAfterDelivery: '',
+          notes: `RETURN (Reschedule): ${product.product?.name || 'Product'} | From: ${renter.profile?.fullName || 'Renter'} | To: ${owner.profile?.fullName || 'Owner'} | Date: ${dispute.rescheduleRequest.proposedReturnDate}`
+        });
+        await newShipmentProof.save({ session });
+
+        dispute.rescheduleRequest.newShipmentId = newShipment._id;
+
+        // Tìm shipper phù hợp (shipper gần nhất hoặc shipper đã giao hàng trước đó)
+        // Lấy shipment DELIVERY ban đầu để tìm shipper cũ (Shipment already declared above)
+        const originalDeliveryShipment = await Shipment.findOne({
+          subOrder: dispute.subOrder._id,
+          productId: dispute.productId,
+          type: 'DELIVERY'
+        }).session(session).populate('shipper');
+
+        let assignedShipperId = null;
+        if (originalDeliveryShipment?.shipper) {
+          // Ưu tiên assign cho shipper cũ nếu có
+          assignedShipperId = originalDeliveryShipment.shipper._id || originalDeliveryShipment.shipper;
+          newShipment.shipper = assignedShipperId;
+          await newShipment.save({ session });
+        }
+
+        // Phạt nhẹ: 10% deposit (productItem already declared above)
+        const depositAmount = productItem.totalDeposit || 0;
+        penaltyAmount = depositAmount * 0.1;
+
+        // Cập nhật product status using findOneAndUpdate to avoid validation issues
+        await SubOrder.findOneAndUpdate(
+          { _id: dispute.subOrder._id, 'products.product': dispute.productId },
+          { $set: { 'products.$.productStatus': 'RETURNING' } },
+          { session }
+        );
+
+        // Resolve dispute
+        dispute.status = 'RESOLVED';
+        dispute.resolution = {
+          resolvedBy: ownerId,
+          resolvedAt: new Date(),
+          resolutionText: `Owner chấp nhận reschedule. Renter phạt 10% deposit (${penaltyAmount.toLocaleString('vi-VN')}đ)`,
+          resolutionSource: 'RESCHEDULE_APPROVED',
+          financialImpact: {
+            penaltyAmount,
+            compensationAmount: penaltyAmount,
+            paidBy: dispute.respondent._id,
+            paidTo: dispute.complainant._id,
+            status: 'PENDING'
+          }
+        };
+
+        // Xử lý tiền phạt từ system wallet (giữ 10% deposit)
+        const systemWallet = await SystemWallet.findOne({}).session(session);
+        if (systemWallet && systemWallet.balance.available >= penaltyAmount) {
+          systemWallet.balance.available -= penaltyAmount;
+          await systemWallet.save({ session });
+
+          // Chuyển phạt cho owner
+          const ownerWallet = await Wallet.findById(dispute.complainant.wallet).session(session);
+          if (ownerWallet) {
+            ownerWallet.balance.available += penaltyAmount;
+            ownerWallet.balance.display = (ownerWallet.balance.available || 0) + (ownerWallet.balance.frozen || 0) + (ownerWallet.balance.pending || 0);
+            await ownerWallet.save({ session });
+          }
+
+          dispute.resolution.financialImpact.status = 'COMPLETED';
+        }
+
+        // Trừ credit nhẹ: -5
+        await User.findByIdAndUpdate(
+          dispute.respondent._id,
+          { $inc: { creditScore: -5 } },
+          { session }
+        );
+
+        dispute.timeline.push({
+          action: 'RESCHEDULE_APPROVED',
+          performedBy: ownerId,
+          details: `Owner chấp nhận reschedule. Tạo shipment mới. Phạt 10% deposit: ${penaltyAmount.toLocaleString('vi-VN')}đ. Credit -5.`,
+          timestamp: new Date()
+        });
+
+      } else {
+        // Owner từ chối reschedule → Mở negotiation room để 2 bên thương lượng
+        dispute.status = 'IN_NEGOTIATION';
+        
+        // Tạo negotiation room
+        const Chat = require('../models/Chat');
+        const negotiationChat = new Chat({
+          participants: [dispute.complainant._id, dispute.respondent._id],
+          type: 'DISPUTE_NEGOTIATION',
+          relatedDispute: dispute._id,
+          metadata: {
+            disputeType: 'RENTER_NO_RETURN',
+            purpose: 'Thương lượng ngày trả hàng',
+            originalProposal: dispute.rescheduleRequest.proposedReturnDate,
+            ownerRejectionReason: reason
+          }
+        });
+        await negotiationChat.save({ session });
+        
+        dispute.negotiationRoom = {
+          startedAt: new Date(),
+          deadline: new Date(Date.now() + 3 * 24 * 60 * 60 * 1000), // 3 ngày
+          chatRoomId: negotiationChat._id
+        };
+        
+        dispute.timeline.push({
+          action: 'RESCHEDULE_REJECTED_NEGOTIATION_STARTED',
+          performedBy: ownerId,
+          details: `Owner từ chối ngày ${new Date(dispute.rescheduleRequest.proposedReturnDate).toLocaleDateString('vi-VN')}. Lý do: ${reason}. Mở phòng thương lượng để 2 bên tự thỏa thuận ngày trả.`,
+          timestamp: new Date()
+        });
+      }
+
+      await dispute.save({ session });
+      await session.commitTransaction();
+      session.endSession();
+
+      // Gửi notifications BÊN NGOÀI transaction để tránh conflict
+      if (decision === 'APPROVED') {
+        // Notification cho renter
+        await this._createAndEmitNotification({
+          recipient: dispute.respondent._id,
+          type: 'DISPUTE',
+          category: 'SUCCESS',
+          title: 'Reschedule được chấp nhận',
+          message: `Owner đã chấp nhận đề xuất trả hàng của bạn. Shipment mới đã được tạo. Bạn bị phạt 10% deposit (${penaltyAmount.toLocaleString('vi-VN')}đ) và -5 credit score.`,
+          relatedDispute: dispute._id,
+          actions: [{
+            label: 'Xem shipment mới',
+            url: `/shipments/${newShipment._id}`,
+            action: 'VIEW_SHIPMENT'
+          }],
+          status: 'SENT'
+        });
+      } else {
+        // Notification cho renter - Mời vào phòng thương lượng
+        await this._createAndEmitNotification({
+          recipient: dispute.respondent._id,
+          type: 'DISPUTE',
+          category: 'INFO',
+          title: 'Owner từ chối ngày bạn đề xuất',
+          message: `Owner từ chối ngày ${new Date(dispute.rescheduleRequest.proposedReturnDate).toLocaleDateString('vi-VN')}. Lý do: ${reason}. Hãy vào phòng thương lượng để thỏa thuận ngày khác.`,
+          relatedDispute: dispute._id,
+          actions: [{
+            label: 'Vào phòng thương lượng',
+            url: `/disputes/${dispute._id}/negotiate`,
+            action: 'NEGOTIATE'
+          }],
+          status: 'SENT'
+        });
+
+        // Notification cho owner
+        await this._createAndEmitNotification({
+          recipient: dispute.complainant._id,
+          type: 'DISPUTE',
+          category: 'INFO',
+          title: 'Đã mở phòng thương lượng',
+          message: `Bạn đã từ chối ngày renter đề xuất. Phòng thương lượng đã được mở, hãy thỏa thuận với renter về ngày trả hàng phù hợp.`,
+          relatedDispute: dispute._id,
+          actions: [{
+            label: 'Vào phòng thương lượng',
+            url: `/disputes/${dispute._id}/negotiate`,
+            action: 'NEGOTIATE'
+          }],
+          status: 'SENT'
+        });
+      }
+
+      // Gửi notification và email cho SHIPPER nếu có shipment mới (APPROVED case)
+      if (decision === 'APPROVED' && newShipment && newShipment.shipper) {
+        try {
+          const shipperUser = await User.findById(newShipment.shipper);
+          if (shipperUser) {
+            // Lấy thông tin product để gửi notification
+            const populatedShipment = await newShipment.populate('subOrder');
+            const subOrderData = await SubOrder.findById(populatedShipment.subOrder).populate('products.product masterOrder');
+            const productItem = subOrderData.products[dispute.productIndex];
+            const productData = productItem.product;
+            const renterData = await User.findById(subOrderData.masterOrder.renter);
+            const ownerData = await User.findById(subOrderData.owner);
+
+            // Tạo notification cho shipper
+            const shipperNotification = await notificationService.createNotification({
+              recipient: newShipment.shipper,
+              title: '📦 Đơn trả hàng mới (Reschedule)',
+              message: `Bạn có đơn trả hàng mới: ${productData?.name || 'sản phẩm'} từ ${renterData?.profile?.fullName || 'Renter'} về ${ownerData?.profile?.fullName || 'Owner'}. Dự kiến: ${new Date(dispute.rescheduleRequest.proposedReturnDate).toLocaleDateString('vi-VN')}`,
+              type: 'SHIPMENT',
+              category: 'INFO',
+              data: {
+                shipmentId: newShipment.shipmentId,
+                shipmentObjectId: newShipment._id,
+                shipmentType: 'RETURN',
+                productName: productData?.name || 'sản phẩm',
+                scheduledAt: dispute.rescheduleRequest.proposedReturnDate,
+                isReschedule: true,
+                disputeId: dispute.disputeId
+              }
+            });
+
+            // Emit socket notification
+            if (global.chatGateway && typeof global.chatGateway.emitNotification === 'function') {
+              global.chatGateway.emitNotification(newShipment.shipper.toString(), shipperNotification);
+            }
+
+            // Gửi email cho shipper
+            const { sendShipperNotificationEmail } = require('../utils/mailer');
+            try {
+              await sendShipperNotificationEmail(
+                shipperUser,
+                newShipment,
+                productData,
+                {
+                  name: renterData?.profile?.fullName || renterData?.profile?.firstName || 'Renter',
+                  phone: renterData?.phone || '',
+                  email: renterData?.email || ''
+                },
+                {
+                  rentalStartDate: productItem?.rentalPeriod?.startDate 
+                    ? new Date(productItem.rentalPeriod.startDate).toLocaleDateString('vi-VN')
+                    : 'N/A',
+                  rentalEndDate: productItem?.rentalPeriod?.endDate
+                    ? new Date(productItem.rentalPeriod.endDate).toLocaleDateString('vi-VN')
+                    : 'N/A',
+                  notes: `Đơn trả hàng RESCHEDULE từ dispute ${dispute.disputeId}. Lý do: ${dispute.rescheduleRequest.reason || 'N/A'}`
+                }
+              );
+              console.log('[Dispute Service] ✅ Shipper notification and email sent successfully');
+            } catch (emailErr) {
+              console.error('[Dispute Service] ⚠️ Failed to send shipper email:', emailErr.message);
+            }
+          }
+        } catch (notifErr) {
+          console.error('[Dispute Service] ⚠️ Failed to send shipper notification:', notifErr.message);
+        }
+      }
+
+      return dispute.populate(['complainant', 'respondent']);
+
+    } catch (error) {
+      await session.abortTransaction();
+      session.endSession();
+      throw error;
+    }
+  }
+
+  /**
+   * Finalize agreement từ negotiation room - Tạo shipment với ngày đã thỏa thuận
+   * @param {String} disputeId - ID của dispute
+   * @param {Date} agreedDate - Ngày đã thỏa thuận
+   * @returns {Promise<Dispute>}
+   */
+  async finalizeRescheduleAgreement(disputeId, agreedDate) {
+    const dispute = await Dispute.findOne(this._buildDisputeQuery(disputeId))
+      .populate('complainant respondent subOrder');
+
+    if (!dispute) {
+      throw new Error('Dispute không tồn tại');
+    }
+
+    if (dispute.type !== 'RENTER_NO_RETURN') {
+      throw new Error('Chỉ áp dụng cho dispute RENTER_NO_RETURN');
+    }
+
+    if (dispute.status !== 'IN_NEGOTIATION') {
+      throw new Error('Dispute không ở trạng thái negotiation');
+    }
+
+    const session = await mongoose.startSession();
+    session.startTransaction();
+
+    let newShipment = null;
+    let penaltyAmount = 0;
+
+    try {
+      const Shipment = require('../models/Shipment');
+
+      // Lấy thông tin cần thiết (tương tự như APPROVED case)
+      const subOrder = await SubOrder.findById(dispute.subOrder._id)
+        .populate('masterOrder')
+        .populate('owner')
+        .populate('products.product')
+        .session(session);
+
+      const masterOrder = subOrder.masterOrder;
+      const renter = await User.findById(masterOrder.renter).session(session);
+      const owner = subOrder.owner;
+
+      const renterAddress = masterOrder.deliveryAddress || {};
+      const ownerAddress = subOrder.ownerAddress || owner.addresses?.[0] || {};
+
+      const productItem = subOrder.products[dispute.productIndex];
+      const product = productItem.product;
+
+      console.log('[Dispute Service] 📦 Creating negotiated shipment for product:', product?.name || 'Unknown');
+
+      // Tạo shipment mới với ngày đã thỏa thuận
+      newShipment = new Shipment({
+        shipmentId: generateShipmentId(),
+        subOrder: dispute.subOrder._id,
+        productId: dispute.productId,
+        productIndex: dispute.productIndex,
+        shipper: null,
+        type: 'RETURN',
+        returnType: 'NORMAL',
+        fromAddress: {
+          streetAddress: renterAddress.streetAddress || '',
+          ward: renterAddress.ward || '',
+          district: renterAddress.district || '',
+          city: renterAddress.city || '',
+          province: renterAddress.province || '',
+          coordinates: renterAddress.coordinates || {}
+        },
+        toAddress: {
+          streetAddress: ownerAddress.streetAddress || '',
+          ward: ownerAddress.ward || '',
+          district: ownerAddress.district || '',
+          city: ownerAddress.city || '',
+          province: ownerAddress.province || '',
+          coordinates: ownerAddress.coordinates || {}
+        },
+        contactInfo: {
+          name: renterAddress.contactName || renter.profile?.fullName || 'Renter',
+          phone: renterAddress.contactPhone || renter.phone || '',
+          notes: `Ngày thỏa thuận từ negotiation - Dispute ${dispute.disputeId}`
+        },
+        customerInfo: {
+          userId: renter._id,
+          name: renter.profile?.fullName || renter.profile?.firstName || 'Renter',
+          phone: renter.phone || '',
+          email: renter.email || ''
+        },
+        fee: productItem.shipping?.fee?.totalFee || 0,
+        scheduledAt: agreedDate,
+        status: 'PENDING',
+        tracking: {
+          notes: `Lịch trả hàng từ negotiation room`
+        }
+      });
+      await newShipment.save({ session });
+
+      // Tạo ShipmentProof
+      const ShipmentProof = require('../models/Shipment_Proof');
+      const newShipmentProof = new ShipmentProof({
+        shipment: newShipment._id,
+        imageBeforeDelivery: '',
+        imageAfterDelivery: '',
+        notes: `RETURN (Negotiated): ${product?.name || 'Product'} | Date: ${agreedDate}`
+      });
+      await newShipmentProof.save({ session });
+
+      // Assign shipper cũ
+      const originalDeliveryShipment = await Shipment.findOne({
+        subOrder: dispute.subOrder._id,
+        productId: dispute.productId,
+        type: 'DELIVERY'
+      }).session(session).populate('shipper');
+
+      if (originalDeliveryShipment?.shipper) {
+        newShipment.shipper = originalDeliveryShipment.shipper._id || originalDeliveryShipment.shipper;
+        await newShipment.save({ session });
+      }
+
+      // Cập nhật dispute
+      dispute.negotiationRoom.finalAgreement = {
+        proposedBy: dispute.respondent._id,
+        proposalText: `Thỏa thuận trả hàng vào ngày ${new Date(agreedDate).toLocaleDateString('vi-VN')}`,
+        complainantAccepted: true,
+        respondentAccepted: true,
+        acceptedAt: new Date()
+      };
+
+      // Phạt 10% deposit
+      const depositAmount = productItem.totalDeposit || 0;
+      penaltyAmount = depositAmount * 0.1;
+
+      await SubOrder.findOneAndUpdate(
+        { _id: dispute.subOrder._id, 'products.product': dispute.productId },
+        { $set: { 'products.$.productStatus': 'RETURNING' } },
+        { session }
+      );
+
+      dispute.status = 'RESOLVED';
+      dispute.resolution = {
+        resolvedBy: dispute.complainant._id,
+        resolvedAt: new Date(),
+        resolutionText: `2 bên thỏa thuận ngày trả: ${new Date(agreedDate).toLocaleDateString('vi-VN')}. Renter phạt 10% deposit (${penaltyAmount.toLocaleString('vi-VN')}đ)`,
+        resolutionSource: 'NEGOTIATION',
+        financialImpact: {
+          penaltyAmount,
+          compensationAmount: penaltyAmount,
+          paidBy: dispute.respondent._id,
+          paidTo: dispute.complainant._id,
+          status: 'PENDING'
+        }
+      };
+
+      // Xử lý tiền phạt
+      const systemWallet = await SystemWallet.findOne({}).session(session);
+      if (systemWallet && systemWallet.balance.available >= penaltyAmount) {
+        systemWallet.balance.available -= penaltyAmount;
+        await systemWallet.save({ session });
+
+        const ownerWallet = await Wallet.findById(dispute.complainant.wallet).session(session);
+        if (ownerWallet) {
+          ownerWallet.balance.available += penaltyAmount;
+          ownerWallet.balance.display = (ownerWallet.balance.available || 0) + (ownerWallet.balance.frozen || 0) + (ownerWallet.balance.pending || 0);
+          await ownerWallet.save({ session });
+        }
+
+        dispute.resolution.financialImpact.status = 'COMPLETED';
+      }
+
+      // Trừ credit
+      await User.findByIdAndUpdate(
+        dispute.respondent._id,
+        { $inc: { creditScore: -5 } },
+        { session }
+      );
+
+      dispute.timeline.push({
+        action: 'NEGOTIATION_AGREED',
+        performedBy: dispute.complainant._id,
+        details: `2 bên thỏa thuận ngày trả: ${new Date(agreedDate).toLocaleDateString('vi-VN')}. Tạo shipment mới. Phạt 10% deposit: ${penaltyAmount.toLocaleString('vi-VN')}đ. Credit -5.`,
+        timestamp: new Date()
+      });
+
+      await dispute.save({ session });
+      await session.commitTransaction();
+      session.endSession();
+
+      // Gửi notifications
+      await this._createAndEmitNotification({
+        recipient: dispute.respondent._id,
+        type: 'DISPUTE',
+        category: 'SUCCESS',
+        title: 'Thỏa thuận thành công',
+        message: `2 bên đã thỏa thuận ngày trả: ${new Date(agreedDate).toLocaleDateString('vi-VN')}. Shipment mới đã được tạo. Bạn bị phạt 10% deposit (${penaltyAmount.toLocaleString('vi-VN')}đ) và -5 credit score.`,
+        relatedDispute: dispute._id,
+        actions: [{
+          label: 'Xem shipment',
+          url: `/shipments/${newShipment._id}`,
+          action: 'VIEW_SHIPMENT'
+        }],
+        status: 'SENT'
+      });
+
+      await this._createAndEmitNotification({
+        recipient: dispute.complainant._id,
+        type: 'DISPUTE',
+        category: 'SUCCESS',
+        title: 'Thỏa thuận thành công',
+        message: `2 bên đã thỏa thuận ngày trả: ${new Date(agreedDate).toLocaleDateString('vi-VN')}. Shipment mới đã được tạo.`,
+        relatedDispute: dispute._id,
+        actions: [{
+          label: 'Xem shipment',
+          url: `/shipments/${newShipment._id}`,
+          action: 'VIEW_SHIPMENT'
+        }],
+        status: 'SENT'
+      });
+
+      // Gửi notification/email cho shipper
+      if (newShipment && newShipment.shipper) {
+        try {
+          const shipperUser = await User.findById(newShipment.shipper);
+          if (shipperUser) {
+            const populatedShipment = await newShipment.populate('subOrder');
+            const subOrderData = await SubOrder.findById(populatedShipment.subOrder).populate('products.product masterOrder');
+            const productItem = subOrderData.products[dispute.productIndex];
+            const productData = productItem.product;
+            const renterData = await User.findById(subOrderData.masterOrder.renter);
+            const ownerData = await User.findById(subOrderData.owner);
+
+            const shipperNotification = await notificationService.createNotification({
+              recipient: newShipment.shipper,
+              title: '📦 Đơn trả hàng mới (Negotiated)',
+              message: `Bạn có đơn trả hàng mới: ${productData?.name || 'sản phẩm'} từ ${renterData?.profile?.fullName || 'Renter'} về ${ownerData?.profile?.fullName || 'Owner'}. Dự kiến: ${new Date(agreedDate).toLocaleDateString('vi-VN')}`,
+              type: 'SHIPMENT',
+              category: 'INFO',
+              data: {
+                shipmentId: newShipment.shipmentId,
+                shipmentObjectId: newShipment._id,
+                shipmentType: 'RETURN',
+                productName: productData?.name || 'sản phẩm',
+                scheduledAt: agreedDate,
+                isNegotiated: true,
+                disputeId: dispute.disputeId
+              }
+            });
+
+            if (global.chatGateway && typeof global.chatGateway.emitNotification === 'function') {
+              global.chatGateway.emitNotification(newShipment.shipper.toString(), shipperNotification);
+            }
+
+            const { sendShipperNotificationEmail } = require('../utils/mailer');
+            try {
+              await sendShipperNotificationEmail(
+                shipperUser,
+                newShipment,
+                productData,
+                {
+                  name: renterData?.profile?.fullName || renterData?.profile?.firstName || 'Renter',
+                  phone: renterData?.phone || '',
+                  email: renterData?.email || ''
+                },
+                {
+                  rentalStartDate: productItem?.rentalPeriod?.startDate 
+                    ? new Date(productItem.rentalPeriod.startDate).toLocaleDateString('vi-VN')
+                    : 'N/A',
+                  rentalEndDate: productItem?.rentalPeriod?.endDate
+                    ? new Date(productItem.rentalPeriod.endDate).toLocaleDateString('vi-VN')
+                    : 'N/A',
+                  notes: `Đơn trả hàng NEGOTIATED từ dispute ${dispute.disputeId}. Ngày thỏa thuận: ${new Date(agreedDate).toLocaleDateString('vi-VN')}`
+                }
+              );
+              console.log('[Dispute Service] ✅ Shipper notification and email sent successfully');
+            } catch (emailErr) {
+              console.error('[Dispute Service] ⚠️ Failed to send shipper email:', emailErr.message);
+            }
+          }
+        } catch (notifErr) {
+          console.error('[Dispute Service] ⚠️ Failed to send shipper notification:', notifErr.message);
+        }
+      }
+
+      return dispute.populate(['complainant', 'respondent']);
+
+    } catch (error) {
+      await session.abortTransaction();
+      session.endSession();
+      throw error;
+    }
+  }
+
+  /**
+   * Escalate dispute RENTER_NO_RETURN lên công an sau 7 ngày
+   * Áp dụng cho: Renter không phản hồi, không thương lượng, hoặc cố tình chiếm đoạt
+   * @param {String} disputeId - ID của dispute
+   * @returns {Promise<Dispute>}
+   */
+  async escalateToPolice(disputeId) {
+    const dispute = await Dispute.findOne(this._buildDisputeQuery(disputeId))
+      .populate('complainant respondent subOrder');
+
+    if (!dispute) {
+      throw new Error('Dispute không tồn tại');
+    }
+
+    if (dispute.type !== 'RENTER_NO_RETURN') {
+      throw new Error('Chỉ áp dụng cho dispute RENTER_NO_RETURN');
+    }
+
+    const session = await mongoose.startSession();
+    session.startTransaction();
+
+    try {
+      const productItem = dispute.subOrder.products[dispute.productIndex];
+      const depositAmount = productItem.totalDeposit || 0;
+      const productValue = productItem.totalRental || 0; // Hoặc giá trị sản phẩm thực tế
+
+      // Phạt cực nặng: 100% deposit + 100% product value
+      const totalPenalty = depositAmount + productValue;
+
+      // Cập nhật dispute status
+      dispute.status = 'THIRD_PARTY_ESCALATED';
+      
+      // Lưu thông tin escalate lên công an
+      dispute.thirdPartyResolution = {
+        escalatedAt: new Date(),
+        escalatedBy: dispute.complainant._id,
+        evidenceDeadline: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000), // 7 ngày nữa
+        thirdPartyInfo: {
+          name: 'Cơ quan công an',
+          contactInfo: 'Liên hệ công an địa phương',
+          caseNumber: `THEFT-${dispute.disputeId}-${Date.now()}`
+        }
+      };
+
+      // Cập nhật product status
+      await SubOrder.findOneAndUpdate(
+        { _id: dispute.subOrder._id, 'products.product': dispute.productId },
+        { $set: { 'products.$.productStatus': 'THEFT_REPORTED' } },
+        { session }
+      );
+
+      // Xử lý tiền phạt từ system wallet
+      const systemWallet = await SystemWallet.findOne({}).session(session);
+      if (systemWallet && systemWallet.balance.available >= totalPenalty) {
+        systemWallet.balance.available -= totalPenalty;
+        await systemWallet.save({ session });
+
+        // Chuyển toàn bộ phạt cho owner
+        const ownerWallet = await Wallet.findById(dispute.complainant.wallet).session(session);
+        if (ownerWallet) {
+          ownerWallet.balance.available += totalPenalty;
+          ownerWallet.balance.display = (ownerWallet.balance.available || 0) + (ownerWallet.balance.frozen || 0) + (ownerWallet.balance.pending || 0);
+          await ownerWallet.save({ session });
+        }
+      }
+
+      // Permanent blacklist + Reset credit score về 0
+      await User.findByIdAndUpdate(
+        dispute.respondent._id,
+        { 
+          creditScore: 0,
+          accountStatus: 'BLACKLISTED',
+          blacklistUntil: new Date(9999, 11, 31), // Permanent
+          blacklistReason: `Theft - Không trả hàng sau 7 ngày. Dispute: ${dispute.disputeId}`
+        },
+        { session }
+      );
+
+      dispute.resolution = {
+        resolvedBy: 'SYSTEM',
+        resolvedAt: new Date(),
+        resolutionText: `Renter không phản hồi/thương lượng sau 7 ngày. Escalate lên công an. Phạt: ${totalPenalty.toLocaleString('vi-VN')}đ. Permanent blacklist + Credit reset về 0.`,
+        resolutionSource: 'THIRD_PARTY',
+        financialImpact: {
+          penaltyAmount: totalPenalty,
+          compensationAmount: totalPenalty,
+          paidBy: dispute.respondent._id,
+          paidTo: dispute.complainant._id,
+          status: 'COMPLETED'
+        }
+      };
+
+      dispute.timeline.push({
+        action: 'ESCALATED_TO_POLICE',
+        performedBy: 'SYSTEM',
+        details: `Sau 7 ngày không phản hồi/thương lượng. Escalate lên công an. Phạt ${totalPenalty.toLocaleString('vi-VN')}đ. Permanent blacklist. Credit reset về 0.`,
+        timestamp: new Date()
+      });
+
+      await dispute.save({ session });
+      await session.commitTransaction();
+      session.endSession();
+
+      // Gửi notifications
+      await this._createAndEmitNotification({
+        recipient: dispute.complainant._id,
+        type: 'DISPUTE',
+        category: 'URGENT',
+        title: '⚠️ Đã báo công an',
+        message: `Renter không phản hồi sau 7 ngày. Hệ thống đã escalate vụ việc lên công an. Bạn nhận được bồi thường ${totalPenalty.toLocaleString('vi-VN')}đ.`,
+        relatedDispute: dispute._id,
+        actions: [{
+          label: 'Xem chi tiết',
+          url: `/disputes/${dispute._id}`,
+          action: 'VIEW_DISPUTE'
+        }],
+        status: 'SENT'
+      });
+
+      await this._createAndEmitNotification({
+        recipient: dispute.respondent._id,
+        type: 'DISPUTE',
+        category: 'URGENT',
+        title: '🚨 Đã báo công an - Tài khoản bị khóa vĩnh viễn',
+        message: `Bạn không phản hồi/thương lượng sau 7 ngày. Vụ việc đã được báo công an. Bạn bị phạt ${totalPenalty.toLocaleString('vi-VN')}đ, tài khoản bị khóa vĩnh viễn và credit reset về 0.`,
+        relatedDispute: dispute._id,
+        actions: [{
+          label: 'Xem chi tiết',
+          url: `/disputes/${dispute._id}`,
+          action: 'VIEW_DISPUTE'
+        }],
+        status: 'SENT'
+      });
+
+      // Gửi email thông báo cho cả 2 bên
+      // TODO: Implement email cho trường hợp escalate
+
+      return dispute.populate(['complainant', 'respondent']);
+
+    } catch (error) {
+      await session.abortTransaction();
+      session.endSession();
+      throw error;
+    }
+  }
+
+  /**
+   * Cron job: Tự động check các dispute RENTER_NO_RETURN quá 7 ngày chưa resolve
+   * Chạy mỗi ngày để escalate lên công an
+   */
+  async checkAndEscalateExpiredDisputes() {
+    try {
+      const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+
+      // Tìm các dispute RENTER_NO_RETURN:
+      // - Status: OPEN (chưa phản hồi) hoặc IN_NEGOTIATION (đang thương lượng nhưng quá deadline)
+      // - Created > 7 ngày trước
+      const expiredDisputes = await Dispute.find({
+        type: 'RENTER_NO_RETURN',
+        status: { $in: ['OPEN', 'IN_NEGOTIATION'] },
+        createdAt: { $lte: sevenDaysAgo }
+      });
+
+      console.log(`[Dispute Service] 🔍 Found ${expiredDisputes.length} expired RENTER_NO_RETURN disputes`);
+
+      for (const dispute of expiredDisputes) {
+        try {
+          console.log(`[Dispute Service] ⚠️ Escalating dispute ${dispute.disputeId} to police`);
+          await this.escalateToPolice(dispute._id);
+          console.log(`[Dispute Service] ✅ Successfully escalated dispute ${dispute.disputeId}`);
+        } catch (error) {
+          console.error(`[Dispute Service] ❌ Failed to escalate dispute ${dispute.disputeId}:`, error.message);
+        }
+      }
+
+      return {
+        total: expiredDisputes.length,
+        escalated: expiredDisputes.length
+      };
+    } catch (error) {
+      console.error('[Dispute Service] ❌ Error in checkAndEscalateExpiredDisputes:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Xử lý dispute RENTER_NO_RETURN khi không có reschedule hoặc reschedule bị từ chối
+   * @param {String} disputeId - ID của dispute
+   * @param {String} userId - ID của user (renter accept hoặc admin decide)
+   * @param {Object} decisionData - { hasValidReason, isFirstOffense, hasResponse }
+   * @returns {Promise<Dispute>}
+   */
+  async processRenterNoReturnPenalty(disputeId, userId, decisionData = {}) {
+    const dispute = await Dispute.findOne(this._buildDisputeQuery(disputeId))
+      .populate('complainant respondent subOrder');
+
+    if (!dispute) {
+      throw new Error('Dispute không tồn tại');
+    }
+
+    if (dispute.type !== 'RENTER_NO_RETURN') {
+      throw new Error('Chỉ áp dụng cho dispute RENTER_NO_RETURN');
+    }
+
+    const session = await mongoose.startSession();
+    session.startTransaction();
+
+    try {
+      const product = dispute.subOrder.products[dispute.productIndex];
+      const depositAmount = product.totalDeposit || 0;
+      const rentalAmount = product.totalRental || 0;
+
+      // Lấy thông tin renter để check credit score và offense history
+      const renter = await User.findById(dispute.respondent._id).session(session);
+      const creditScore = renter.creditScore || 50;
+
+      // Check nếu là first offense
+      const previousDisputes = await Dispute.countDocuments({
+        respondent: renter._id,
+        type: 'RENTER_NO_RETURN',
+        status: 'RESOLVED',
+        _id: { $ne: dispute._id }
+      });
+      const isFirstOffense = previousDisputes === 0;
+
+      // Calculate penalty using model method
+      const penalty = dispute.calculateRenterNoReturnPenalty({
+        depositAmount,
+        rentalAmount,
+        creditScore,
+        hasValidReason: decisionData.hasValidReason || false,
+        isFirstOffense,
+        hasResponse: decisionData.hasResponse !== false // Default true
+      });
+
+      // Xử lý tiền
+      const renterWallet = await Wallet.findById(renter.wallet).session(session);
+      const ownerWallet = await Wallet.findById(dispute.complainant.wallet).session(session);
+      const systemWallet = await SystemWallet.findOne({}).session(session);
+
+      if (!systemWallet) {
+        throw new Error('Không tìm thấy system wallet');
+      }
+
+      // 1. Giữ deposit theo penalty percent
+      const depositToKeep = penalty.keepDeposit;
+      
+      if (systemWallet.balance.available >= depositToKeep) {
+        systemWallet.balance.available -= depositToKeep;
+        await systemWallet.save({ session });
+
+        // Chuyển cho owner
+        if (ownerWallet) {
+          ownerWallet.balance.available += depositToKeep;
+          ownerWallet.balance.display = (ownerWallet.balance.available || 0) + (ownerWallet.balance.frozen || 0) + (ownerWallet.balance.pending || 0);
+          await ownerWallet.save({ session });
+        }
+      }
+
+      // 2. Trừ additional penalty từ ví renter (nếu có)
+      let additionalPaid = 0;
+      if (penalty.additionalPenalty > 0 && renterWallet) {
+        const availableBalance = renterWallet.balance.available || 0;
+        additionalPaid = Math.min(penalty.additionalPenalty, availableBalance);
+        
+        if (additionalPaid > 0) {
+          renterWallet.balance.available -= additionalPaid;
+          renterWallet.balance.display = (renterWallet.balance.available || 0) + (renterWallet.balance.frozen || 0) + (renterWallet.balance.pending || 0);
+          await renterWallet.save({ session });
+
+          // Chuyển cho owner
+          if (ownerWallet) {
+            ownerWallet.balance.available += additionalPaid;
+            ownerWallet.balance.display = (ownerWallet.balance.available || 0) + (ownerWallet.balance.frozen || 0) + (ownerWallet.balance.pending || 0);
+            await ownerWallet.save({ session });
+          }
+        }
+      }
+
+      // 3. Hoàn deposit còn lại cho renter (nếu có)
+      const remainingDeposit = depositAmount - depositToKeep;
+      if (remainingDeposit > 0 && renterWallet && systemWallet.balance.available >= remainingDeposit) {
+        systemWallet.balance.available -= remainingDeposit;
+        await systemWallet.save({ session });
+
+        renterWallet.balance.available += remainingDeposit;
+        renterWallet.balance.display = (renterWallet.balance.available || 0) + (renterWallet.balance.frozen || 0) + (renterWallet.balance.pending || 0);
+        await renterWallet.save({ session });
+      }
+
+      // 4. Cập nhật credit score
+      await User.findByIdAndUpdate(
+        renter._id,
+        { $inc: { creditScore: penalty.creditPenalty } },
+        { session }
+      );
+
+      // 5. Blacklist nếu cần
+      if (penalty.shouldBlacklist) {
+        const blacklistUntil = new Date();
+        blacklistUntil.setDate(blacklistUntil.getDate() + (penalty.blacklistDays || 30));
+        
+        await User.findByIdAndUpdate(
+          renter._id,
+          { 
+            isBlacklisted: true,
+            blacklistUntil,
+            blacklistReason: 'Không trả hàng khi shipper đến lấy'
+          },
+          { session }
+        );
+      }
+
+      // 6. Cập nhật dispute
+      dispute.status = 'RESOLVED';
+      dispute.resolution = {
+        resolvedBy: userId,
+        resolvedAt: new Date(),
+        resolutionText: penalty.message,
+        resolutionSource: 'RENTER_NO_RETURN_PENALTY',
+        financialImpact: {
+          refundAmount: remainingDeposit,
+          penaltyAmount: depositToKeep + additionalPaid,
+          compensationAmount: depositToKeep + additionalPaid,
+          paidBy: renter._id,
+          paidTo: dispute.complainant._id,
+          status: 'COMPLETED',
+          notes: `Giữ ${penalty.penaltyPercent}% deposit (${depositToKeep.toLocaleString('vi-VN')}đ)` +
+                 (additionalPaid > 0 ? ` + Phạt thêm ${additionalPaid.toLocaleString('vi-VN')}đ từ ví` : '') +
+                 (remainingDeposit > 0 ? `. Hoàn ${remainingDeposit.toLocaleString('vi-VN')}đ cho renter` : '')
+        }
+      };
+
+      dispute.timeline.push({
+        action: 'RENTER_NO_RETURN_RESOLVED',
+        performedBy: userId,
+        details: `${penalty.message}. Phạt: ${(depositToKeep + additionalPaid).toLocaleString('vi-VN')}đ. Credit: ${penalty.creditPenalty}.${penalty.shouldBlacklist ? ' Blacklist ' + (penalty.blacklistDays || 30) + ' ngày.' : ''}`,
+        timestamp: new Date()
+      });
+
+      await dispute.save({ session });
+      await session.commitTransaction();
+      session.endSession();
+
+      // Notifications
+      try {
+        await this._createAndEmitNotification({
+          recipient: renter._id,
+          type: 'DISPUTE',
+          category: 'WARNING',
+          title: 'Dispute đã được xử lý',
+          message: `Bạn bị phạt ${(depositToKeep + additionalPaid).toLocaleString('vi-VN')}đ và ${penalty.creditPenalty} credit score do không trả hàng.${penalty.shouldBlacklist ? ' Tài khoản bị tạm khóa ' + (penalty.blacklistDays || 30) + ' ngày.' : ''}`,
+          relatedDispute: dispute._id,
+          status: 'SENT'
+        });
+
+        await this._createAndEmitNotification({
+          recipient: dispute.complainant._id,
+          type: 'DISPUTE',
+          category: 'SUCCESS',
+          title: 'Dispute đã được giải quyết',
+          message: `Bạn nhận được ${(depositToKeep + additionalPaid).toLocaleString('vi-VN')}đ tiền phạt từ renter không trả hàng.`,
+          relatedDispute: dispute._id,
+          status: 'SENT'
+        });
+      } catch (notifError) {
+        console.error('Failed to send penalty notifications:', notifError);
+      }
+
+      return dispute.populate(['complainant', 'respondent']);
 
     } catch (error) {
       await session.abortTransaction();

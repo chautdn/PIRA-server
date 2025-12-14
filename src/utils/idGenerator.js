@@ -32,8 +32,19 @@ function generateMasterOrderNumber() {
   return `MO${timestamp}${random}`;
 }
 
+/**
+ * Generate unique Shipment ID
+ * Format: SHP{timestamp}{random}
+ */
+function generateShipmentId() {
+  const timestamp = Date.now();
+  const random = Math.random().toString(36).substr(2, 5).toUpperCase();
+  return `SHP${timestamp}${random}`;
+}
+
 module.exports = {
   generateDisputeId,
   generateSubOrderNumber,
-  generateMasterOrderNumber
+  generateMasterOrderNumber,
+  generateShipmentId
 };

@@ -75,6 +75,11 @@ const { startFrozenBalanceUnlockCron } = require('./scripts/frozenBalanceUnlockC
 startFrozenBalanceUnlockCron();
 console.log('✅ Frozen balance unlock cron job initialized');
 
+// Initialize dispute escalation cron job (daily at 2:00 AM)
+const { startDisputeEscalationCron } = require('./scripts/disputeEscalationCron');
+startDisputeEscalationCron();
+console.log('✅ Dispute escalation cron job initialized');
+
 // Initialize auto-confirm delivery cron job (every hour)
 const { startAutoConfirmDeliveryCron } = require('./scripts/autoConfirmDeliveryCron');
 startAutoConfirmDeliveryCron();
