@@ -425,21 +425,37 @@ class ExtensionController {
   static async approveExtension(req, res) {
     try {
       const { requestId } = req.params;
-      const { productId } = req.body; // Approve specific product only
+      const { productId } = req.body; // Optional: Approve specific product only
       const ownerId = req.user.id;
 
       console.log('🔄 Approving extension:', { requestId, productId, ownerId });
 
-      if (!productId) {
-        throw new BadRequest('Product ID is required to approve extension');
-      }
-
-      // Don't populate products.owner as it returns the full document as string
-      // Just fetch and validate by ID directly
-      const extension = await Extension.findById(requestId).populate('masterOrder renter');
+      // Fetch extension
+      const extension = await Extension.findById(requestId).populate('masterOrder renter subOrder');
       if (!extension) {
         throw new NotFoundError('Extension request not found');
       }
+
+      // Check if this is old format (with products array) or new format (single extension)
+      const hasProducts = extension.products && extension.products.length > 0;
+
+      // If old format (products array), productId is required
+      if (hasProducts && !productId) {
+        throw new BadRequest('Product ID is required to approve extension');
+      }
+
+      // If new format (no products array), use service method
+      if (!hasProducts) {
+        const ExtensionService = require('../services/extension.service');
+        const result = await ExtensionService.approveExtension(requestId, ownerId);
+        return res.json({
+          success: true,
+          data: result,
+          message: 'Extension approved successfully'
+        });
+      }
+
+      // Old format handling below (with products array)
 
       // Find the specific product to approve by its productId (not MongoDB ObjectId of embedded doc)
       const productIndex = extension.products.findIndex(
@@ -481,32 +497,16 @@ class ExtensionController {
         rentalProductId: productToApprove.productId
       });
 
-      // Deduct from renter wallet
-      try {
-        await SystemWalletService.transferFromUser(
-          extension.renter._id,
-          extension.renter._id,
-          productToApprove.extensionFee,
-          `Extension fee for product: ${productToApprove.productName}`,
-          'system_wallet'
-        );
-        console.log('✅ Wallet deducted from renter:', {
-          renter: extension.renter._id,
-          amount: productToApprove.extensionFee,
-          productName: productToApprove.productName
-        });
-      } catch (walletError) {
-        console.error('Wallet deduction error:', walletError);
-        throw new BadRequest('Failed to deduct extension fee from renter wallet');
-      }
+      // Tiền đã được trừ từ renter khi gửi yêu cầu gia hạn
+      // Bây giờ chỉ cần chuyển 90% vào frozen wallet của owner
 
       // Transfer 90% extension fee to owner (frozen until order completed)
-      // Queue in background to avoid blocking response
-      const PaymentQueue = require('../services/paymentQueue.service');
+      const Transaction = require('../models/Transaction');
       const ownerCompensation = Math.floor(productToApprove.extensionFee * 0.9); // 90% of extension fee
+      const subOrderId = extension.subOrder;
 
       if (ownerCompensation > 0) {
-        console.log('💰 Queuing extension payment:', {
+        console.log('💰 Transferring extension payment to owner:', {
           owner: ownerId,
           amount: ownerCompensation,
           extensionFee: productToApprove.extensionFee,
@@ -514,44 +514,38 @@ class ExtensionController {
           extensionDays: productToApprove.extensionDays
         });
 
-        PaymentQueue.add(async () => {
-          try {
-            const Transaction = require('../models/Transaction');
-            const adminId = process.env.SYSTEM_ADMIN_ID || 'SYSTEM_AUTO_TRANSFER';
+        try {
+          const adminId = process.env.SYSTEM_ADMIN_ID || 'SYSTEM_AUTO_TRANSFER';
 
-            const transferResult = await SystemWalletService.transferToUserFrozen(
-              adminId,
-              ownerId,
-              ownerCompensation,
-              `Extension fee (90%) for product: ${productToApprove.productName} - ${productToApprove.extensionDays} days`,
-              365 * 24 * 60 * 60 * 1000
-            );
+          const transferResult = await SystemWalletService.transferToUserFrozen(
+            adminId,
+            ownerId,
+            ownerCompensation,
+            `Extension fee (90%) for product: ${productToApprove.productName} - ${productToApprove.extensionDays} days`,
+            365 * 24 * 60 * 60 * 1000
+          );
 
-            // Update transaction metadata
-            if (transferResult?.transactions?.user?._id) {
-              await Transaction.findByIdAndUpdate(
-                transferResult.transactions.user._id,
-                {
-                  $set: {
-                    'metadata.subOrderId': subOrderId,
-                    'metadata.action': 'RECEIVED_EXTENSION_FEE',
-                    'metadata.extensionId': extension._id,
-                    'metadata.extensionDays': productToApprove.extensionDays
-                  }
+          // Update transaction metadata
+          if (transferResult?.transactions?.user?._id) {
+            await Transaction.findByIdAndUpdate(
+              transferResult.transactions.user._id,
+              {
+                $set: {
+                  'metadata.subOrderId': subOrderId,
+                  'metadata.action': 'RECEIVED_EXTENSION_FEE',
+                  'metadata.extensionId': extension._id,
+                  'metadata.extensionDays': productToApprove.extensionDays
                 }
-              );
-            }
-
-            console.log(`   ✅ Extension payment completed: ${ownerCompensation.toLocaleString()} VND to owner ${ownerId}`);
-          } catch (err) {
-            console.error(`   ❌ Extension payment failed:`, err.message);
+              }
+            );
           }
-        }, {
-          type: 'EXTENSION_FEE',
-          amount: ownerCompensation,
-          ownerId,
-          extensionId: extension._id
-        });
+
+          console.log(`   ✅ Extension payment completed: ${ownerCompensation.toLocaleString()} VND to owner ${ownerId}`);
+        } catch (err) {
+          console.error(`   ❌ Extension payment failed:`, err.message);
+          console.error('   Error details:', err);
+          // Don't throw error, extension still approved but log the issue
+        }
       }
 
       // Update product rental period in subOrder

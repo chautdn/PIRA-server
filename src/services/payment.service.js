@@ -412,7 +412,10 @@ const getTransactionHistory = async (userId, options = {}) => {
     } = options;
 
     // Build query
-    const query = { user: userId };
+    const query = { 
+      user: userId,
+      'metadata.hideFromUserHistory': { $ne: true } // Hide system audit transactions
+    };
     if (type) query.type = type;
     if (status) query.status = status;
 
@@ -437,9 +440,9 @@ const getTransactionHistory = async (userId, options = {}) => {
     // Add display amount with correct sign based on transaction type
     const enhancedTransactions = transactions.map((transaction) => {
       // Define transaction types that should show as negative (money going out)
-      const outgoingTypes = ['payment', 'withdrawal', 'penalty'];
+      const outgoingTypes = ['payment', 'withdrawal', 'penalty', 'TRANSFER_OUT'];
       // Define transaction types that should show as positive (money coming in)
-      const incomingTypes = ['deposit', 'refund', 'order_payment'];
+      const incomingTypes = ['deposit', 'refund', 'order_payment', 'TRANSFER_IN'];
 
       let displayAmount = transaction.amount;
 
