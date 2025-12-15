@@ -223,23 +223,27 @@ class ExtensionService {
         );
       }
 
-      // Deduct from wallet - ensure result is a number
+      // Chuyển tiền từ renter vào system wallet ngay lập tức
+      const SystemWalletService = require('./systemWallet.service');
       const transactionId = `EXT_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`;
-      wallet.balance.available = Math.round(wallet.balance.available - amount);
+      
+      await SystemWalletService.transferFromUser(
+        renterId,
+        renterId,
+        amount,
+        'Thanh toán tiền gia hạn đơn thuê',
+        {
+          isOrderPayment: true,
+          metadata: {
+            type: 'EXTENSION_PAYMENT',
+            action: 'EXTENSION_REQUEST_PAYMENT',
+            transactionId: transactionId,
+            paymentType: 'extension'
+          }
+        }
+      );
 
-      // Add transaction log
-      if (!wallet.transactions) {
-        wallet.transactions = [];
-      }
-      wallet.transactions.push({
-        type: 'PAYMENT',
-        amount: Math.round(amount),
-        description: 'Extension request payment',
-        timestamp: new Date(),
-        status: 'COMPLETED'
-      });
-
-      await wallet.save();
+      console.log(`✅ Đã trừ ${amount.toLocaleString('vi-VN')}đ từ ví renter ${renterId} cho yêu cầu gia hạn`);
 
       return {
         status: 'SUCCESS',
@@ -450,6 +454,45 @@ class ExtensionService {
       subOrder.rentalPeriod.endDate = extensionRequest.newEndDate;
       await subOrder.save();
 
+      // Transfer 90% extension fee to owner (frozen until order completed)
+      const SystemWalletService = require('./systemWallet.service');
+      const ownerCompensation = Math.floor(extensionRequest.totalCost * 0.9); // 90% of extension fee
+      
+      if (ownerCompensation > 0) {
+        console.log(`💰 Chuyển 90% tiền gia hạn cho owner: ${ownerCompensation.toLocaleString()} VND`);
+        
+        try {
+          const adminId = process.env.SYSTEM_ADMIN_ID || 'SYSTEM_AUTO_TRANSFER';
+          const transferResult = await SystemWalletService.transferToUserFrozen(
+            adminId,
+            ownerId,
+            ownerCompensation,
+            `Phí gia hạn (90%) - ${extensionRequest.extensionDays} ngày`,
+            365 * 24 * 60 * 60 * 1000 // Frozen for 1 year, will unlock when order completed
+          );
+
+          // Update transaction metadata with subOrderId for unlock tracking
+          if (transferResult?.transactions?.user?._id) {
+            await Transaction.findByIdAndUpdate(
+              transferResult.transactions.user._id,
+              {
+                $set: {
+                  'metadata.subOrderId': extensionRequest.subOrder,
+                  'metadata.action': 'RECEIVED_EXTENSION_FEE',
+                  'metadata.extensionId': extensionRequest._id,
+                  'metadata.extensionDays': extensionRequest.extensionDays
+                }
+              }
+            );
+          }
+
+          console.log(`✅ Đã chuyển ${ownerCompensation.toLocaleString()} VND vào frozen wallet owner ${ownerId}`);
+        } catch (transferErr) {
+          console.error('❌ Lỗi chuyển tiền cho owner:', transferErr.message);
+          // Don't throw error, extension still approved
+        }
+      }
+
       return await ExtensionRequest.findById(requestId).populate([
         { path: 'renter', select: 'profile email' }
       ]);
@@ -509,26 +552,18 @@ class ExtensionService {
       const { renter, paymentMethod, totalCost } = extensionRequest;
 
       if (paymentMethod === 'WALLET') {
-        const user = await User.findById(renter).populate('wallet');
-        if (user && user.wallet) {
-          // Refund to wallet
-          user.wallet.balance.available += totalCost;
-          
-          // Add transaction record
-          if (!user.wallet.transactions) {
-            user.wallet.transactions = [];
-          }
-          user.wallet.transactions.push({
-            type: 'REFUND',
-            amount: Math.round(totalCost),
-            description: reason,
-            timestamp: new Date(),
-            status: 'COMPLETED'
-          });
-          
-          await user.wallet.save();
-          console.log(`✅ Refunded ${totalCost}đ to renter ${renter} wallet - Reason: ${reason}`);
-        }
+        // Hoàn tiền gia hạn từ system wallet về ví renter
+        const SystemWalletService = require('./systemWallet.service');
+        const adminId = process.env.SYSTEM_ADMIN_ID || 'SYSTEM_AUTO_TRANSFER';
+        
+        await SystemWalletService.transferToUser(
+          adminId,
+          renter,
+          totalCost,
+          reason
+        );
+        
+        console.log(`✅ Hoàn ${totalCost.toLocaleString('vi-VN')}đ tiền gia hạn về ví renter ${renter} - Lý do: ${reason}`);
       }
       // For other payment methods (PAYOS, COD), handle separately if needed
     } catch (error) {

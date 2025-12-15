@@ -264,15 +264,15 @@ class SystemWalletService {
       await userWallet.save({ session });
 
       // Create transaction records
-      // Create transaction records compatible with Transaction schema
+      // System transaction - for audit only, will be filtered in user's history query
       const systemTransaction = new Transaction({
-        user: adminId && adminId !== 'SYSTEM_AUTO_TRANSFER' ? adminId : userId, // audit: admin if available, else fallback to recipient
+        user: userId, // Use userId but mark as system audit to filter out
         wallet: systemWallet._id,
         type: 'TRANSFER_OUT',
         amount: amount,
         status: 'success',
         paymentMethod: 'system_wallet',
-        description: `Transfer to user ${userId}: ${description}`,
+        description: `[SYSTEM_AUDIT] Transfer to user ${userId}: ${description}`,
         fromSystemWallet: true,
         toWallet: userWallet._id,
         systemWalletAction: 'transfer_out',
@@ -280,7 +280,9 @@ class SystemWalletService {
           adminId: adminId,
           action: 'TRANSFER_TO_USER',
           recipientUserId: userId,
-          recipientWalletId: userWallet._id
+          recipientWalletId: userWallet._id,
+          systemAudit: true, // Mark as system audit record
+          hideFromUserHistory: true // Flag to hide from user's transaction history
         }
       });
 
@@ -456,7 +458,9 @@ class SystemWalletService {
       const isOrderPayment =
         options.isOrderPayment ||
         description.includes('Payment for order') ||
-        description.includes('Thanh toán đơn');
+        description.includes('Thanh toán đơn') ||
+        description.includes('gia hạn') ||
+        description.includes('extension');
       const transactionType = isOrderPayment ? 'payment' : 'withdrawal';
 
       // Create transaction record
@@ -1209,14 +1213,15 @@ class SystemWalletService {
       await userWallet.save({ session });
 
       // Create transaction records
+      // System transaction - for audit only, will be filtered in user's history query
       const systemTransaction = new Transaction({
-        user: adminId && adminId !== 'SYSTEM_AUTO_TRANSFER' ? adminId : userId,
+        user: userId, // Use userId but mark as system audit to filter out
         wallet: systemWallet._id,
         type: 'TRANSFER_OUT',
         amount: amount,
         status: 'success',
         paymentMethod: 'system_wallet',
-        description: `Frozen transfer to user ${userId}: ${description}`,
+        description: `[SYSTEM_AUDIT] Frozen transfer to user ${userId}: ${description}`,
         fromSystemWallet: true,
         toWallet: userWallet._id,
         systemWalletAction: 'transfer_out',
@@ -1225,7 +1230,9 @@ class SystemWalletService {
           action: 'TRANSFER_TO_USER_FROZEN',
           recipientUserId: userId,
           recipientWalletId: userWallet._id,
-          unfreezedAt: new Date(Date.now() + unfreezeDuration)
+          unfreezedAt: new Date(Date.now() + unfreezeDuration),
+          systemAudit: true, // Mark as system audit record
+          hideFromUserHistory: true // Flag to hide from user's transaction history
         }
       });
 
