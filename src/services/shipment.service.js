@@ -1,5 +1,6 @@
 const Shipment = require('../models/Shipment');
 const SubOrder = require('../models/SubOrder');
+const Product = require('../models/Product');
 const User = require('../models/User');
 const ShipmentProof = require('../models/Shipment_Proof');
 const SystemWalletService = require('./systemWallet.service');
@@ -149,7 +150,6 @@ class ShipmentService {
     const shipments = await Shipment.find({ shipper: shipperId })
       .populate({
         path: 'subOrder',
-        // Don't select here - let it populate all fields
         populate: [
           {
             path: 'masterOrder',
@@ -162,6 +162,11 @@ class ShipmentService {
           {
             path: 'owner',
             select: 'profile email phone'
+          },
+          {
+            path: 'products.product',
+            model: 'Product',
+            select: 'title images price description category'
           }
         ]
       })
@@ -174,6 +179,13 @@ class ShipmentService {
         s.subOrder?.rentalPeriod?.startDate ||
         s.subOrder?.rentalPeriod?.endDate
       );
+      if (s.subOrder?.products && s.subOrder.products.length > 0) {
+        console.log(`Shipment ${idx} products:`, s.subOrder.products.map(p => ({
+          productId: p.product?._id,
+          name: p.product?.name,
+          hasImages: !!p.product?.images?.length
+        })));
+      }
     });
 
     return shipments;
