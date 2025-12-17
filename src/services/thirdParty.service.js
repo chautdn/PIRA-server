@@ -5,6 +5,8 @@ const Wallet = require('../models/Wallet');
 const SystemWallet = require('../models/SystemWallet');
 const Transaction = require('../models/Transaction');
 const SubOrder = require('../models/SubOrder');
+const Shipment = require('../models/Shipment');
+const ShipmentProof = require('../models/Shipment_Proof');
 const notificationService = require('./notification.service');
 
 class ThirdPartyService {
@@ -194,20 +196,99 @@ class ThirdPartyService {
       address: dispute.respondent.profile?.address || 'N/A'
     };
 
-    // Cập nhật thông tin chia sẻ (bỏ shipperEvidence vì chưa có phần shipper)
+    // ========== LẤY ẢNH BẰNG CHỨNG TỪ SHIPPER ==========
+    let shipperEvidence = {
+      deliveryPhase: null,  // Giai đoạn giao hàng (DELIVERY)
+      returnPhase: null     // Giai đoạn trả hàng (RETURN)
+    };
+
+    try {
+      const subOrderId = dispute.subOrder._id || dispute.subOrder;
+      const productIndex = dispute.productIndex || 0;
+
+      // Tìm DELIVERY shipment cho product này
+      const deliveryShipment = await Shipment.findOne({ 
+        subOrder: subOrderId, 
+        productIndex: productIndex,
+        type: 'DELIVERY'
+      });
+
+      if (deliveryShipment) {
+        const deliveryProof = await ShipmentProof.findOne({ shipment: deliveryShipment._id });
+        
+        shipperEvidence.deliveryPhase = {
+          shipmentId: deliveryShipment._id,
+          type: 'DELIVERY',
+          shipper: deliveryShipment.shipper || null,
+          // Giai đoạn 1: Shipper nhận hàng từ Owner
+          pickupFromOwner: {
+            images: deliveryProof?.imagesBeforeDelivery || 
+                    (deliveryProof?.imageBeforeDelivery ? [deliveryProof.imageBeforeDelivery] : []),
+            description: 'Ảnh khi shipper nhận hàng từ chủ hàng (Owner)',
+            timestamp: deliveryShipment.tracking?.pickedUpAt || null
+          },
+          // Giai đoạn 2: Shipper giao hàng cho Renter
+          deliveryToRenter: {
+            images: deliveryProof?.imagesAfterDelivery || 
+                    (deliveryProof?.imageAfterDelivery ? [deliveryProof.imageAfterDelivery] : []),
+            description: 'Ảnh khi shipper giao hàng cho người thuê (Renter)',
+            timestamp: deliveryShipment.tracking?.deliveredAt || null
+          },
+          notes: deliveryProof?.notes || deliveryShipment.tracking?.notes || ''
+        };
+      }
+
+      // Tìm RETURN shipment cho product này
+      const returnShipment = await Shipment.findOne({ 
+        subOrder: subOrderId, 
+        productIndex: productIndex,
+        type: 'RETURN'
+      });
+
+      if (returnShipment) {
+        const returnProof = await ShipmentProof.findOne({ shipment: returnShipment._id });
+        
+        shipperEvidence.returnPhase = {
+          shipmentId: returnShipment._id,
+          type: 'RETURN',
+          shipper: returnShipment.shipper || null,
+          // Giai đoạn 3: Shipper nhận hàng từ Renter
+          pickupFromRenter: {
+            images: returnProof?.imagesBeforeDelivery || 
+                    (returnProof?.imageBeforeDelivery ? [returnProof.imageBeforeDelivery] : []),
+            description: 'Ảnh khi shipper nhận hàng trả từ người thuê (Renter)',
+            timestamp: returnShipment.tracking?.pickedUpAt || null
+          },
+          // Giai đoạn 4: Shipper giao hàng về cho Owner
+          deliveryToOwner: {
+            images: returnProof?.imagesAfterDelivery || 
+                    (returnProof?.imageAfterDelivery ? [returnProof.imageAfterDelivery] : []),
+            description: 'Ảnh khi shipper giao hàng về cho chủ hàng (Owner)',
+            timestamp: returnShipment.tracking?.deliveredAt || null
+          },
+          notes: returnProof?.notes || returnShipment.tracking?.notes || ''
+        };
+      }
+    } catch (error) {
+      console.error('Error fetching shipper evidence:', error);
+      // Không throw error, tiếp tục với data có được
+    }
+
+    // Cập nhật thông tin chia sẻ
     dispute.thirdPartyResolution.sharedData = {
       sharedAt: new Date(),
       sharedBy: adminId,
       partyInfo: {
         complainant: complainantInfo,
         respondent: respondentInfo
-      }
+      },
+      shipperEvidence: shipperEvidence
     };
 
     dispute.timeline.push({
       action: 'ADMIN_SHARED_PARTY_INFO',
       performedBy: adminId,
-      details: 'Admin đã chia sẻ thông tin cá nhân 2 bên để chuẩn bị cho bên thứ 3',
+      details: 'Admin đã chia sẻ thông tin cá nhân 2 bên và ảnh bằng chứng shipper để chuẩn bị cho bên thứ 3',
       timestamp: new Date()
     });
 

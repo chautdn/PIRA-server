@@ -820,9 +820,21 @@ class NegotiationService {
           console.log(`   💰 Trừ từ frozen: ${frozenUsed.toLocaleString('vi-VN')}đ`);
           console.log(`   💰 Trừ từ available: ${availableUsed.toLocaleString('vi-VN')}đ`);
           
-          // Trừ tiền từ renter
+          // Tính phần dư cọc cần hoàn lại (nếu bồi thường < deposit)
+          const remainingDeposit = orderDepositAmount - frozenUsed;
+          console.log(`   💰 Phần dư cọc cần hoàn: ${remainingDeposit.toLocaleString('vi-VN')}đ`);
+          
+          // Trừ tiền bồi thường từ renter
           if (frozenUsed > 0) renterWallet.balance.frozen -= frozenUsed;
           if (availableUsed > 0) renterWallet.balance.available -= availableUsed;
+          
+          // Hoàn phần dư cọc về available cho renter (nếu có)
+          if (remainingDeposit > 0) {
+            renterWallet.balance.frozen -= remainingDeposit;
+            renterWallet.balance.available += remainingDeposit;
+            console.log(`   💰 Hoàn ${remainingDeposit.toLocaleString('vi-VN')}đ từ frozen về available cho renter`);
+          }
+          
           renterWallet.balance.display = (renterWallet.balance.available || 0) + (renterWallet.balance.frozen || 0) + (renterWallet.balance.pending || 0);
           await renterWallet.save({ session });
           
@@ -851,6 +863,27 @@ class NegotiationService {
           });
           await renterTx.save({ session });
           
+          // Transaction hoàn phần dư cọc cho renter (nếu có)
+          if (remainingDeposit > 0) {
+            const refundTx = new Transaction({
+              user: renter._id,
+              wallet: renterWallet._id,
+              type: 'refund',
+              amount: remainingDeposit,
+              status: 'success',
+              description: `Hoàn phần dư cọc sau bồi thường - Dispute ${dispute.disputeId}`,
+              reference: dispute._id.toString(),
+              paymentMethod: 'wallet',
+              metadata: { 
+                disputeId: dispute.disputeId, 
+                type: 'deposit_refund_after_compensation',
+                originalDeposit: orderDepositAmount,
+                compensationPaid: compensationAmount
+              }
+            });
+            await refundTx.save({ session });
+          }
+          
           const ownerTx = new Transaction({
             user: owner._id,
             wallet: ownerWallet._id,
@@ -871,10 +904,11 @@ class NegotiationService {
             compensationAmount,
             frozenUsed,
             availableUsed,
+            remainingDepositRefunded: remainingDeposit,
             paidBy: renter._id,
             paidTo: owner._id,
             status: 'COMPLETED',
-            notes: `Owner đúng. Renter bồi thường ${compensationAmount.toLocaleString('vi-VN')}đ (Frozen: ${frozenUsed.toLocaleString('vi-VN')}đ + Available: ${availableUsed.toLocaleString('vi-VN')}đ)`
+            notes: `Owner đúng. Renter bồi thường ${compensationAmount.toLocaleString('vi-VN')}đ (Frozen: ${frozenUsed.toLocaleString('vi-VN')}đ + Available: ${availableUsed.toLocaleString('vi-VN')}đ)${remainingDeposit > 0 ? `. Hoàn dư cọc: ${remainingDeposit.toLocaleString('vi-VN')}đ` : ''}`
           };
           
         } else if (whoIsRight === 'RESPONDENT_RIGHT') {

@@ -259,13 +259,8 @@ const disputeSchema = new mongoose.Schema(
           type: mongoose.Schema.Types.ObjectId,
           ref: 'User'
         },
-        // Thông tin shipper (ảnh chụp khi giao/nhận hàng)
-        shipperEvidence: {
-          photos: [String],
-          videos: [String],
-          notes: String,
-          timestamp: Date
-        },
+        // Thông tin shipper (ảnh chụp khi giao/nhận hàng) - dùng Mixed để linh hoạt
+        shipperEvidence: mongoose.Schema.Types.Mixed,
         // Thông tin cá nhân 2 bên
         partyInfo: {
           complainant: {
