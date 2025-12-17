@@ -292,7 +292,130 @@ class ThirdPartyService {
       timestamp: new Date()
     });
 
-    await dispute.save();
+    // ========== XỬ LÝ RIÊNG CHO RENTER_NO_RETURN ==========
+    // Khi admin chia sẻ thông tin xong → Dispute RESOLVED, 100% deposit chuyển cho owner
+    if (dispute.type === 'RENTER_NO_RETURN') {
+      const session = await mongoose.startSession();
+      session.startTransaction();
+
+      try {
+        const productItem = dispute.subOrder.products[dispute.productIndex];
+        const depositAmount = productItem?.totalDeposit || 0;
+
+        // Chuyển 100% deposit cho owner (trừ từ System Wallet, cộng vào ví owner)
+        if (depositAmount > 0) {
+          // 1. Trừ từ System Wallet
+          const systemWallet = await SystemWallet.findOne({}).session(session);
+          if (!systemWallet) {
+            throw new Error('System wallet không tồn tại');
+          }
+          
+          if (systemWallet.balance.available < depositAmount) {
+            console.warn(`[ThirdParty] System wallet không đủ tiền: ${systemWallet.balance.available} < ${depositAmount}`);
+            // Vẫn tiếp tục nhưng log warning
+          }
+          
+          systemWallet.balance.available = Math.max(0, (systemWallet.balance.available || 0) - depositAmount);
+          await systemWallet.save({ session });
+
+          // 2. Cộng vào ví owner
+          const ownerWallet = await Wallet.findById(dispute.complainant.wallet).session(session);
+          if (ownerWallet) {
+            ownerWallet.balance.available = (ownerWallet.balance.available || 0) + depositAmount;
+            ownerWallet.balance.display = (ownerWallet.balance.available || 0) + (ownerWallet.balance.frozen || 0) + (ownerWallet.balance.pending || 0);
+            await ownerWallet.save({ session });
+
+            // Tạo transaction ghi nhận cho owner
+            await Transaction.create([{
+              user: dispute.complainant._id,
+              wallet: ownerWallet._id,
+              type: 'refund',
+              amount: depositAmount,
+              status: 'success',
+              description: `Nhận tiền cọc từ dispute ${dispute.disputeId} - Chuyển công an xử lý`,
+              fromSystemWallet: true,
+              metadata: {
+                disputeId: dispute._id,
+                disputeNumber: dispute.disputeId,
+                reason: 'RENTER_NO_RETURN - Chuyển công an, owner nhận deposit'
+              }
+            }], { session });
+          }
+        }
+
+        // Chuyển status sang RESOLVED
+        dispute.status = 'RESOLVED';
+        dispute.resolution = {
+          resolvedBy: adminId,
+          resolvedAt: new Date(),
+          resolutionText: `Tranh chấp RENTER_NO_RETURN đã được chuyển cho công an xử lý. Thông tin 2 bên đã được chia sẻ. Tiền cọc ${depositAmount.toLocaleString('vi-VN')}đ đã được chuyển vào ví owner. 2 bên tự giải quyết bên ngoài hệ thống.`,
+          resolutionSource: 'THIRD_PARTY',
+          financialImpact: {
+            depositAmount: depositAmount,
+            depositStatus: 'TRANSFERRED_TO_OWNER',
+            paidTo: dispute.complainant._id,
+            status: 'COMPLETED'
+          }
+        };
+
+        dispute.timeline.push({
+          action: 'RESOLVED_POLICE_HANDOVER',
+          performedBy: adminId,
+          details: `Dispute RESOLVED - Chuyển công an xử lý. Deposit ${depositAmount.toLocaleString('vi-VN')}đ chuyển vào ví owner. 2 bên tự giải quyết.`,
+          timestamp: new Date()
+        });
+
+        await dispute.save({ session });
+        await session.commitTransaction();
+        session.endSession();
+
+        // Gửi notification cho cả 2 bên
+        try {
+          // Notification cho Owner (complainant)
+          await notificationService.createNotification({
+            recipient: dispute.complainant._id,
+            type: 'DISPUTE',
+            category: 'INFO',
+            title: '📋 Thông tin đã được chia sẻ - Chuyển công an xử lý',
+            message: `Tranh chấp "${dispute.title}" đã được chuyển cho công an. Admin đã chia sẻ thông tin renter để bạn liên hệ. Tiền cọc ${depositAmount.toLocaleString('vi-VN')}đ đã được chuyển vào ví của bạn. Hệ thống không xử lý thêm - 2 bên tự giải quyết bên ngoài.`,
+            relatedDispute: dispute._id,
+            actions: [{
+              label: 'Xem chi tiết',
+              url: `/disputes/${dispute._id}`,
+              action: 'VIEW_DISPUTE'
+            }],
+            status: 'SENT'
+          });
+
+          // Notification cho Renter (respondent)
+          await notificationService.createNotification({
+            recipient: dispute.respondent._id,
+            type: 'DISPUTE',
+            category: 'WARNING',
+            title: '⚠️ Tranh chấp chuyển công an - Tiền cọc đã chuyển cho owner',
+            message: `Tranh chấp "${dispute.title}" đã được chuyển cho công an xử lý. Tiền cọc ${depositAmount.toLocaleString('vi-VN')}đ đã được chuyển cho owner. Vui lòng liên hệ owner để giải quyết.`,
+            relatedDispute: dispute._id,
+            actions: [{
+              label: 'Xem chi tiết',
+              url: `/disputes/${dispute._id}`,
+              action: 'VIEW_DISPUTE'
+            }],
+            status: 'SENT'
+          });
+        } catch (notifErr) {
+          console.error('Failed to send RENTER_NO_RETURN resolution notifications:', notifErr);
+        }
+
+      } catch (error) {
+        await session.abortTransaction();
+        session.endSession();
+        throw error;
+      }
+    } else {
+      // Các case khác - giữ nguyên flow cũ (chỉ save và chờ upload evidence)
+      await dispute.save();
+    }
+
     return dispute;
   }
 

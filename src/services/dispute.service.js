@@ -903,13 +903,13 @@ class DisputeService {
             status: 'SENT'
           });
         } else {
-          // Renter khiếu nại, owner từ chối -> Admin xem xét
+          // Renter khiếu nại, owner từ chối -> Vào đàm phán
           await this._createAndEmitNotification({
             recipient: dispute.complainant,
             type: 'DISPUTE',
             category: 'INFO',
             title: `Tranh chấp đã có phản hồi`,
-            message: `${respondent.profile?.fullName || 'Bên bị khiếu nại'} đã từ chối. Admin sẽ xem xét và đưa ra quyết định.`,
+            message: `${respondent.profile?.fullName || 'Bên bị khiếu nại'} đã từ chối. Chuyển sang đàm phán - 2 bên có 3 ngày để thương lượng.`,
             relatedDispute: dispute._id,
             actions: [{
               label: 'Xem chi tiết',
@@ -2074,7 +2074,11 @@ class DisputeService {
     const { proposedReturnDate, reason, evidence } = requestData;
 
     const dispute = await Dispute.findOne(this._buildDisputeQuery(disputeId))
-      .populate('complainant respondent subOrder');
+      .populate({
+        path: 'subOrder',
+        populate: { path: 'products.product' }
+      })
+      .populate('complainant respondent');
 
     if (!dispute) {
       throw new Error('Dispute không tồn tại');
@@ -2097,6 +2101,18 @@ class DisputeService {
     const proposedDate = new Date(proposedReturnDate);
     if (proposedDate <= new Date()) {
       throw new Error('Ngày trả hàng đề xuất phải sau ngày hiện tại');
+    }
+
+    // Lấy ngày trả hàng gốc (rentalEndDate)
+    const productItem = dispute.subOrder.products[dispute.productIndex];
+    const originalReturnDate = new Date(productItem.rentalPeriod?.endDate);
+    
+    // Kiểm tra ngày đề xuất trong vòng 7 ngày từ ngày trả hàng gốc
+    const maxAllowedDate = new Date(originalReturnDate);
+    maxAllowedDate.setDate(maxAllowedDate.getDate() + 7);
+    
+    if (proposedDate > maxAllowedDate) {
+      throw new Error(`Ngày trả hàng đề xuất phải trong vòng 7 ngày kể từ ngày trả hàng gốc (${originalReturnDate.toLocaleDateString('vi-VN')}). Tối đa: ${maxAllowedDate.toLocaleDateString('vi-VN')}`);
     }
 
     // Cập nhật reschedule request
@@ -2185,6 +2201,9 @@ class DisputeService {
     // Biến để lưu thông tin cần dùng sau transaction
     let newShipment = null;
     let penaltyAmount = 0;
+    let remainingDeposit = 0;
+    let lateDays = 0;
+    let creditPenalty = 0;
 
     try {
       // Cập nhật owner response
@@ -2294,9 +2313,21 @@ class DisputeService {
           await newShipment.save({ session });
         }
 
-        // Phạt nhẹ: 10% deposit (productItem already declared above)
+        // Tính tiền phạt: dailyRentalPrice × số ngày trễ
         const depositAmount = productItem.totalDeposit || 0;
-        penaltyAmount = depositAmount * 0.1;
+        const originalReturnDate = new Date(productItem.rentalPeriod?.endDate);
+        const proposedDate = new Date(dispute.rescheduleRequest.proposedReturnDate);
+        
+        // Tính số ngày trễ (từ ngày trả quy định đến ngày trả mới)
+        lateDays = Math.ceil((proposedDate - originalReturnDate) / (1000 * 60 * 60 * 24));
+        
+        // Lấy giá thuê 1 ngày từ product
+        const dailyRentalPrice = product?.rentalPrices?.perDay || 
+                                 (productItem.totalRental / ((productItem.rentalPeriod?.endDate - productItem.rentalPeriod?.startDate) / (1000 * 60 * 60 * 24))) ||
+                                 0;
+        
+        penaltyAmount = Math.min(dailyRentalPrice * lateDays, depositAmount); // Không phạt quá deposit
+        remainingDeposit = depositAmount - penaltyAmount;
 
         // Cập nhật product status using findOneAndUpdate to avoid validation issues
         await SubOrder.findOneAndUpdate(
@@ -2310,10 +2341,11 @@ class DisputeService {
         dispute.resolution = {
           resolvedBy: ownerId,
           resolvedAt: new Date(),
-          resolutionText: `Owner chấp nhận reschedule. Renter phạt 10% deposit (${penaltyAmount.toLocaleString('vi-VN')}đ)`,
+          resolutionText: `Owner chấp nhận reschedule. Trễ ${lateDays} ngày. Phạt ${penaltyAmount.toLocaleString('vi-VN')}đ (${dailyRentalPrice.toLocaleString('vi-VN')}đ/ngày × ${lateDays} ngày).${remainingDeposit > 0 ? ` Hoàn ${remainingDeposit.toLocaleString('vi-VN')}đ cho renter.` : ''}`,
           resolutionSource: 'RESCHEDULE_APPROVED',
           financialImpact: {
             penaltyAmount,
+            refundAmount: remainingDeposit,
             compensationAmount: penaltyAmount,
             paidBy: dispute.respondent._id,
             paidTo: dispute.complainant._id,
@@ -2321,34 +2353,44 @@ class DisputeService {
           }
         };
 
-        // Xử lý tiền phạt từ system wallet (giữ 10% deposit)
+        // Xử lý tiền từ system wallet
         const systemWallet = await SystemWallet.findOne({}).session(session);
-        if (systemWallet && systemWallet.balance.available >= penaltyAmount) {
-          systemWallet.balance.available -= penaltyAmount;
-          await systemWallet.save({ session });
-
-          // Chuyển phạt cho owner
-          const ownerWallet = await Wallet.findById(dispute.complainant.wallet).session(session);
-          if (ownerWallet) {
+        const ownerWallet = await Wallet.findById(dispute.complainant.wallet).session(session);
+        const renterWallet = await Wallet.findById(dispute.respondent.wallet).session(session);
+        
+        if (systemWallet) {
+          // 1. Chuyển penalty cho owner
+          if (penaltyAmount > 0 && systemWallet.balance.available >= penaltyAmount && ownerWallet) {
+            systemWallet.balance.available -= penaltyAmount;
             ownerWallet.balance.available += penaltyAmount;
             ownerWallet.balance.display = (ownerWallet.balance.available || 0) + (ownerWallet.balance.frozen || 0) + (ownerWallet.balance.pending || 0);
             await ownerWallet.save({ session });
           }
 
+          // 2. Hoàn phần dư deposit cho renter (nếu có)
+          if (remainingDeposit > 0 && systemWallet.balance.available >= remainingDeposit && renterWallet) {
+            systemWallet.balance.available -= remainingDeposit;
+            renterWallet.balance.available += remainingDeposit;
+            renterWallet.balance.display = (renterWallet.balance.available || 0) + (renterWallet.balance.frozen || 0) + (renterWallet.balance.pending || 0);
+            await renterWallet.save({ session });
+          }
+
+          await systemWallet.save({ session });
           dispute.resolution.financialImpact.status = 'COMPLETED';
         }
 
-        // Trừ credit nhẹ: -5
+        // Trừ credit: -5 cho mỗi ngày trễ (tối đa -35)
+        creditPenalty = Math.min(lateDays * 5, 35);
         await User.findByIdAndUpdate(
           dispute.respondent._id,
-          { $inc: { creditScore: -5 } },
+          { $inc: { creditScore: -creditPenalty } },
           { session }
         );
 
         dispute.timeline.push({
           action: 'RESCHEDULE_APPROVED',
           performedBy: ownerId,
-          details: `Owner chấp nhận reschedule. Tạo shipment mới. Phạt 10% deposit: ${penaltyAmount.toLocaleString('vi-VN')}đ. Credit -5.`,
+          details: `Owner chấp nhận reschedule. Trễ ${lateDays} ngày. Phạt ${penaltyAmount.toLocaleString('vi-VN')}đ.${remainingDeposit > 0 ? ` Hoàn ${remainingDeposit.toLocaleString('vi-VN')}đ cho renter.` : ''} Credit -${creditPenalty}.`,
           timestamp: new Date()
         });
 
@@ -2397,7 +2439,7 @@ class DisputeService {
           type: 'DISPUTE',
           category: 'SUCCESS',
           title: 'Reschedule được chấp nhận',
-          message: `Owner đã chấp nhận đề xuất trả hàng của bạn. Shipment mới đã được tạo. Bạn bị phạt 10% deposit (${penaltyAmount.toLocaleString('vi-VN')}đ) và -5 credit score.`,
+          message: `Owner đã chấp nhận đề xuất trả hàng của bạn. Trễ ${lateDays} ngày. Phạt ${penaltyAmount.toLocaleString('vi-VN')}đ và -${creditPenalty} credit.${remainingDeposit > 0 ? ` Hoàn ${remainingDeposit.toLocaleString('vi-VN')}đ về ví.` : ''}`,
           relatedDispute: dispute._id,
           actions: [{
             label: 'Xem shipment mới',
@@ -2539,11 +2581,31 @@ class DisputeService {
       throw new Error('Dispute không ở trạng thái negotiation');
     }
 
+    // Validate ngày thỏa thuận trong vòng 7 ngày từ ngày trả hàng gốc
+    const subOrderForValidation = await SubOrder.findById(dispute.subOrder._id).populate('products.product');
+    const productItemForValidation = subOrderForValidation.products[dispute.productIndex];
+    const originalReturnDate = new Date(productItemForValidation.rentalPeriod?.endDate);
+    const agreedDateObj = new Date(agreedDate);
+    
+    const maxAllowedDate = new Date(originalReturnDate);
+    maxAllowedDate.setDate(maxAllowedDate.getDate() + 7);
+    
+    if (agreedDateObj > maxAllowedDate) {
+      throw new Error(`Ngày trả hàng phải trong vòng 7 ngày kể từ ngày trả hàng gốc (${originalReturnDate.toLocaleDateString('vi-VN')}). Tối đa: ${maxAllowedDate.toLocaleDateString('vi-VN')}`);
+    }
+
+    if (agreedDateObj <= new Date()) {
+      throw new Error('Ngày trả hàng phải sau ngày hiện tại');
+    }
+
     const session = await mongoose.startSession();
     session.startTransaction();
 
     let newShipment = null;
     let penaltyAmount = 0;
+    let remainingDeposit = 0;
+    let lateDays = 0;
+    let creditPenalty = 0;
 
     try {
       const Shipment = require('../models/Shipment');
@@ -2643,9 +2705,21 @@ class DisputeService {
         acceptedAt: new Date()
       };
 
-      // Phạt 10% deposit
+      // Tính tiền phạt: dailyRentalPrice × số ngày trễ
       const depositAmount = productItem.totalDeposit || 0;
-      penaltyAmount = depositAmount * 0.1;
+      const originalReturnDateCalc = new Date(productItem.rentalPeriod?.endDate);
+      const agreedDateCalc = new Date(agreedDate);
+      
+      // Tính số ngày trễ
+      lateDays = Math.ceil((agreedDateCalc - originalReturnDateCalc) / (1000 * 60 * 60 * 24));
+      
+      // Lấy giá thuê 1 ngày
+      const dailyRentalPrice = product?.rentalPrices?.perDay || 
+                               (productItem.totalRental / ((productItem.rentalPeriod?.endDate - productItem.rentalPeriod?.startDate) / (1000 * 60 * 60 * 24))) ||
+                               0;
+      
+      penaltyAmount = Math.min(dailyRentalPrice * lateDays, depositAmount);
+      remainingDeposit = depositAmount - penaltyAmount;
 
       await SubOrder.findOneAndUpdate(
         { _id: dispute.subOrder._id, 'products.product': dispute.productId },
@@ -2657,10 +2731,11 @@ class DisputeService {
       dispute.resolution = {
         resolvedBy: dispute.complainant._id,
         resolvedAt: new Date(),
-        resolutionText: `2 bên thỏa thuận ngày trả: ${new Date(agreedDate).toLocaleDateString('vi-VN')}. Renter phạt 10% deposit (${penaltyAmount.toLocaleString('vi-VN')}đ)`,
+        resolutionText: `2 bên thỏa thuận ngày trả: ${new Date(agreedDate).toLocaleDateString('vi-VN')}. Trễ ${lateDays} ngày. Phạt ${penaltyAmount.toLocaleString('vi-VN')}đ.${remainingDeposit > 0 ? ` Hoàn ${remainingDeposit.toLocaleString('vi-VN')}đ cho renter.` : ''}`,
         resolutionSource: 'NEGOTIATION',
         financialImpact: {
           penaltyAmount,
+          refundAmount: remainingDeposit,
           compensationAmount: penaltyAmount,
           paidBy: dispute.respondent._id,
           paidTo: dispute.complainant._id,
@@ -2668,33 +2743,44 @@ class DisputeService {
         }
       };
 
-      // Xử lý tiền phạt
+      // Xử lý tiền từ system wallet
       const systemWallet = await SystemWallet.findOne({}).session(session);
-      if (systemWallet && systemWallet.balance.available >= penaltyAmount) {
-        systemWallet.balance.available -= penaltyAmount;
-        await systemWallet.save({ session });
-
-        const ownerWallet = await Wallet.findById(dispute.complainant.wallet).session(session);
-        if (ownerWallet) {
+      const ownerWallet = await Wallet.findById(dispute.complainant.wallet).session(session);
+      const renterWallet = await Wallet.findById(dispute.respondent.wallet).session(session);
+      
+      if (systemWallet) {
+        // 1. Chuyển penalty cho owner
+        if (penaltyAmount > 0 && systemWallet.balance.available >= penaltyAmount && ownerWallet) {
+          systemWallet.balance.available -= penaltyAmount;
           ownerWallet.balance.available += penaltyAmount;
           ownerWallet.balance.display = (ownerWallet.balance.available || 0) + (ownerWallet.balance.frozen || 0) + (ownerWallet.balance.pending || 0);
           await ownerWallet.save({ session });
         }
 
+        // 2. Hoàn phần dư deposit cho renter (nếu có)
+        if (remainingDeposit > 0 && systemWallet.balance.available >= remainingDeposit && renterWallet) {
+          systemWallet.balance.available -= remainingDeposit;
+          renterWallet.balance.available += remainingDeposit;
+          renterWallet.balance.display = (renterWallet.balance.available || 0) + (renterWallet.balance.frozen || 0) + (renterWallet.balance.pending || 0);
+          await renterWallet.save({ session });
+        }
+
+        await systemWallet.save({ session });
         dispute.resolution.financialImpact.status = 'COMPLETED';
       }
 
-      // Trừ credit
+      // Trừ credit: -5 cho mỗi ngày trễ (tối đa -35)
+      creditPenalty = Math.min(lateDays * 5, 35);
       await User.findByIdAndUpdate(
         dispute.respondent._id,
-        { $inc: { creditScore: -5 } },
+        { $inc: { creditScore: -creditPenalty } },
         { session }
       );
 
       dispute.timeline.push({
         action: 'NEGOTIATION_AGREED',
         performedBy: dispute.complainant._id,
-        details: `2 bên thỏa thuận ngày trả: ${new Date(agreedDate).toLocaleDateString('vi-VN')}. Tạo shipment mới. Phạt 10% deposit: ${penaltyAmount.toLocaleString('vi-VN')}đ. Credit -5.`,
+        details: `2 bên thỏa thuận ngày trả: ${new Date(agreedDate).toLocaleDateString('vi-VN')}. Trễ ${lateDays} ngày. Phạt ${penaltyAmount.toLocaleString('vi-VN')}đ.${remainingDeposit > 0 ? ` Hoàn ${remainingDeposit.toLocaleString('vi-VN')}đ cho renter.` : ''} Credit -${creditPenalty}.`,
         timestamp: new Date()
       });
 
@@ -2708,7 +2794,7 @@ class DisputeService {
         type: 'DISPUTE',
         category: 'SUCCESS',
         title: 'Thỏa thuận thành công',
-        message: `2 bên đã thỏa thuận ngày trả: ${new Date(agreedDate).toLocaleDateString('vi-VN')}. Shipment mới đã được tạo. Bạn bị phạt 10% deposit (${penaltyAmount.toLocaleString('vi-VN')}đ) và -5 credit score.`,
+        message: `2 bên đã thỏa thuận ngày trả: ${new Date(agreedDate).toLocaleDateString('vi-VN')}. Trễ ${lateDays} ngày. Phạt ${penaltyAmount.toLocaleString('vi-VN')}đ và -${creditPenalty} credit.${remainingDeposit > 0 ? ` Hoàn ${remainingDeposit.toLocaleString('vi-VN')}đ về ví.` : ''}`,
         relatedDispute: dispute._id,
         actions: [{
           label: 'Xem shipment',
@@ -2723,7 +2809,7 @@ class DisputeService {
         type: 'DISPUTE',
         category: 'SUCCESS',
         title: 'Thỏa thuận thành công',
-        message: `2 bên đã thỏa thuận ngày trả: ${new Date(agreedDate).toLocaleDateString('vi-VN')}. Shipment mới đã được tạo.`,
+        message: `2 bên đã thỏa thuận ngày trả: ${new Date(agreedDate).toLocaleDateString('vi-VN')}. Bạn nhận được ${penaltyAmount.toLocaleString('vi-VN')}đ tiền phạt.`,
         relatedDispute: dispute._id,
         actions: [{
           label: 'Xem shipment',
@@ -2807,8 +2893,9 @@ class DisputeService {
   }
 
   /**
-   * Escalate dispute RENTER_NO_RETURN lên công an sau 7 ngày
-   * Áp dụng cho: Renter không phản hồi, không thương lượng, hoặc cố tình chiếm đoạt
+   * Escalate dispute RENTER_NO_RETURN lên công an
+   * Chỉ chuyển status sang THIRD_PARTY_ESCALATED, chờ admin chia sẻ thông tin
+   * Khi admin chia sẻ xong → RESOLVED, deposit frozen vào ví renter
    * @param {String} disputeId - ID của dispute
    * @returns {Promise<Dispute>}
    */
@@ -2824,166 +2911,140 @@ class DisputeService {
       throw new Error('Chỉ áp dụng cho dispute RENTER_NO_RETURN');
     }
 
-    const session = await mongoose.startSession();
-    session.startTransaction();
+    const productItem = dispute.subOrder.products[dispute.productIndex];
+    const depositAmount = productItem?.totalDeposit || 0;
 
-    try {
-      const productItem = dispute.subOrder.products[dispute.productIndex];
-      const depositAmount = productItem.totalDeposit || 0;
-      const productValue = productItem.totalRental || 0; // Hoặc giá trị sản phẩm thực tế
-
-      // Phạt cực nặng: 100% deposit + 100% product value
-      const totalPenalty = depositAmount + productValue;
-
-      // Cập nhật dispute status
-      dispute.status = 'THIRD_PARTY_ESCALATED';
-      
-      // Lưu thông tin escalate lên công an
-      dispute.thirdPartyResolution = {
-        escalatedAt: new Date(),
-        escalatedBy: dispute.complainant._id,
-        evidenceDeadline: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000), // 7 ngày nữa
-        thirdPartyInfo: {
-          name: 'Cơ quan công an',
-          contactInfo: 'Liên hệ công an địa phương',
-          caseNumber: `THEFT-${dispute.disputeId}-${Date.now()}`
-        }
-      };
-
-      // Cập nhật product status
-      await SubOrder.findOneAndUpdate(
-        { _id: dispute.subOrder._id, 'products.product': dispute.productId },
-        { $set: { 'products.$.productStatus': 'THEFT_REPORTED' } },
-        { session }
-      );
-
-      // Xử lý tiền phạt từ system wallet
-      const systemWallet = await SystemWallet.findOne({}).session(session);
-      if (systemWallet && systemWallet.balance.available >= totalPenalty) {
-        systemWallet.balance.available -= totalPenalty;
-        await systemWallet.save({ session });
-
-        // Chuyển toàn bộ phạt cho owner
-        const ownerWallet = await Wallet.findById(dispute.complainant.wallet).session(session);
-        if (ownerWallet) {
-          ownerWallet.balance.available += totalPenalty;
-          ownerWallet.balance.display = (ownerWallet.balance.available || 0) + (ownerWallet.balance.frozen || 0) + (ownerWallet.balance.pending || 0);
-          await ownerWallet.save({ session });
-        }
+    // Cập nhật dispute status sang THIRD_PARTY_ESCALATED (chờ admin chia sẻ thông tin)
+    dispute.status = 'THIRD_PARTY_ESCALATED';
+    
+    // Lưu thông tin escalate lên công an
+    dispute.thirdPartyResolution = {
+      escalatedAt: new Date(),
+      escalatedBy: dispute.complainant._id,
+      evidenceDeadline: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000), // 7 ngày để admin xử lý
+      thirdPartyInfo: {
+        name: 'Cơ quan công an',
+        contactInfo: 'Liên hệ công an địa phương',
+        caseNumber: `POLICE-${dispute.disputeId}-${Date.now()}`
       }
+    };
 
-      // Permanent blacklist + Reset credit score về 0
-      await User.findByIdAndUpdate(
-        dispute.respondent._id,
-        { 
-          creditScore: 0,
-          accountStatus: 'BLACKLISTED',
-          blacklistUntil: new Date(9999, 11, 31), // Permanent
-          blacklistReason: `Theft - Không trả hàng sau 7 ngày. Dispute: ${dispute.disputeId}`
-        },
-        { session }
-      );
+    // Cập nhật product status
+    await SubOrder.findOneAndUpdate(
+      { _id: dispute.subOrder._id, 'products.product': dispute.productId },
+      { $set: { 'products.$.productStatus': 'POLICE_REPORTED' } }
+    );
 
-      dispute.resolution = {
-        resolvedBy: 'SYSTEM',
-        resolvedAt: new Date(),
-        resolutionText: `Renter không phản hồi/thương lượng sau 7 ngày. Escalate lên công an. Phạt: ${totalPenalty.toLocaleString('vi-VN')}đ. Permanent blacklist + Credit reset về 0.`,
-        resolutionSource: 'THIRD_PARTY',
-        financialImpact: {
-          penaltyAmount: totalPenalty,
-          compensationAmount: totalPenalty,
-          paidBy: dispute.respondent._id,
-          paidTo: dispute.complainant._id,
-          status: 'COMPLETED'
-        }
-      };
+    dispute.timeline.push({
+      action: 'ESCALATED_TO_POLICE',
+      performedBy: 'SYSTEM',
+      details: `Chuyển tranh chấp cho công an xử lý. Deposit ${depositAmount.toLocaleString('vi-VN')}đ sẽ bị đóng băng khi admin chia sẻ thông tin. 2 bên tự giải quyết bên ngoài.`,
+      timestamp: new Date()
+    });
 
-      dispute.timeline.push({
-        action: 'ESCALATED_TO_POLICE',
-        performedBy: 'SYSTEM',
-        details: `Sau 7 ngày không phản hồi/thương lượng. Escalate lên công an. Phạt ${totalPenalty.toLocaleString('vi-VN')}đ. Permanent blacklist. Credit reset về 0.`,
-        timestamp: new Date()
-      });
+    await dispute.save();
 
-      await dispute.save({ session });
-      await session.commitTransaction();
-      session.endSession();
+    // Gửi notifications
+    await this._createAndEmitNotification({
+      recipient: dispute.complainant._id,
+      type: 'DISPUTE',
+      category: 'WARNING',
+      title: '🚔 Đã chuyển cho công an xử lý',
+      message: `Tranh chấp "${dispute.title}" đã được chuyển cho công an. Admin sẽ chia sẻ thông tin 2 bên để bạn liên hệ. Deposit của renter sẽ bị đóng băng.`,
+      relatedDispute: dispute._id,
+      actions: [{
+        label: 'Xem chi tiết',
+        url: `/disputes/${dispute._id}`,
+        action: 'VIEW_DISPUTE'
+      }],
+      status: 'SENT'
+    });
 
-      // Gửi notifications
-      await this._createAndEmitNotification({
-        recipient: dispute.complainant._id,
-        type: 'DISPUTE',
-        category: 'URGENT',
-        title: '⚠️ Đã báo công an',
-        message: `Renter không phản hồi sau 7 ngày. Hệ thống đã escalate vụ việc lên công an. Bạn nhận được bồi thường ${totalPenalty.toLocaleString('vi-VN')}đ.`,
-        relatedDispute: dispute._id,
-        actions: [{
-          label: 'Xem chi tiết',
-          url: `/disputes/${dispute._id}`,
-          action: 'VIEW_DISPUTE'
-        }],
-        status: 'SENT'
-      });
+    await this._createAndEmitNotification({
+      recipient: dispute.respondent._id,
+      type: 'DISPUTE',
+      category: 'URGENT',
+      title: '⚠️ Tranh chấp chuyển công an',
+      message: `Tranh chấp "${dispute.title}" đã được chuyển cho công an xử lý. Tiền cọc ${depositAmount.toLocaleString('vi-VN')}đ trong ví của bạn sẽ bị đóng băng. Vui lòng liên hệ owner để giải quyết.`,
+      relatedDispute: dispute._id,
+      actions: [{
+        label: 'Xem chi tiết',
+        url: `/disputes/${dispute._id}`,
+        action: 'VIEW_DISPUTE'
+      }],
+      status: 'SENT'
+    });
 
-      await this._createAndEmitNotification({
-        recipient: dispute.respondent._id,
-        type: 'DISPUTE',
-        category: 'URGENT',
-        title: '🚨 Đã báo công an - Tài khoản bị khóa vĩnh viễn',
-        message: `Bạn không phản hồi/thương lượng sau 7 ngày. Vụ việc đã được báo công an. Bạn bị phạt ${totalPenalty.toLocaleString('vi-VN')}đ, tài khoản bị khóa vĩnh viễn và credit reset về 0.`,
-        relatedDispute: dispute._id,
-        actions: [{
-          label: 'Xem chi tiết',
-          url: `/disputes/${dispute._id}`,
-          action: 'VIEW_DISPUTE'
-        }],
-        status: 'SENT'
-      });
-
-      // Gửi email thông báo cho cả 2 bên
-      // TODO: Implement email cho trường hợp escalate
-
-      return dispute.populate(['complainant', 'respondent']);
-
-    } catch (error) {
-      await session.abortTransaction();
-      session.endSession();
-      throw error;
-    }
+    return dispute.populate(['complainant', 'respondent']);
   }
 
   /**
-   * Cron job: Tự động check các dispute RENTER_NO_RETURN quá 7 ngày chưa resolve
-   * Chạy mỗi ngày để escalate lên công an
+   * Cron job: Tự động check các dispute RENTER_NO_RETURN cần escalate lên công an
+   * Chạy mỗi giờ hoặc mỗi ngày
+   * 
+   * 2 trường hợp escalate:
+   * 1. OPEN quá 48h - Renter không phản hồi đề xuất ngày trả
+   * 2. IN_NEGOTIATION quá deadline (3 ngày) - 2 bên không thỏa thuận được
    */
   async checkAndEscalateExpiredDisputes() {
     try {
-      const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+      const now = new Date();
+      const fortyEightHoursAgo = new Date(now.getTime() - 48 * 60 * 60 * 1000);
+      
+      let escalatedCount = 0;
+      let totalFound = 0;
 
-      // Tìm các dispute RENTER_NO_RETURN:
-      // - Status: OPEN (chưa phản hồi) hoặc IN_NEGOTIATION (đang thương lượng nhưng quá deadline)
-      // - Created > 7 ngày trước
-      const expiredDisputes = await Dispute.find({
+      // Case 1: OPEN quá 48h - Renter không phản hồi
+      const openExpiredDisputes = await Dispute.find({
         type: 'RENTER_NO_RETURN',
-        status: { $in: ['OPEN', 'IN_NEGOTIATION'] },
-        createdAt: { $lte: sevenDaysAgo }
+        status: 'OPEN',
+        createdAt: { $lte: fortyEightHoursAgo }
       });
 
-      console.log(`[Dispute Service] 🔍 Found ${expiredDisputes.length} expired RENTER_NO_RETURN disputes`);
+      console.log(`[Dispute Service] 🔍 Found ${openExpiredDisputes.length} OPEN disputes > 48h (no response)`);
+      totalFound += openExpiredDisputes.length;
 
-      for (const dispute of expiredDisputes) {
+      for (const dispute of openExpiredDisputes) {
         try {
-          console.log(`[Dispute Service] ⚠️ Escalating dispute ${dispute.disputeId} to police`);
+          console.log(`[Dispute Service] ⚠️ Escalating dispute ${dispute.disputeId} - Renter không phản hồi trong 48h`);
           await this.escalateToPolice(dispute._id);
+          escalatedCount++;
           console.log(`[Dispute Service] ✅ Successfully escalated dispute ${dispute.disputeId}`);
         } catch (error) {
           console.error(`[Dispute Service] ❌ Failed to escalate dispute ${dispute.disputeId}:`, error.message);
         }
       }
 
+      // Case 2: IN_NEGOTIATION quá deadline (3 ngày)
+      const negotiationExpiredDisputes = await Dispute.find({
+        type: 'RENTER_NO_RETURN',
+        status: 'IN_NEGOTIATION',
+        'negotiationRoom.deadline': { $lte: now }
+      });
+
+      console.log(`[Dispute Service] 🔍 Found ${negotiationExpiredDisputes.length} IN_NEGOTIATION disputes past deadline`);
+      totalFound += negotiationExpiredDisputes.length;
+
+      for (const dispute of negotiationExpiredDisputes) {
+        try {
+          console.log(`[Dispute Service] ⚠️ Escalating dispute ${dispute.disputeId} - Negotiation quá hạn 3 ngày`);
+          await this.escalateToPolice(dispute._id);
+          escalatedCount++;
+          console.log(`[Dispute Service] ✅ Successfully escalated dispute ${dispute.disputeId}`);
+        } catch (error) {
+          console.error(`[Dispute Service] ❌ Failed to escalate dispute ${dispute.disputeId}:`, error.message);
+        }
+      }
+
+      console.log(`[Dispute Service] 📊 Summary: Found ${totalFound}, Escalated ${escalatedCount}`);
+
       return {
-        total: expiredDisputes.length,
-        escalated: expiredDisputes.length
+        total: totalFound,
+        escalated: escalatedCount,
+        details: {
+          openExpired: openExpiredDisputes.length,
+          negotiationExpired: negotiationExpiredDisputes.length
+        }
       };
     } catch (error) {
       console.error('[Dispute Service] ❌ Error in checkAndEscalateExpiredDisputes:', error);

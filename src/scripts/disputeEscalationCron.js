@@ -5,7 +5,9 @@ let cronJob = null;
 
 /**
  * Start cron job to escalate expired RENTER_NO_RETURN disputes to police
- * Runs once daily at 2:00 AM
+ * Runs every hour to check:
+ * 1. OPEN disputes > 48h (renter không phản hồi)
+ * 2. IN_NEGOTIATION disputes past deadline (3 days)
  */
 function startDisputeEscalationCron() {
   // Stop existing job if any
@@ -13,8 +15,8 @@ function startDisputeEscalationCron() {
     cronJob.stop();
   }
 
-  // Run every day at 2:00 AM
-  cronJob = cron.schedule('0 2 * * *', async () => {
+  // Run every hour at minute 0
+  cronJob = cron.schedule('0 * * * *', async () => {
     try {
       console.log('\n🚨 [Cron] Starting dispute escalation check...');
       await escalateExpiredDisputesJob();
@@ -23,7 +25,7 @@ function startDisputeEscalationCron() {
     }
   });
 
-  console.log('🕐 Dispute escalation cron job started (runs daily at 2:00 AM)');
+  console.log('🕐 Dispute escalation cron job started (runs every hour)');
 }
 
 /**
