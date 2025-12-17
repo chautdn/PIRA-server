@@ -115,22 +115,21 @@ class AdminService {
 
       // Get detailed revenue breakdown
       const [
-        orderRevenue,
-        shippingRevenue,
-        promotionRevenue,
-        platformFees,
+        orderRevenue, // 10% platform fee from rental orders
+        shippingRevenue, // Full shipping fees collected from renters
+        promotionRevenue, // Promotion/advertising fees from owners
         timeSeriesData,
         previousRevenue
       ] = await Promise.all([
         this.getOrderRevenue(dateRange),
         this.getShippingRevenue(dateRange),
         this.getPromotionRevenue(dateRange),
-        this.getPlatformFees(dateRange),
         this.getTimeSeriesRevenue(dateRange, period),
         this.getTotalRevenue(previousDateRange)
       ]);
 
-      const totalRevenue = orderRevenue + shippingRevenue + promotionRevenue + platformFees;
+      // Platform's total revenue = 10% order fee + shipping fees + promotion fees
+      const totalRevenue = orderRevenue + shippingRevenue + promotionRevenue;
 
       // Calculate growth rate
       const growthRate =
@@ -141,18 +140,17 @@ class AdminService {
       return {
         summary: {
           total: totalRevenue,
-          orderRevenue,
-          shippingRevenue,
-          promotionRevenue,
-          platformFees,
+          orderRevenue, // 10% platform commission from rental orders
+          shippingRevenue, // Shipping fees collected
+          promotionRevenue, // Promotion/advertising fees
+          platformFees: orderRevenue, // Same as orderRevenue (10% commission)
           growthRate: parseFloat(growthRate)
         },
         breakdown: {
           bySource: [
-            { name: 'Đơn hàng', value: orderRevenue },
+            { name: 'Phí nền tảng (10%)', value: orderRevenue },
             { name: 'Phí vận chuyển', value: shippingRevenue },
-            { name: 'Quảng cáo', value: promotionRevenue },
-            { name: 'Phí nền tảng', value: platformFees }
+            { name: 'Phí quảng cáo', value: promotionRevenue }
           ]
         },
         timeSeries: timeSeriesData,
@@ -253,14 +251,13 @@ class AdminService {
   }
 
   async getTotalRevenue(dateRange) {
-    const [orderRevenue, shippingRevenue, promotionRevenue, platformFees] = await Promise.all([
+    const [orderRevenue, shippingRevenue, promotionRevenue] = await Promise.all([
       this.getOrderRevenue(dateRange),
       this.getShippingRevenue(dateRange),
-      this.getPromotionRevenue(dateRange),
-      this.getPlatformFees(dateRange)
+      this.getPromotionRevenue(dateRange)
     ]);
 
-    return orderRevenue + shippingRevenue + promotionRevenue + platformFees;
+    return orderRevenue + shippingRevenue + promotionRevenue;
   }
 
   async getProfit(dateRange) {
@@ -270,7 +267,7 @@ class AdminService {
   }
 
   async getOrderRevenue(dateRange) {
-    // Sử dụng SubOrder để tính doanh thu chi tiết hơn
+    // Calculate platform's revenue from completed orders (10% platform fee)
     const result = await SubOrder.aggregate([
       {
         $match: {
@@ -281,16 +278,22 @@ class AdminService {
       {
         $group: {
           _id: null,
-          total: { $sum: '$pricing.subtotalRental' } // Chỉ tính tiền thuê, không bao gồm deposit
+          totalRental: { $sum: '$pricing.subtotalRental' } // Total rental amount
         }
       }
     ]);
 
-    return result.length > 0 ? result[0].total : 0;
+    if (result.length === 0) return 0;
+
+    // Platform gets 10% of the rental amount as commission
+    const totalRental = result[0].totalRental || 0;
+    const platformCommission = totalRental * 0.1; // 10% platform fee
+
+    return platformCommission;
   }
 
   async getShippingRevenue(dateRange) {
-    // Sử dụng SubOrder để tính phí ship chi tiết từ pricing.shippingFee
+    // Platform collects shipping fees from renters
     const result = await SubOrder.aggregate([
       {
         $match: {
@@ -330,20 +333,22 @@ class AdminService {
   }
 
   async getPlatformFees(dateRange) {
-    // Platform fee is typically 5-10% of order revenue
+    // Platform fee is 10% of completed rental orders
     const orderRevenue = await this.getOrderRevenue(dateRange);
-    const platformFeeRate = 0.05; // 5%
+    const platformFeeRate = 0.1; // 10%
     return orderRevenue * platformFeeRate;
   }
 
   async getOperatingCosts(dateRange) {
-    // Calculate refunds and penalties as costs
-    const refunds = await Transaction.aggregate([
+    // Only real cost is shipper payments (shipping fees paid out)
+    // We get this from system wallet transfers to shippers for DELIVERY shipments
+    const shipperPayments = await Transaction.aggregate([
       {
         $match: {
           createdAt: { $gte: dateRange.start, $lte: dateRange.end },
-          type: 'refund',
-          status: 'success'
+          type: 'TRANSFER_OUT',
+          status: 'success',
+          description: { $regex: /shipping fee/i }
         }
       },
       {
@@ -354,12 +359,13 @@ class AdminService {
       }
     ]);
 
-    const refundTotal = refunds.length > 0 ? refunds[0].total : 0;
+    const shipperPaymentTotal = shipperPayments.length > 0 ? shipperPayments[0].total : 0;
 
     return {
-      total: refundTotal,
+      total: shipperPaymentTotal,
       breakdown: {
-        refunds: refundTotal,
+        shipperPayments: shipperPaymentTotal,
+        refunds: 0,
         maintenance: 0,
         support: 0
       }
@@ -410,7 +416,7 @@ class AdminService {
       {
         $group: {
           _id: groupBy,
-          revenue: { $sum: '$pricing.subtotalRental' },
+          totalRental: { $sum: '$pricing.subtotalRental' }, // Total rental amount
           shippingFee: { $sum: '$pricing.shippingFee' },
           orderCount: { $sum: 1 }
         }
@@ -418,20 +424,157 @@ class AdminService {
       { $sort: { '_id.year': 1, '_id.month': 1, '_id.day': 1, '_id.hour': 1 } }
     ]);
 
+    // Get promotion revenue for the same period
+    const promotionData = await this.getTimeSeriesPromotion(dateRange, period);
+    const promotionMap = new Map(promotionData.map((p) => [p.date, p.amount]));
+
+    return data.map((item) => {
+      const date = this.formatDate(item._id, period);
+      const platformCommission = (item.totalRental || 0) * 0.1; // 10% platform fee
+      const promotionRevenue = promotionMap.get(date) || 0;
+
+      return {
+        date,
+        revenue: platformCommission + item.shippingFee + promotionRevenue,
+        orderRevenue: platformCommission,
+        shippingFee: item.shippingFee,
+        promotionRevenue: promotionRevenue,
+        orderCount: item.orderCount
+      };
+    });
+  }
+
+  async getTimeSeriesPromotion(dateRange, period) {
+    let groupBy;
+
+    switch (period) {
+      case 'day':
+        groupBy = {
+          year: { $year: '$createdAt' },
+          month: { $month: '$createdAt' },
+          day: { $dayOfMonth: '$createdAt' },
+          hour: { $hour: '$createdAt' }
+        };
+        break;
+      case 'week':
+      case 'month':
+        groupBy = {
+          year: { $year: '$createdAt' },
+          month: { $month: '$createdAt' },
+          day: { $dayOfMonth: '$createdAt' }
+        };
+        break;
+      case 'quarter':
+      case 'year':
+        groupBy = {
+          year: { $year: '$createdAt' },
+          month: { $month: '$createdAt' }
+        };
+        break;
+      default:
+        groupBy = {
+          year: { $year: '$createdAt' },
+          month: { $month: '$createdAt' }
+        };
+    }
+
+    const data = await Transaction.aggregate([
+      {
+        $match: {
+          createdAt: { $gte: dateRange.start, $lte: dateRange.end },
+          type: 'PROMOTION_REVENUE',
+          status: 'success'
+        }
+      },
+      {
+        $group: {
+          _id: groupBy,
+          amount: { $sum: '$amount' }
+        }
+      },
+      { $sort: { '_id.year': 1, '_id.month': 1, '_id.day': 1, '_id.hour': 1 } }
+    ]);
+
     return data.map((item) => ({
       date: this.formatDate(item._id, period),
-      revenue: item.revenue,
-      shippingFee: item.shippingFee,
-      orderCount: item.orderCount
+      amount: item.amount
     }));
   }
 
   async getTimeSeriesProfit(dateRange, period) {
     const revenueData = await this.getTimeSeriesRevenue(dateRange, period);
 
-    return revenueData.map((item) => ({
-      ...item,
-      profit: item.revenue * 0.95 // Simplified: 95% profit margin
+    // Get shipper payments grouped by time period
+    const shipperPaymentsData = await this.getTimeSeriesShipperPayments(dateRange, period);
+    const shipperPaymentsMap = new Map(shipperPaymentsData.map((p) => [p.date, p.amount]));
+
+    return revenueData.map((item) => {
+      const shipperCost = shipperPaymentsMap.get(item.date) || 0;
+      const profit = item.revenue - shipperCost;
+
+      return {
+        ...item,
+        cost: shipperCost,
+        profit: profit
+      };
+    });
+  }
+
+  async getTimeSeriesShipperPayments(dateRange, period) {
+    let groupBy;
+
+    switch (period) {
+      case 'day':
+        groupBy = {
+          year: { $year: '$createdAt' },
+          month: { $month: '$createdAt' },
+          day: { $dayOfMonth: '$createdAt' },
+          hour: { $hour: '$createdAt' }
+        };
+        break;
+      case 'week':
+      case 'month':
+        groupBy = {
+          year: { $year: '$createdAt' },
+          month: { $month: '$createdAt' },
+          day: { $dayOfMonth: '$createdAt' }
+        };
+        break;
+      case 'quarter':
+      case 'year':
+        groupBy = {
+          year: { $year: '$createdAt' },
+          month: { $month: '$createdAt' }
+        };
+        break;
+      default:
+        groupBy = {
+          year: { $year: '$createdAt' },
+          month: { $month: '$createdAt' }
+        };
+    }
+
+    const data = await Transaction.aggregate([
+      {
+        $match: {
+          createdAt: { $gte: dateRange.start, $lte: dateRange.end },
+          type: 'TRANSFER_OUT',
+          status: 'success',
+          description: { $regex: /shipping fee/i }
+        }
+      },
+      {
+        $group: {
+          _id: groupBy,
+          amount: { $sum: '$amount' }
+        }
+      },
+      { $sort: { '_id.year': 1, '_id.month': 1, '_id.day': 1, '_id.hour': 1 } }
+    ]);
+
+    return data.map((item) => ({
+      date: this.formatDate(item._id, period),
+      amount: item.amount
     }));
   }
 
@@ -2934,6 +3077,397 @@ class AdminService {
       return JSON.stringify(transactions, null, 2);
     } catch (error) {
       throw new Error(`Lỗi khi xuất dữ liệu giao dịch: ${error.message}`);
+    }
+  }
+
+  // ========== SHIPMENT MANAGEMENT ==========
+  async getShipmentStats() {
+    try {
+      const Shipment = require('../models/Shipment');
+
+      // Get total shippers
+      const totalShippers = await User.countDocuments({ role: 'SHIPPER' });
+
+      // Get shipment statistics
+      const shipmentStats = await Shipment.aggregate([
+        {
+          $group: {
+            _id: null,
+            total: { $sum: 1 },
+            delivered: { $sum: { $cond: [{ $eq: ['$status', 'DELIVERED'] }, 1, 0] } },
+            failed: { $sum: { $cond: [{ $eq: ['$status', 'FAILED'] }, 1, 0] } },
+            totalFee: { $sum: '$fee' }
+          }
+        }
+      ]);
+
+      const stats = shipmentStats[0] || {
+        total: 0,
+        delivered: 0,
+        failed: 0,
+        totalFee: 0
+      };
+
+      // Get daily shipment stats (last 7 days)
+      const sevenDaysAgo = new Date();
+      sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+
+      const dailyStats = await Shipment.aggregate([
+        {
+          $match: {
+            createdAt: { $gte: sevenDaysAgo }
+          }
+        },
+        {
+          $group: {
+            _id: {
+              $dateToString: { format: '%Y-%m-%d', date: '$createdAt' }
+            },
+            count: { $sum: 1 }
+          }
+        },
+        { $sort: { _id: 1 } }
+      ]);
+
+      // Get top 5 shippers by shipments
+      const topShippers = await Shipment.aggregate([
+        {
+          $group: {
+            _id: '$shipper',
+            totalShipments: { $sum: 1 },
+            completedShipments: {
+              $sum: { $cond: [{ $eq: ['$status', 'DELIVERED'] }, 1, 0] }
+            },
+            totalFee: { $sum: '$fee' }
+          }
+        },
+        { $sort: { totalShipments: -1 } },
+        { $limit: 5 },
+        {
+          $lookup: {
+            from: 'users',
+            localField: '_id',
+            foreignField: '_id',
+            as: 'shipperInfo'
+          }
+        },
+        { $unwind: '$shipperInfo' }
+      ]);
+
+      // Format top shippers with profile info
+      const formattedTopShippers = topShippers.map((s) => ({
+        _id: s._id,
+        profile: s.shipperInfo.profile,
+        address: s.shipperInfo.address,
+        totalShipments: s.totalShipments,
+        completedShipments: s.completedShipments,
+        revenue: s.totalFee
+      }));
+
+      return {
+        totalShippers,
+        totalShipments: stats.total,
+        successRate: stats.total > 0 ? ((stats.delivered / stats.total) * 100).toFixed(1) : 0,
+        totalRevenue: stats.totalFee,
+        dailyData: dailyStats.map((d) => ({
+          date: d._id,
+          count: d.count
+        })),
+        successFailureRatio: {
+          success: stats.delivered,
+          failed: stats.failed
+        },
+        topShippers: formattedTopShippers
+      };
+    } catch (error) {
+      console.error('Error getting shipment stats:', error);
+      throw new Error(`Lỗi khi lấy thống kê vận chuyển: ${error.message}`);
+    }
+  }
+
+  async getAllShippers(filters = {}) {
+    try {
+      const { page = 1, limit = 100, search, district } = filters;
+      const skip = (page - 1) * limit;
+
+      // Build filter query
+      const filterQuery = { role: 'SHIPPER' };
+
+      if (search) {
+        filterQuery.$or = [
+          { 'profile.firstName': { $regex: search, $options: 'i' } },
+          { 'profile.fullName': { $regex: search, $options: 'i' } },
+          { email: { $regex: search, $options: 'i' } },
+          { phone: { $regex: search, $options: 'i' } }
+        ];
+      }
+
+      if (district) {
+        filterQuery['address.district'] = district;
+      }
+
+      const Shipment = require('../models/Shipment');
+
+      // Get shippers with their shipment statistics
+      const shippers = await User.find(filterQuery)
+        .select('profile email phone address status createdAt')
+        .skip(skip)
+        .limit(limit)
+        .lean();
+
+      // Enrich shipper data with shipment statistics and ratings
+      const Review = require('../models/Review');
+      const enrichedShippers = await Promise.all(
+        shippers.map(async (shipper) => {
+          const shipmentStats = await Shipment.aggregate([
+            { $match: { shipper: shipper._id } },
+            {
+              $group: {
+                _id: null,
+                totalShipments: { $sum: 1 },
+                completedShipments: {
+                  $sum: { $cond: [{ $eq: ['$status', 'DELIVERED'] }, 1, 0] }
+                },
+                totalFee: { $sum: '$fee' }
+              }
+            }
+          ]);
+
+          const stats = shipmentStats[0] || {
+            totalShipments: 0,
+            completedShipments: 0,
+            totalFee: 0
+          };
+
+          // Calculate average rating for shipper
+          const ratingStats = await Review.aggregate([
+            { $match: { targetType: 'SHIPPER', targetId: shipper._id } },
+            {
+              $group: {
+                _id: null,
+                avgRating: { $avg: '$rating' },
+                totalReviews: { $sum: 1 }
+              }
+            }
+          ]);
+
+          const rating = ratingStats[0] || { avgRating: 0, totalReviews: 0 };
+
+          return {
+            ...shipper,
+            totalShipments: stats.totalShipments,
+            completedShipments: stats.completedShipments,
+            revenue: stats.totalFee,
+            averageRating: rating.avgRating ? parseFloat(rating.avgRating.toFixed(1)) : 0,
+            totalReviews: rating.totalReviews
+          };
+        })
+      );
+
+      const total = await User.countDocuments(filterQuery);
+
+      return {
+        data: enrichedShippers,
+        pagination: {
+          page,
+          limit,
+          total,
+          totalPages: Math.ceil(total / limit)
+        }
+      };
+    } catch (error) {
+      console.error('Error getting shippers:', error);
+      throw new Error(`Lỗi khi lấy danh sách shipper: ${error.message}`);
+    }
+  }
+
+  async getShipperById(shipperId) {
+    try {
+      const Shipment = require('../models/Shipment');
+      const Review = require('../models/Review');
+
+      // Get shipper details
+      const shipper = await User.findOne({ _id: shipperId, role: 'SHIPPER' })
+        .select('profile email phone address status createdAt')
+        .lean();
+
+      if (!shipper) {
+        throw new Error('Không tìm thấy shipper');
+      }
+
+      // Get shipment statistics
+      const shipmentStats = await Shipment.aggregate([
+        { $match: { shipper: shipper._id } },
+        {
+          $group: {
+            _id: null,
+            totalShipments: { $sum: 1 },
+            completedShipments: {
+              $sum: { $cond: [{ $eq: ['$status', 'DELIVERED'] }, 1, 0] }
+            },
+            cancelledShipments: {
+              $sum: { $cond: [{ $eq: ['$status', 'CANCELLED'] }, 1, 0] }
+            },
+            failedShipments: {
+              $sum: { $cond: [{ $eq: ['$status', 'DELIVERY_FAILED'] }, 1, 0] }
+            },
+            totalFee: { $sum: '$fee' }
+          }
+        }
+      ]);
+
+      const stats = shipmentStats[0] || {
+        totalShipments: 0,
+        completedShipments: 0,
+        cancelledShipments: 0,
+        failedShipments: 0,
+        totalFee: 0
+      };
+
+      // Calculate average rating for shipper
+      const ratingStats = await Review.aggregate([
+        { $match: { targetType: 'SHIPPER', targetId: shipper._id } },
+        {
+          $group: {
+            _id: null,
+            avgRating: { $avg: '$rating' },
+            totalReviews: { $sum: 1 }
+          }
+        }
+      ]);
+
+      const rating = ratingStats[0] || { avgRating: 0, totalReviews: 0 };
+
+      // Get recent shipments with full details
+      const recentShipments = await Shipment.find({ shipper: shipper._id })
+        .populate({
+          path: 'subOrder',
+          populate: [
+            {
+              path: 'masterOrder',
+              select: 'masterOrderNumber renter',
+              populate: {
+                path: 'renter',
+                select: 'profile email phone'
+              }
+            },
+            {
+              path: 'owner',
+              select: 'profile email phone'
+            },
+            {
+              path: 'products.product',
+              select: 'title images category'
+            }
+          ]
+        })
+        .populate('shipper', 'profile email phone')
+        .sort({ createdAt: -1 })
+        .limit(50)
+        .lean();
+
+      // Products are now populated via query, no need to fetch separately
+
+      // Get shipment proofs for images
+      const ShipmentProof = require('../models/Shipment_Proof');
+      const shipmentIds = recentShipments.map((s) => s._id);
+      const proofs = await ShipmentProof.find({ shipment: { $in: shipmentIds } })
+        .select('shipment imagesBeforeDelivery imagesAfterDelivery')
+        .lean();
+
+      // Map proofs to shipments
+      const proofsMap = {};
+      proofs.forEach((proof) => {
+        proofsMap[proof.shipment.toString()] = proof;
+      });
+
+      // Enrich shipments with proof images and formatted data
+      const enrichedShipments = recentShipments.map((shipment) => {
+        const proof = proofsMap[shipment._id.toString()];
+        const subOrder = shipment.subOrder;
+        const masterOrder = subOrder?.masterOrder;
+
+        return {
+          _id: shipment._id,
+          type: shipment.type,
+          status: shipment.status,
+          fee: shipment.fee,
+          scheduledAt: shipment.scheduledAt,
+          createdAt: shipment.createdAt,
+          tracking: shipment.tracking,
+          // Order info
+          masterOrderNumber: masterOrder?.masterOrderNumber || 'N/A',
+          subOrderNumber: subOrder?.subOrderNumber || 'N/A',
+          // Customer info (renter for DELIVERY, owner for RETURN)
+          customer:
+            shipment.type === 'DELIVERY'
+              ? {
+                  name: masterOrder?.renter?.profile
+                    ? `${masterOrder.renter.profile.firstName} ${masterOrder.renter.profile.lastName}`
+                    : 'N/A',
+                  email: masterOrder?.renter?.email || '',
+                  phone: masterOrder?.renter?.phone || ''
+                }
+              : {
+                  name: subOrder?.owner?.profile
+                    ? `${subOrder.owner.profile.firstName} ${subOrder.owner.profile.lastName}`
+                    : 'N/A',
+                  email: subOrder?.owner?.email || '',
+                  phone: subOrder?.owner?.phone || ''
+                },
+          // Products info
+          products:
+            subOrder?.products?.length > 0
+              ? subOrder.products.map((p) => ({
+                  name: p.product?.title || 'N/A',
+                  image: p.product?.images?.[0]?.url || null,
+                  quantity: p.quantity || 1
+                }))
+              : [],
+          // Proof images
+          proofImages: proof
+            ? {
+                before: proof.imagesBeforeDelivery || [],
+                after: proof.imagesAfterDelivery || []
+              }
+            : null,
+          // Formatted dates
+          formattedDates: {
+            scheduled: shipment.scheduledAt
+              ? new Date(shipment.scheduledAt).toLocaleString('vi-VN')
+              : null,
+            pickedUp: shipment.tracking?.pickedUpAt
+              ? new Date(shipment.tracking.pickedUpAt).toLocaleString('vi-VN')
+              : null,
+            delivered: shipment.tracking?.deliveredAt
+              ? new Date(shipment.tracking.deliveredAt).toLocaleString('vi-VN')
+              : null
+          }
+        };
+      });
+
+      // Get recent reviews
+      const recentReviews = await Review.find({ targetType: 'SHIPPER', targetId: shipper._id })
+        .populate('userId', 'profile.fullName profile.firstName')
+        .sort({ createdAt: -1 })
+        .limit(10)
+        .lean();
+
+      return {
+        ...shipper,
+        totalShipments: stats.totalShipments,
+        completedShipments: stats.completedShipments,
+        cancelledShipments: stats.cancelledShipments,
+        failedShipments: stats.failedShipments,
+        revenue: stats.totalFee,
+        averageRating: rating.avgRating ? parseFloat(rating.avgRating.toFixed(1)) : 0,
+        totalReviews: rating.totalReviews,
+        recentShipments: enrichedShipments,
+        recentReviews
+      };
+    } catch (error) {
+      console.error('Error getting shipper details:', error);
+      throw new Error(`Lỗi khi lấy thông tin shipper: ${error.message}`);
     }
   }
 }

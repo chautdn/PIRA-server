@@ -1,5 +1,5 @@
 const mongoose = require('mongoose');
-const ExtensionRequest = require('../models/ExtensionRequest');
+const ExtensionRequest = require('../models/Extension'); // Extension model
 const SubOrder = require('../models/SubOrder');
 const MasterOrder = require('../models/MasterOrder');
 const Product = require('../models/Product');
@@ -223,23 +223,27 @@ class ExtensionService {
         );
       }
 
-      // Deduct from wallet - ensure result is a number
+      // Chuyển tiền từ renter vào system wallet ngay lập tức
+      const SystemWalletService = require('./systemWallet.service');
       const transactionId = `EXT_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`;
-      wallet.balance.available = Math.round(wallet.balance.available - amount);
+      
+      await SystemWalletService.transferFromUser(
+        renterId,
+        renterId,
+        amount,
+        'Thanh toán tiền gia hạn đơn thuê',
+        {
+          isOrderPayment: true,
+          metadata: {
+            type: 'EXTENSION_PAYMENT',
+            action: 'EXTENSION_REQUEST_PAYMENT',
+            transactionId: transactionId,
+            paymentType: 'extension'
+          }
+        }
+      );
 
-      // Add transaction log
-      if (!wallet.transactions) {
-        wallet.transactions = [];
-      }
-      wallet.transactions.push({
-        type: 'PAYMENT',
-        amount: Math.round(amount),
-        description: 'Extension request payment',
-        timestamp: new Date(),
-        status: 'COMPLETED'
-      });
-
-      await wallet.save();
+      console.log(`✅ Đã trừ ${amount.toLocaleString('vi-VN')}đ từ ví renter ${renterId} cho yêu cầu gia hạn`);
 
       return {
         status: 'SUCCESS',
@@ -450,6 +454,45 @@ class ExtensionService {
       subOrder.rentalPeriod.endDate = extensionRequest.newEndDate;
       await subOrder.save();
 
+      // Transfer 90% extension fee to owner (frozen until order completed)
+      const SystemWalletService = require('./systemWallet.service');
+      const ownerCompensation = Math.floor(extensionRequest.totalCost * 0.9); // 90% of extension fee
+      
+      if (ownerCompensation > 0) {
+        console.log(`💰 Chuyển 90% tiền gia hạn cho owner: ${ownerCompensation.toLocaleString()} VND`);
+        
+        try {
+          const adminId = process.env.SYSTEM_ADMIN_ID || 'SYSTEM_AUTO_TRANSFER';
+          const transferResult = await SystemWalletService.transferToUserFrozen(
+            adminId,
+            ownerId,
+            ownerCompensation,
+            `Phí gia hạn (90%) - ${extensionRequest.extensionDays} ngày`,
+            365 * 24 * 60 * 60 * 1000 // Frozen for 1 year, will unlock when order completed
+          );
+
+          // Update transaction metadata with subOrderId for unlock tracking
+          if (transferResult?.transactions?.user?._id) {
+            await Transaction.findByIdAndUpdate(
+              transferResult.transactions.user._id,
+              {
+                $set: {
+                  'metadata.subOrderId': extensionRequest.subOrder,
+                  'metadata.action': 'RECEIVED_EXTENSION_FEE',
+                  'metadata.extensionId': extensionRequest._id,
+                  'metadata.extensionDays': extensionRequest.extensionDays
+                }
+              }
+            );
+          }
+
+          console.log(`✅ Đã chuyển ${ownerCompensation.toLocaleString()} VND vào frozen wallet owner ${ownerId}`);
+        } catch (transferErr) {
+          console.error('❌ Lỗi chuyển tiền cho owner:', transferErr.message);
+          // Don't throw error, extension still approved
+        }
+      }
+
       return await ExtensionRequest.findById(requestId).populate([
         { path: 'renter', select: 'profile email' }
       ]);
@@ -485,9 +528,12 @@ class ExtensionService {
       };
       extensionRequest.rejectedAt = new Date();
 
-      // Refund payment
+      // Refund payment with reason
       if (extensionRequest.paymentStatus === 'PAID') {
-        await this.refundExtensionPayment(extensionRequest);
+        await this.refundExtensionPayment(
+          extensionRequest,
+          `Chủ sở hữu từ chối yêu cầu gia hạn - ${rejectionReason || 'Không có lý do'}`
+        );
       }
 
       await extensionRequest.save();
@@ -499,20 +545,29 @@ class ExtensionService {
   }
 
   /**
-   * Refund payment khi từ chối
+   * Refund payment khi từ chối hoặc hết hạn
    */
-  async refundExtensionPayment(extensionRequest) {
+  async refundExtensionPayment(extensionRequest, reason = 'Hoàn tiền yêu cầu gia hạn') {
     try {
       const { renter, paymentMethod, totalCost } = extensionRequest;
 
       if (paymentMethod === 'WALLET') {
-        const user = await User.findById(renter).populate('wallet');
-        if (user && user.wallet) {
-          user.wallet.balance.available += totalCost;
-          await user.wallet.save();
-        }
+        // Hoàn tiền gia hạn từ system wallet về ví renter
+        const SystemWalletService = require('./systemWallet.service');
+        const adminId = process.env.SYSTEM_ADMIN_ID || 'SYSTEM_AUTO_TRANSFER';
+        
+        await SystemWalletService.transferToUser(
+          adminId,
+          renter,
+          totalCost,
+          reason
+        );
+        
+        console.log(`✅ Hoàn ${totalCost.toLocaleString('vi-VN')}đ tiền gia hạn về ví renter ${renter} - Lý do: ${reason}`);
       }
+      // For other payment methods (PAYOS, COD), handle separately if needed
     } catch (error) {
+      console.error('❌ Error refunding extension payment:', error.message);
       // Continue even if refund fails
     }
   }
@@ -536,14 +591,94 @@ class ExtensionService {
       extensionRequest.status = 'CANCELLED';
       await extensionRequest.save();
 
-      // Refund payment
+      // Refund payment with reason
       if (extensionRequest.paymentStatus === 'PAID') {
-        await this.refundExtensionPayment(extensionRequest);
+        await this.refundExtensionPayment(
+          extensionRequest,
+          'Người thuê hủy yêu cầu gia hạn'
+        );
       }
 
       return extensionRequest;
     } catch (error) {
       throw new Error('Không thể hủy yêu cầu gia hạn: ' + error.message);
+    }
+  }
+
+  /**
+   * Auto-reject expired extension requests (owner didn't respond by old endDate)
+   */
+  async autoRejectExpiredExtensions() {
+    try {
+      const now = new Date();
+      
+      // Find all PENDING extension requests where currentEndDate has passed
+      const expiredRequests = await ExtensionRequest.find({
+        status: 'PENDING',
+        paymentStatus: 'PAID',
+        currentEndDate: { $lt: now }
+      }).populate('renter owner');
+
+      if (!expiredRequests || expiredRequests.length === 0) {
+        return {
+          success: true,
+          processedCount: 0,
+          message: 'No expired extension requests to process'
+        };
+      }
+
+      console.log(`🔄 Processing ${expiredRequests.length} expired extension requests...`);
+
+      const results = [];
+      for (const request of expiredRequests) {
+        try {
+          // Update status to EXPIRED
+          request.status = 'EXPIRED';
+          request.ownerResponse = {
+            status: 'EXPIRED',
+            respondedAt: new Date(),
+            rejectionReason: 'Hết thời gian phản hồi - tự động từ chối',
+            notes: 'Chủ sở hữu không xác nhận hoặc từ chối trước ngày kết thúc cũ'
+          };
+          request.expiredAt = new Date();
+
+          // Refund payment
+          await this.refundExtensionPayment(
+            request,
+            'Chủ sở hữu không phản hồi trước ngày kết thúc - hoàn tiền tự động'
+          );
+
+          await request.save();
+          
+          results.push({
+            requestId: request._id,
+            renter: request.renter?.email || 'N/A',
+            refundAmount: request.totalCost,
+            status: 'SUCCESS'
+          });
+
+          console.log(`✅ Auto-rejected and refunded request ${request._id} - ${request.totalCost}đ to ${request.renter?.email}`);
+        } catch (error) {
+          console.error(`❌ Error processing request ${request._id}:`, error.message);
+          results.push({
+            requestId: request._id,
+            status: 'FAILED',
+            error: error.message
+          });
+        }
+      }
+
+      return {
+        success: true,
+        processedCount: expiredRequests.length,
+        results
+      };
+    } catch (error) {
+      console.error('❌ Error in autoRejectExpiredExtensions:', error);
+      return {
+        success: false,
+        error: error.message
+      };
     }
   }
 

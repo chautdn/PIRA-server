@@ -69,43 +69,39 @@ exports.createReview = async (req, res) => {
 				return res.status(401).json({ message: 'Bạn phải đăng nhập để đánh giá sản phẩm' });
 			}
 			
-			// 1. Find a SubOrder that contains this product and belongs to current user
-			const subOrderWithProduct = await SubOrder.findOne({
-				'products.product': product
-			}).populate('masterOrder');
+			// 1. Find completed MasterOrders for this user
+			const completedMasterOrders = await MasterOrder.find({
+				renter: userId,
+				status: 'COMPLETED'
+			});
 			
-			console.log('🔍 SubOrder with product:', subOrderWithProduct ? 'Found' : 'Not found');
+			console.log('🔍 Found completed MasterOrders for user:', completedMasterOrders.length);
 			
-			if (!subOrderWithProduct) {
-				console.log('❌ User has not rented this product');
-				return res.status(400).json({ message: 'Bạn chưa thuê sản phẩm này' });
+			if (completedMasterOrders.length === 0) {
+				console.log('❌ User has no completed orders');
+				return res.status(400).json({ message: 'Bạn phải hoàn thành một đơn hàng trước khi đánh giá' });
 			}
 			
-			// 2. Verify the MasterOrder belongs to current user and is COMPLETED
-			const masterOrder = subOrderWithProduct.masterOrder;
-			if (!masterOrder) {
-				console.log('❌ MasterOrder not found');
-				return res.status(404).json({ message: 'Không tìm thấy đơn hàng' });
+			// 2. Check if any of these MasterOrders contains a SubOrder with this product
+			let foundProductInCompletedOrder = false;
+			for (const masterOrder of completedMasterOrders) {
+				const subOrders = await SubOrder.find({
+					_id: { $in: masterOrder.subOrders },
+					'products.product': product
+				});
+				
+				if (subOrders.length > 0) {
+					foundProductInCompletedOrder = true;
+					console.log('✅ Found product in completed order');
+					break;
+				}
 			}
 			
-			console.log('🔍 MasterOrder status:', masterOrder.status, 'Renter:', masterOrder.renter, 'UserId:', userId);
-			console.log('🔍 Renter toString:', masterOrder.renter?.toString());
-			console.log('🔍 UserId toString:', userId?.toString());
-			console.log('🔍 Are they equal?', masterOrder.renter?.toString() === userId?.toString());
-			
-			if (masterOrder.renter.toString() !== userId.toString()) {
-				console.log('❌ User not the renter of this order');
-				return res.status(403).json({ message: 'Bạn không có quyền đánh giá sản phẩm này' });
+			if (!foundProductInCompletedOrder) {
+				console.log('❌ User has not completed an order with this product');
+				return res.status(400).json({ message: 'Bạn phải hoàn thành đơn hàng với sản phẩm này trước khi đánh giá' });
 			}
-			
-			console.log('✅ User is the renter, checking status...');
-			console.log('   Order status:', masterOrder.status, 'Type:', typeof masterOrder.status);
-			
-			if (masterOrder.status !== 'COMPLETED') {
-				console.log('❌ Order not COMPLETED:', masterOrder.status);
-				return res.status(400).json({ message: 'Chỉ được rating khi đơn hoàn thành' });
-			}
-			console.log('✅ Order is COMPLETED');
+			console.log('✅ User has completed order with this product');
 			
 			// 3. Check for existing review from same reviewer for same product
 			const existingReview = await Review.findOne({ 
@@ -255,6 +251,52 @@ exports.createReview = async (req, res) => {
 			await Product.findByIdAndUpdate(product, { $inc: { 'metrics.reviewCount': 1 } });
 		} catch (e) {
 			// ignore
+		}
+
+		// Create notification for product owner
+		try {
+			const Notification = require('../models/Notification');
+			const Product = require('../models/Product');
+			
+			if (safeProduct) {
+				const productDoc = await Product.findById(safeProduct).select('name owner');
+				
+				if (productDoc && productDoc.owner) {
+					const reviewerName = req.user?.profile?.firstName || req.user?.email || 'Khách hàng';
+					const isProductReview = normalizedType === 'PRODUCT_REVIEW';
+					
+					let notificationTitle, notificationMessage;
+					if (isProductReview) {
+						notificationTitle = `Đánh giá mới cho sản phẩm "${productDoc.name}"`;
+						notificationMessage = `${reviewerName} đã đánh giá sản phẩm của bạn với ${rating} sao`;
+					} else {
+						notificationTitle = `Đánh giá mới từ khách hàng`;
+						notificationMessage = `${reviewerName} đã đánh giá bạn với ${rating} sao`;
+					}
+					
+					await Notification.create({
+						recipient: productDoc.owner,
+						type: 'REVIEW',
+						category: 'INFO',
+						title: notificationTitle,
+						message: notificationMessage,
+						relatedProduct: safeProduct,
+						actions: [
+							{
+								label: 'Xem đánh giá',
+								url: `/product/${safeProduct}?activeTab=reviews`,
+								action: 'VIEW_REVIEW'
+							}
+						],
+						status: 'SENT'
+					});
+					
+					console.log('✅ Created notification for product owner');
+				}
+			}
+		} catch (notifErr) {
+			console.error('Error creating notification:', notifErr);
+			// Don't fail the review creation if notification fails
 		}
 
 		return res.json({ data: review });

@@ -195,7 +195,7 @@ const productPromotionController = {
               'Standard priority placement',
               'Basic badge',
               'Subtle highlight',
-              'Better than free'
+              'Affordable option'
             ]
           },
           {
@@ -207,7 +207,7 @@ const productPromotionController = {
               'Entry priority placement',
               'Minimal badge',
               'Light accent',
-              'Affordable option'
+              'Better than free'
             ]
           }
         ],

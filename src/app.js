@@ -80,6 +80,11 @@ const { startDisputeEscalationCron } = require('./scripts/disputeEscalationCron'
 startDisputeEscalationCron();
 console.log('✅ Dispute escalation cron job initialized');
 
+// Initialize extension auto-refund cron job (every 10 minutes)
+const { startExtensionAutoRefundCron } = require('./scripts/extensionAutoRefundCron');
+startExtensionAutoRefundCron();
+console.log('✅ Extension auto-refund cron job initialized');
+
 // Initialize auto-confirm delivery cron job (every hour)
 const { startAutoConfirmDeliveryCron } = require('./scripts/autoConfirmDeliveryCron');
 startAutoConfirmDeliveryCron();

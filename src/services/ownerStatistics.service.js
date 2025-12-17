@@ -13,44 +13,52 @@ const ownerStatisticsService = {
     try {
       // Thống kê sản phẩm
       const totalProducts = await Product.countDocuments({ owner: ownerId });
-      const activeProducts = await Product.countDocuments({ 
-        owner: ownerId, 
-        status: 'AVAILABLE' 
+      const activeProducts = await Product.countDocuments({
+        owner: ownerId,
+        status: 'AVAILABLE'
       });
-      const rentedProducts = await Product.countDocuments({ 
-        owner: ownerId, 
-        status: 'RENTED' 
+      const rentedProducts = await Product.countDocuments({
+        owner: ownerId,
+        status: 'RENTED'
       });
-      const unavailableProducts = await Product.countDocuments({ 
-        owner: ownerId, 
-        status: 'UNAVAILABLE' 
+      const unavailableProducts = await Product.countDocuments({
+        owner: ownerId,
+        status: 'UNAVAILABLE'
       });
 
       // Thống kê đơn hàng
       const totalOrders = await SubOrder.countDocuments({ owner: ownerId });
-      const pendingOrders = await SubOrder.countDocuments({ 
-        owner: ownerId, 
-        status: 'PENDING_CONFIRMATION' 
+      const pendingOrders = await SubOrder.countDocuments({
+        owner: ownerId,
+        status: 'PENDING_CONFIRMATION'
       });
-      const confirmedOrders = await SubOrder.countDocuments({ 
-        owner: ownerId, 
+      const confirmedOrders = await SubOrder.countDocuments({
+        owner: ownerId,
         status: { $in: ['OWNER_CONFIRMED', 'PARTIALLY_CONFIRMED'] }
       });
-      const completedOrders = await SubOrder.countDocuments({ 
-        owner: ownerId, 
-        status: 'COMPLETED' 
+      const completedOrders = await SubOrder.countDocuments({
+        owner: ownerId,
+        status: 'COMPLETED'
       });
-      const cancelledOrders = await SubOrder.countDocuments({ 
-        owner: ownerId, 
-        status: 'CANCELLED' 
+      const cancelledOrders = await SubOrder.countDocuments({
+        owner: ownerId,
+        status: 'CANCELLED'
       });
 
-      // Thống kê doanh thu
+      // Thống kê doanh thu và chi phí
       const revenueStats = await SubOrder.aggregate([
         {
-          $match: { 
+          $match: {
             owner: new mongoose.Types.ObjectId(ownerId),
-            status: { $in: ['OWNER_CONFIRMED', 'PARTIALLY_CONFIRMED', 'READY_FOR_CONTRACT', 'CONTRACT_SIGNED', 'COMPLETED'] }
+            status: {
+              $in: [
+                'OWNER_CONFIRMED',
+                'PARTIALLY_CONFIRMED',
+                'READY_FOR_CONTRACT',
+                'CONTRACT_SIGNED',
+                'COMPLETED'
+              ]
+            }
           }
         },
         {
@@ -64,12 +72,45 @@ const ownerStatisticsService = {
         }
       ]);
 
-      const revenue = revenueStats.length > 0 ? revenueStats[0] : {
-        totalRevenue: 0,
-        totalDeposit: 0,
-        totalShippingFee: 0,
-        totalAmount: 0
-      };
+      const revenue =
+        revenueStats.length > 0
+          ? revenueStats[0]
+          : {
+              totalRevenue: 0,
+              totalDeposit: 0,
+              totalShippingFee: 0,
+              totalAmount: 0
+            };
+
+      // Lấy phí quảng cáo của owner
+      const ProductPromotion = require('../models/ProductPromotion');
+      const promotionFees = await ProductPromotion.aggregate([
+        {
+          $match: {
+            user: new mongoose.Types.ObjectId(ownerId),
+            paymentStatus: 'paid'
+          }
+        },
+        {
+          $group: {
+            _id: null,
+            total: { $sum: '$totalAmount' }
+          }
+        }
+      ]);
+
+      const totalPromotionFees = promotionFees.length > 0 ? promotionFees[0].total : 0;
+
+      // Công thức:
+      // - Doanh thu = 100% giá trị đơn thuê
+      // - Tiền nhận về = 90% (sau khi trừ 10% phí nền tảng)
+      // - Chi phí = 10% phí nền tảng + Phí quảng cáo
+      // - Lợi nhuận = Tiền nhận về (90%) - Phí quảng cáo
+      const totalRevenue = revenue.totalRevenue || 0; // 100% doanh thu
+      const receivedAmount = totalRevenue * 0.9; // 90% tiền nhận về
+      const platformFee = totalRevenue * 0.1; // 10% phí nền tảng
+      const totalCosts = platformFee + totalPromotionFees; // Tổng chi phí
+      const profit = receivedAmount - totalPromotionFees; // Lợi nhuận
 
       return {
         products: {
@@ -86,11 +127,22 @@ const ownerStatisticsService = {
           cancelled: cancelledOrders
         },
         revenue: {
-          totalRevenue: revenue.totalRevenue || 0,
+          totalRevenue: totalRevenue, // 100% doanh thu
+          receivedAmount: receivedAmount, // 90% tiền nhận về
+          platformFee: platformFee, // 10% phí nền tảng
+          promotionFees: totalPromotionFees, // Phí quảng cáo
           totalDeposit: revenue.totalDeposit || 0,
           totalShippingFee: revenue.totalShippingFee || 0,
-          totalAmount: revenue.totalAmount || 0,
-          netRevenue: (revenue.totalRevenue || 0) + (revenue.totalDeposit || 0)
+          totalAmount: revenue.totalAmount || 0
+        },
+        profit: {
+          revenue: totalRevenue, // Doanh thu (100%)
+          receivedAmount: receivedAmount, // Tiền nhận về (90%)
+          costs: totalCosts, // Chi phí (10% + quảng cáo)
+          platformFee: platformFee, // 10% phí nền tảng
+          promotionFees: totalPromotionFees, // Phí quảng cáo
+          profit: profit, // Lợi nhuận
+          profitMargin: totalRevenue > 0 ? ((profit / totalRevenue) * 100).toFixed(2) : 0
         }
       };
     } catch (error) {
@@ -106,19 +158,28 @@ const ownerStatisticsService = {
    */
   getProductStatistics: async (ownerId, filters = {}) => {
     try {
-      const { status, category, startDate, endDate, page = 1, limit = 10, sort = 'createdAt', order = 'desc' } = filters;
+      const {
+        status,
+        category,
+        startDate,
+        endDate,
+        page = 1,
+        limit = 10,
+        sort = 'createdAt',
+        order = 'desc'
+      } = filters;
 
       // Build query
       const query = { owner: ownerId };
-      
+
       if (status) {
         query.status = status;
       }
-      
+
       if (category) {
         query.category = category;
       }
-      
+
       if (startDate || endDate) {
         query.createdAt = {};
         if (startDate) query.createdAt.$gte = new Date(startDate);
@@ -144,7 +205,15 @@ const ownerStatisticsService = {
           // Đếm số lần được thuê
           const rentalCount = await SubOrder.countDocuments({
             'products.product': product._id,
-            status: { $in: ['OWNER_CONFIRMED', 'PARTIALLY_CONFIRMED', 'READY_FOR_CONTRACT', 'CONTRACT_SIGNED', 'COMPLETED'] }
+            status: {
+              $in: [
+                'OWNER_CONFIRMED',
+                'PARTIALLY_CONFIRMED',
+                'READY_FOR_CONTRACT',
+                'CONTRACT_SIGNED',
+                'COMPLETED'
+              ]
+            }
           });
 
           // Tính tổng doanh thu từ sản phẩm này
@@ -152,7 +221,15 @@ const ownerStatisticsService = {
             {
               $match: {
                 'products.product': new mongoose.Types.ObjectId(product._id),
-                status: { $in: ['OWNER_CONFIRMED', 'PARTIALLY_CONFIRMED', 'READY_FOR_CONTRACT', 'CONTRACT_SIGNED', 'COMPLETED'] }
+                status: {
+                  $in: [
+                    'OWNER_CONFIRMED',
+                    'PARTIALLY_CONFIRMED',
+                    'READY_FOR_CONTRACT',
+                    'CONTRACT_SIGNED',
+                    'COMPLETED'
+                  ]
+                }
               }
             },
             { $unwind: '$products' },
@@ -164,10 +241,10 @@ const ownerStatisticsService = {
             {
               $group: {
                 _id: null,
-                totalRevenue: { 
-                  $sum: { 
+                totalRevenue: {
+                  $sum: {
                     $add: ['$products.totalRental', '$products.totalDeposit']
-                  } 
+                  }
                 }
               }
             }
@@ -207,15 +284,23 @@ const ownerStatisticsService = {
    */
   getOrderStatistics: async (ownerId, filters = {}) => {
     try {
-      const { status, startDate, endDate, page = 1, limit = 10, sort = 'createdAt', order = 'desc' } = filters;
+      const {
+        status,
+        startDate,
+        endDate,
+        page = 1,
+        limit = 10,
+        sort = 'createdAt',
+        order = 'desc'
+      } = filters;
 
       // Build query
       const query = { owner: ownerId };
-      
+
       if (status) {
         query.status = status;
       }
-      
+
       if (startDate || endDate) {
         query.createdAt = {};
         if (startDate) query.createdAt.$gte = new Date(startDate);
@@ -268,11 +353,19 @@ const ownerStatisticsService = {
       const { startDate, endDate, groupBy = 'month' } = filters;
 
       // Build match query
-      const matchQuery = { 
+      const matchQuery = {
         owner: new mongoose.Types.ObjectId(ownerId),
-        status: { $in: ['OWNER_CONFIRMED', 'PARTIALLY_CONFIRMED', 'READY_FOR_CONTRACT', 'CONTRACT_SIGNED', 'COMPLETED'] }
+        status: {
+          $in: [
+            'OWNER_CONFIRMED',
+            'PARTIALLY_CONFIRMED',
+            'READY_FOR_CONTRACT',
+            'CONTRACT_SIGNED',
+            'COMPLETED'
+          ]
+        }
       };
-      
+
       if (startDate || endDate) {
         matchQuery.createdAt = {};
         if (startDate) matchQuery.createdAt.$gte = new Date(startDate);
@@ -343,25 +436,155 @@ const ownerStatisticsService = {
         }
       ]);
 
-      const totals = totalStats.length > 0 ? totalStats[0] : {
-        totalRevenue: 0,
-        totalDeposit: 0,
-        totalShippingFee: 0,
-        totalAmount: 0,
-        totalOrders: 0
+      const totals =
+        totalStats.length > 0
+          ? totalStats[0]
+          : {
+              totalRevenue: 0,
+              totalDeposit: 0,
+              totalShippingFee: 0,
+              totalAmount: 0,
+              totalOrders: 0
+            };
+
+      // Lấy phí quảng cáo trong khoảng thời gian
+      const ProductPromotion = require('../models/ProductPromotion');
+      const promotionQuery = {
+        user: new mongoose.Types.ObjectId(ownerId),
+        paymentStatus: 'paid'
       };
+      if (startDate || endDate) {
+        promotionQuery.createdAt = {};
+        if (startDate) promotionQuery.createdAt.$gte = new Date(startDate);
+        if (endDate) promotionQuery.createdAt.$lte = new Date(endDate);
+      }
+
+      const promotionFees = await ProductPromotion.aggregate([
+        { $match: promotionQuery },
+        {
+          $group: {
+            _id: null,
+            total: { $sum: '$totalAmount' }
+          }
+        }
+      ]);
+
+      const totalPromotionFees = promotionFees.length > 0 ? promotionFees[0].total : 0;
+
+      // Công thức tính toán
+      const totalRevenue = totals.totalRevenue || 0; // 100% doanh thu
+      const receivedAmount = totalRevenue * 0.9; // 90% tiền nhận về
+      const platformFee = totalRevenue * 0.1; // 10% phí nền tảng
+      const totalCosts = platformFee + totalPromotionFees; // Tổng chi phí
+      const profit = receivedAmount - totalPromotionFees; // Lợi nhuận
+
+      // Calculate growth rate if comparing periods
+      let growthRate = 0;
+      if (startDate && endDate) {
+        const dateRange = new Date(endDate) - new Date(startDate);
+        const previousStart = new Date(new Date(startDate).getTime() - dateRange);
+        const previousEnd = new Date(startDate);
+
+        const previousStats = await SubOrder.aggregate([
+          {
+            $match: {
+              owner: new mongoose.Types.ObjectId(ownerId),
+              status: {
+                $in: [
+                  'OWNER_CONFIRMED',
+                  'PARTIALLY_CONFIRMED',
+                  'READY_FOR_CONTRACT',
+                  'CONTRACT_SIGNED',
+                  'COMPLETED'
+                ]
+              },
+              createdAt: { $gte: previousStart, $lte: previousEnd }
+            }
+          },
+          {
+            $group: {
+              _id: null,
+              totalRevenue: { $sum: '$pricing.subtotalRental' }
+            }
+          }
+        ]);
+
+        const previousRevenue = previousStats.length > 0 ? previousStats[0].totalRevenue : 0;
+        if (previousRevenue > 0) {
+          growthRate = (((totalRevenue - previousRevenue) / previousRevenue) * 100).toFixed(2);
+        }
+      }
+
+      // Lấy chi tiết phí quảng cáo theo thời gian
+
+      const promotionByPeriod = await ProductPromotion.aggregate([
+        { $match: promotionQuery },
+        {
+          $group: {
+            _id: {
+              $dateToString: { format: dateFormat, date: '$createdAt' }
+            },
+            promotionFees: { $sum: '$totalAmount' }
+          }
+        },
+        { $sort: { _id: 1 } }
+      ]);
+
+      const promotionMap = {};
+      promotionByPeriod.forEach((item) => {
+        promotionMap[item._id] = item.promotionFees;
+      });
 
       return {
         summary: {
-          totalRevenue: totals.totalRevenue || 0,
+          totalRevenue: totalRevenue, // 100% doanh thu
+          receivedAmount: receivedAmount, // 90% tiền nhận về
+          platformFee: platformFee, // 10% phí nền tảng
+          promotionFees: totalPromotionFees, // Phí quảng cáo
           totalDeposit: totals.totalDeposit || 0,
           totalShippingFee: totals.totalShippingFee || 0,
           totalAmount: totals.totalAmount || 0,
-          netRevenue: (totals.totalRevenue || 0) + (totals.totalDeposit || 0),
-          totalOrders: totals.totalOrders || 0,
-          averageOrderValue: totals.totalOrders > 0 ? (totals.totalAmount || 0) / totals.totalOrders : 0
+          orderCount: totals.totalOrders || 0,
+          averageOrderValue:
+            totals.totalOrders > 0 ? (totals.totalAmount || 0) / totals.totalOrders : 0,
+          growthRate: parseFloat(growthRate)
         },
-        revenueByPeriod,
+        profit: {
+          revenue: totalRevenue, // Doanh thu (100%)
+          receivedAmount: receivedAmount, // Tiền nhận về (90%)
+          costs: totalCosts, // Chi phí tổng
+          platformFee: platformFee, // 10% phí nền tảng
+          promotionFees: totalPromotionFees, // Phí quảng cáo
+          profit: profit, // Lợi nhuận
+          profitMargin: totalRevenue > 0 ? ((profit / totalRevenue) * 100).toFixed(2) : 0
+        },
+        breakdown: {
+          bySource: [
+            { name: 'Doanh thu (100%)', value: totalRevenue },
+            { name: 'Tiền nhận về (90%)', value: receivedAmount },
+            { name: 'Phí nền tảng (10%)', value: platformFee },
+            { name: 'Phí quảng cáo', value: totalPromotionFees }
+          ]
+        },
+        timeSeries: revenueByPeriod.map((item) => {
+          const itemRevenue = item.totalRevenue || 0;
+          const itemReceived = itemRevenue * 0.9;
+          const itemPlatformFee = itemRevenue * 0.1;
+          const itemPromotionFees = promotionMap[item.period] || 0;
+          const itemProfit = itemReceived - itemPromotionFees;
+
+          return {
+            date: item.period,
+            revenue: itemRevenue, // 100% doanh thu
+            receivedAmount: itemReceived, // 90% tiền nhận về
+            platformFee: itemPlatformFee, // 10% phí nền tảng
+            promotionFees: itemPromotionFees, // Phí quảng cáo
+            deposit: item.totalDeposit,
+            orderCount: item.orderCount,
+            profit: itemProfit, // Lợi nhuận
+            costs: itemPlatformFee + itemPromotionFees // Tổng chi phí
+          };
+        }),
         groupBy
       };
     } catch (error) {
@@ -381,17 +604,25 @@ const ownerStatisticsService = {
         {
           $match: {
             owner: new mongoose.Types.ObjectId(ownerId),
-            status: { $in: ['OWNER_CONFIRMED', 'PARTIALLY_CONFIRMED', 'READY_FOR_CONTRACT', 'CONTRACT_SIGNED', 'COMPLETED'] }
+            status: {
+              $in: [
+                'OWNER_CONFIRMED',
+                'PARTIALLY_CONFIRMED',
+                'READY_FOR_CONTRACT',
+                'CONTRACT_SIGNED',
+                'COMPLETED'
+              ]
+            }
           }
         },
         { $unwind: '$products' },
         {
           $group: {
             _id: '$products.product',
-            totalRevenue: { 
-              $sum: { 
+            totalRevenue: {
+              $sum: {
                 $add: ['$products.totalRental', '$products.totalDeposit']
-              } 
+              }
             },
             rentalCount: { $sum: 1 },
             totalQuantityRented: { $sum: '$products.quantity' }
@@ -439,13 +670,22 @@ const ownerStatisticsService = {
         {
           $match: {
             owner: new mongoose.Types.ObjectId(ownerId),
-            status: { $in: ['OWNER_CONFIRMED', 'PARTIALLY_CONFIRMED', 'READY_FOR_CONTRACT', 'CONTRACT_SIGNED'] }
+            status: {
+              $in: [
+                'OWNER_CONFIRMED',
+                'PARTIALLY_CONFIRMED',
+                'READY_FOR_CONTRACT',
+                'CONTRACT_SIGNED'
+              ]
+            }
           }
         },
         { $unwind: '$products' },
         {
           $match: {
-            'products.productStatus': { $in: ['CONFIRMED', 'SHIPPER_CONFIRMED', 'IN_TRANSIT', 'DELIVERED', 'ACTIVE'] }
+            'products.productStatus': {
+              $in: ['CONFIRMED', 'SHIPPER_CONFIRMED', 'IN_TRANSIT', 'DELIVERED', 'ACTIVE']
+            }
           }
         },
         {
