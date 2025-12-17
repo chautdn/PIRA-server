@@ -22,6 +22,12 @@ router.get('/filter-options', productController.getFilterOptions);
 // GET /api/products/featured - Get featured products for homepage
 router.get('/featured', productController.getFeaturedProducts);
 
+// GET /api/products/cache-status - Get promoted product cache status (debugging)
+router.get('/cache-status', productController.getCacheStatus);
+
+// POST /api/products/cache-clear - Clear promoted product cache (manual refresh)
+router.post('/cache-clear', productController.clearCache);
+
 // GET /api/products/:id - Get product by ID
 router.get('/:id', productController.getProductById);
 

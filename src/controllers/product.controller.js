@@ -1,5 +1,6 @@
 const productService = require('../services/product.service');
 const responseUtils = require('../utils/response');
+const promotedProductCache = require('../utils/promotedProductCache');
 
 const productController = {
   /**
@@ -92,6 +93,26 @@ const productController = {
       responseUtils.success(res, featuredProducts, 'Featured products retrieved successfully');
     } catch (error) {
       // Get featured products error
+      responseUtils.error(res, error.message, 500);
+    }
+  },
+
+  // Get promoted product cache status (for debugging)
+  getCacheStatus: async (req, res) => {
+    try {
+      const status = promotedProductCache.getStatus();
+      responseUtils.success(res, status, 'Cache status retrieved successfully');
+    } catch (error) {
+      responseUtils.error(res, error.message, 500);
+    }
+  },
+
+  // Clear promoted product cache (admin only - for manual refresh)
+  clearCache: async (req, res) => {
+    try {
+      promotedProductCache.clear();
+      responseUtils.success(res, { cleared: true }, 'Cache cleared successfully');
+    } catch (error) {
       responseUtils.error(res, error.message, 500);
     }
   }

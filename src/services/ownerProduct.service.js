@@ -6,6 +6,7 @@ const slugify = require('slugify');
 const ImageValidationService = require('./ai/imageValidation.service');
 const CloudinaryService = require('./cloudinary/cloudinary.service');
 const ProductQuantityValidationService = require('./productQuantityValidation.service');
+const promotedProductCache = require('../utils/promotedProductCache');
 
 const ownerProductService = {
   /**
@@ -226,6 +227,12 @@ const ownerProductService = {
         console.log(`✅ User ${owner.email} upgraded to OWNER role`);
       }
 
+      // Clear promoted product cache when new product is created
+      if (productData.promotionIntended) {
+        promotedProductCache.clear();
+        console.log('[Cache] Cleared promoted product cache after new product creation');
+      }
+
       return await Product.findById(savedProduct._id)
         .populate('category', 'name slug')
         .populate('subCategory', 'name slug')
@@ -303,6 +310,12 @@ const ownerProductService = {
       Object.assign(product, updateData);
       const updatedProduct = await product.save();
 
+      // Clear promoted product cache if promoted product was updated
+      if (updatedProduct.isPromoted || product.isPromoted) {
+        promotedProductCache.clear();
+        console.log('[Cache] Cleared promoted product cache after product update');
+      }
+
       return await Product.findById(updatedProduct._id)
         .populate('category', 'name slug')
         .populate('subCategory', 'name slug')
@@ -330,6 +343,12 @@ const ownerProductService = {
       product.deletedAt = new Date();
       product.status = 'INACTIVE';
       await product.save();
+
+      // Clear promoted product cache if promoted product was deleted
+      if (product.isPromoted) {
+        promotedProductCache.clear();
+        console.log('[Cache] Cleared promoted product cache after product deletion');
+      }
 
       if (product.images && product.images.length > 0) {
         for (const image of product.images) {
