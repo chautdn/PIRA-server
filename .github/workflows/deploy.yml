@@ -10,6 +10,7 @@ jobs:
   deploy-backend:
     name: Deploy Backend
     runs-on: ubuntu-latest
+    environment: deploy-server-secret 
 
     steps:
       - name: 🚀 Deploy Backend
