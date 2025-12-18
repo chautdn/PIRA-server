@@ -96,6 +96,36 @@ router.post('/:disputeId/negotiation/respond-owner-decision', authenticate, disp
  */
 router.post('/:disputeId/escalate-third-party', authenticate, disputeController.userEscalateToThirdParty);
 
+// ========== RESCHEDULE ROUTES (RENTER_NO_RETURN) ==========
+
+/**
+ * @route   POST /api/disputes/:disputeId/reschedule/propose
+ * @desc    Renter đề xuất reschedule cho RENTER_NO_RETURN dispute
+ * @access  Private (Renter)
+ */
+router.post('/:disputeId/reschedule/propose', authenticate, disputeController.proposeReschedule);
+
+/**
+ * @route   POST /api/disputes/:disputeId/reschedule/respond
+ * @desc    Owner phản hồi reschedule request
+ * @access  Private (Owner)
+ */
+router.post('/:disputeId/reschedule/respond', authenticate, disputeController.respondToReschedule);
+
+/**
+ * @route   POST /api/disputes/:disputeId/finalize-agreement
+ * @desc    Finalize agreement từ negotiation room (2 bên đã thỏa thuận ngày)
+ * @access  Private (Owner hoặc Renter)
+ */
+router.post('/:disputeId/finalize-agreement', authenticate, disputeController.finalizeAgreement);
+
+/**
+ * @route   POST /api/disputes/:disputeId/process-renter-no-return
+ * @desc    Xử lý penalty cho RENTER_NO_RETURN (khi renter accept hoặc admin decide)
+ * @access  Private
+ */
+router.post('/:disputeId/process-renter-no-return', authenticate, disputeController.processRenterNoReturn);
+
 // ========== THIRD PARTY ROUTES ==========
 
 /**

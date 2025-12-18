@@ -151,6 +151,7 @@ const subOrderSchema = new mongoose.Schema(
             'RETURN_FAILED', // Trả hàng thất bại - không liên lạc được renter
             'RETURNED', // Đã trả về cho owner
             'RETURN_FAILED', // Trả hàng thất bại
+            'THEFT_REPORTED', // Đã báo công an do không trả hàng sau 7 ngày
 
             // Final States
             'COMPLETED', // Hoàn thành
