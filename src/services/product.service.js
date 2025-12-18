@@ -2,6 +2,7 @@ const Product = require('../models/Product');
 const Category = require('../models/Category');
 const User = require('../models/User');
 const { generateSearchConditions } = require('../utils/vietnameseSearch');
+const promotedProductCache = require('../utils/promotedProductCache');
 
 const productService = {
   /**
@@ -216,15 +217,10 @@ const productService = {
       if (cond) filter.condition = cond;
     }
 
-    // Build sort options - PRIORITIZE PROMOTED PRODUCTS
+    // Build sort options - APPLY USER-SELECTED SORT FOR NON-PROMOTED PRODUCTS
     const sortOptions = {};
 
-    // Always sort promoted products first (isPromoted: true)
-    // Then by promotionTier (1 = highest, 5 = lowest)
-    sortOptions.isPromoted = -1; // Promoted products first
-    sortOptions.promotionTier = 1; // Lower tier number = higher priority
-
-    // Then apply user-selected sort
+    // Sort for non-promoted products (promoted products will be sorted separately via cache)
     switch (sort) {
       case 'price':
         sortOptions['pricing.dailyRate'] = order === 'asc' ? 1 : -1;
@@ -242,18 +238,36 @@ const productService = {
     }
 
     try {
-      const [products, total] = await Promise.all([
+      // Fetch ALL products without pagination first (for proper promoted randomization)
+      const [allProducts, total] = await Promise.all([
         Product.find(filter)
           .populate('category', 'name slug')
           .populate('subCategory', 'name slug')
           .populate('owner', 'email profile.firstName profile.lastName trustScore')
           .populate('currentPromotion', 'tier startDate endDate isActive')
           .sort(sortOptions)
-          .skip(skip)
-          .limit(limitNum)
           .lean(),
         Product.countDocuments(filter)
       ]);
+
+      // Separate promoted and non-promoted products
+      const promotedProducts = allProducts.filter(p => p.isPromoted && p.promotionTier);
+      const nonPromotedProducts = allProducts.filter(p => !p.isPromoted || !p.promotionTier);
+
+      // Get or generate randomized order for promoted products (cached for 2 minutes)
+      const cachedPromotedOrder = promotedProductCache.getOrGenerateOrder(promotedProducts);
+      
+      // Apply cached order to promoted products
+      const orderedPromotedProducts = promotedProductCache.applyOrder(
+        promotedProducts, 
+        cachedPromotedOrder
+      );
+
+      // Combine: promoted first (in cached random order), then non-promoted (in user-selected sort)
+      const sortedProducts = [...orderedPromotedProducts, ...nonPromotedProducts];
+
+      // Apply pagination AFTER sorting
+      const paginatedProducts = sortedProducts.slice(skip, skip + limitNum);
 
       const pagination = {
         page: pageNum,
@@ -265,7 +279,7 @@ const productService = {
       };
 
       return {
-        products,
+        products: paginatedProducts,
         pagination,
         filters: {
           search,

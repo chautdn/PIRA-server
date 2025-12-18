@@ -4,6 +4,7 @@ const Product = require('../models/Product');
 const Wallet = require('../models/Wallet');
 const Transaction = require('../models/Transaction');
 const paymentService = require('./payment.service');
+const promotedProductCache = require('../utils/promotedProductCache');
 
 const TIER_PRICES = {
   1: 25000,
@@ -137,7 +138,13 @@ const productPromotionService = {
         product.currentPromotion = promotion._id;
         product.isPromoted = true;
         product.promotionTier = tier;
-        await product.save();
+        await product.save();        
+        // Clear cache when promotion activates
+        promotedProductCache.clear();
+        console.log('[Cache] Cleared promoted product cache after promotion activation');        
+        // Clear cache when promotion activates
+        promotedProductCache.clear();
+        console.log('[Cache] Cleared promoted product cache after promotion activation');
       }
 
       // Add amount to system wallet
@@ -395,6 +402,12 @@ const productPromotionService = {
         });
       }
 
+      // Clear cache if any promotions were deactivated
+      if (expired.length > 0) {
+        promotedProductCache.clear();
+        console.log(`[Cache] Cleared promoted product cache after deactivating ${expired.length} expired promotions`);
+      }
+
       return expired.length;
     } catch (error) {
       throw error;
@@ -434,6 +447,10 @@ const productPromotionService = {
           });
 
           activated++;
+          
+          // Clear cache when promotion is activated
+          promotedProductCache.clear();
+          console.log('[Cache] Cleared promoted product cache after scheduled promotion activation');
 
           // Notify user
           try {
@@ -618,6 +635,12 @@ const productPromotionService = {
           console.log('[Promotion Webhook] Created promotion notification for user');
         } catch (error) {
           console.error('[Promotion Webhook] Failed to create promotion notification:', error);
+        }
+
+        // Clear cache after successful payment processing
+        if (shouldActivateNow) {
+          promotedProductCache.clear();
+          console.log('[Cache] Cleared promoted product cache after PayOS webhook processing');
         }
 
         console.log('[Promotion Webhook] ✅ Promotion activation complete');

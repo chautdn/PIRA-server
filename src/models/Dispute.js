@@ -69,6 +69,7 @@ const disputeSchema = new mongoose.Schema(
         'DAMAGED_ON_RETURN', // Hư hỏng khi trả
         'LATE_RETURN', // Trả hàng trễ
         'RETURN_FAILED_OWNER', // Owner không nhận lại hàng
+        'RENTER_NO_RETURN', // ⭐ NEW: Renter không trả hàng khi shipper đến lấy
         
         'OTHER'
       ],
@@ -212,6 +213,37 @@ const disputeSchema = new mongoose.Schema(
       }
     },
     
+    // Reschedule Request (for RENTER_NO_RETURN case)
+    rescheduleRequest: {
+      requestedBy: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'User'
+      },
+      requestedAt: Date,
+      proposedReturnDate: Date,
+      reason: String,
+      evidence: {
+        photos: [String],
+        documents: [String],
+        notes: String
+      },
+      status: {
+        type: String,
+        enum: ['PENDING', 'APPROVED', 'REJECTED'],
+        default: 'PENDING'
+      },
+      ownerResponse: {
+        decision: String, // 'APPROVED' hoặc 'REJECTED'
+        respondedAt: Date,
+        reason: String
+      },
+      // Nếu approved, tạo shipment mới
+      newShipmentId: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'Shipment'
+      }
+    },
+    
     // Third Party Resolution
     thirdPartyResolution: {
       escalatedAt: Date,
@@ -227,13 +259,8 @@ const disputeSchema = new mongoose.Schema(
           type: mongoose.Schema.Types.ObjectId,
           ref: 'User'
         },
-        // Thông tin shipper (ảnh chụp khi giao/nhận hàng)
-        shipperEvidence: {
-          photos: [String],
-          videos: [String],
-          notes: String,
-          timestamp: Date
-        },
+        // Thông tin shipper (ảnh chụp khi giao/nhận hàng) - dùng Mixed để linh hoạt
+        shipperEvidence: mongoose.Schema.Types.Mixed,
         // Thông tin cá nhân 2 bên
         partyInfo: {
           complainant: {
@@ -279,7 +306,7 @@ const disputeSchema = new mongoose.Schema(
       resolutionText: String,
       resolutionSource: {
         type: String,
-        enum: ['RESPONDENT_ACCEPTED', 'ADMIN_DECISION', 'NEGOTIATION', 'THIRD_PARTY', 'ADMIN_PROCESSED_PAYMENT']
+        enum: ['RESPONDENT_ACCEPTED', 'ADMIN_DECISION', 'NEGOTIATION', 'THIRD_PARTY', 'ADMIN_PROCESSED_PAYMENT', 'RESCHEDULE_APPROVED']
       },
       // Financial Impact
       financialImpact: {
@@ -361,6 +388,74 @@ disputeSchema.methods.canOpenDispute = function(productStatus, shipmentType, use
   return { allowed: true };
 };
 
+/**
+ * Calculate penalty for RENTER_NO_RETURN based on severity
+ * @param {Number} depositAmount - Tiền cọc
+ * @param {Number} rentalAmount - Tổng tiền thuê
+ * @param {Number} creditScore - Credit score của renter
+ * @param {Boolean} hasValidReason - Có lý do hợp lệ không
+ * @param {Boolean} isFirstOffense - Lần đầu vi phạm
+ * @param {Boolean} hasResponse - Có phản hồi không (trong 48h)
+ * @returns {Object} - { penaltyPercent, keepDeposit, additionalPenalty, creditPenalty, allowReschedule, shouldBlacklist }
+ */
+disputeSchema.methods.calculateRenterNoReturnPenalty = function(params) {
+  const { depositAmount, rentalAmount, creditScore, hasValidReason, isFirstOffense, hasResponse } = params;
+  
+  // Level 1: Lần đầu + Có lý do chính đáng + Phản hồi kịp thời
+  if (isFirstOffense && hasValidReason && hasResponse) {
+    return {
+      penaltyPercent: 10, // Phạt 10% deposit
+      keepDeposit: depositAmount * 0.1,
+      additionalPenalty: 0,
+      creditPenalty: -5,
+      allowReschedule: true,
+      shouldBlacklist: false,
+      message: 'Lần đầu vi phạm, có lý do hợp lệ - Cho phép reschedule'
+    };
+  }
+  
+  // Level 2: Lần đầu + Không có lý do hoặc lý do không hợp lệ
+  if (isFirstOffense && !hasValidReason && hasResponse) {
+    return {
+      penaltyPercent: 50, // Giữ 50% deposit
+      keepDeposit: depositAmount * 0.5,
+      additionalPenalty: rentalAmount * 0.2, // Phạt thêm 20% rental
+      creditPenalty: -15,
+      allowReschedule: false,
+      shouldBlacklist: false,
+      message: 'Lần đầu vi phạm nhưng không có lý do chính đáng'
+    };
+  }
+  
+  // Level 3: Tái phạm hoặc không phản hồi
+  if (!isFirstOffense || !hasResponse) {
+    return {
+      penaltyPercent: 100, // Giữ 100% deposit
+      keepDeposit: depositAmount,
+      additionalPenalty: rentalAmount * 0.5, // Phạt thêm 50% rental
+      creditPenalty: -30,
+      allowReschedule: false,
+      shouldBlacklist: true, // Blacklist 30 ngày
+      blacklistDays: 30,
+      message: hasResponse ? 'Tái phạm - Giữ toàn bộ deposit + phạt thêm' : 'Không phản hồi trong 48h - Xử phạt nặng'
+    };
+  }
+  
+  // Level 4: Quá 7 ngày vẫn không trả = Chiếm đoạt
+  // (Sẽ được handle riêng trong service)
+  
+  // Default: Trường hợp bình thường
+  return {
+    penaltyPercent: 50,
+    keepDeposit: depositAmount * 0.5,
+    additionalPenalty: rentalAmount * 0.2,
+    creditPenalty: -15,
+    allowReschedule: false,
+    shouldBlacklist: false,
+    message: 'Vi phạm nghiêm trọng'
+  };
+};
+
 // Indexes
 disputeSchema.index({ disputeId: 1 });
 disputeSchema.index({ subOrder: 1, productId: 1 });
@@ -369,5 +464,7 @@ disputeSchema.index({ respondent: 1 });
 disputeSchema.index({ status: 1, priority: 1 });
 disputeSchema.index({ shipmentType: 1, status: 1 });
 disputeSchema.index({ 'negotiationRoom.deadline': 1 });
+disputeSchema.index({ type: 1, status: 1 });
+disputeSchema.index({ 'rescheduleRequest.status': 1 });
 
 module.exports = mongoose.model('Dispute', disputeSchema);

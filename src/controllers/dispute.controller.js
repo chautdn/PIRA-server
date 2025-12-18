@@ -461,6 +461,117 @@ class DisputeController {
     }
   }
 
+  /**
+   * Renter đề xuất reschedule cho RENTER_NO_RETURN dispute
+   * POST /api/disputes/:disputeId/reschedule/propose
+   */
+  async proposeReschedule(req, res) {
+    try {
+      const { disputeId } = req.params;
+      const { proposedReturnDate, reason, evidence } = req.body;
+      const renterId = req.user._id;
+
+      if (!proposedReturnDate || !reason) {
+        return responseUtils.error(res, 'Vui lòng nhập đầy đủ thông tin', 400);
+      }
+
+      const dispute = await disputeService.renterProposeReschedule(disputeId, renterId, {
+        proposedReturnDate,
+        reason,
+        evidence
+      });
+
+      return responseUtils.success(res, {
+        dispute,
+        message: 'Đã gửi đề xuất reschedule đến owner'
+      });
+    } catch (error) {
+      console.error('Propose reschedule error:', error);
+      return responseUtils.error(res, error.message, 400);
+    }
+  }
+
+  /**
+   * Owner phản hồi reschedule request
+   * POST /api/disputes/:disputeId/reschedule/respond
+   */
+  async respondToReschedule(req, res) {
+    try {
+      const { disputeId } = req.params;
+      const { decision, reason } = req.body;
+      const ownerId = req.user._id;
+
+      if (!decision || !['APPROVED', 'REJECTED'].includes(decision)) {
+        return responseUtils.error(res, 'Quyết định không hợp lệ', 400);
+      }
+
+      const dispute = await disputeService.ownerRespondToReschedule(disputeId, ownerId, {
+        decision,
+        reason
+      });
+
+      return responseUtils.success(res, {
+        dispute,
+        message: decision === 'APPROVED' 
+          ? 'Đã chấp nhận reschedule. Shipment mới đã được tạo.' 
+          : 'Đã từ chối ngày đề xuất. Phòng thương lượng đã được mở để 2 bên tự thỏa thuận.'
+      });
+    } catch (error) {
+      console.error('Respond to reschedule error:', error);
+      return responseUtils.error(res, error.message, 400);
+    }
+  }
+
+  /**
+   * Finalize agreement từ negotiation room
+   * POST /api/disputes/:disputeId/finalize-agreement
+   */
+  async finalizeAgreement(req, res) {
+    try {
+      const { disputeId } = req.params;
+      const { agreedDate } = req.body;
+
+      if (!agreedDate) {
+        return responseUtils.error(res, 'Ngày thỏa thuận là bắt buộc', 400);
+      }
+
+      const dispute = await disputeService.finalizeRescheduleAgreement(disputeId, new Date(agreedDate));
+
+      return responseUtils.success(res, {
+        dispute,
+        message: 'Đã hoàn tất thỏa thuận. Shipment mới đã được tạo.'
+      });
+    } catch (error) {
+      console.error('Finalize agreement error:', error);
+      return responseUtils.error(res, error.message, 400);
+    }
+  }
+
+  /**
+   * Xử lý penalty cho RENTER_NO_RETURN (dùng khi renter accept hoặc admin decide)
+   * POST /api/disputes/:disputeId/process-renter-no-return
+   */
+  async processRenterNoReturn(req, res) {
+    try {
+      const { disputeId } = req.params;
+      const { hasValidReason, hasResponse } = req.body;
+      const userId = req.user._id;
+
+      const dispute = await disputeService.processRenterNoReturnPenalty(disputeId, userId, {
+        hasValidReason: hasValidReason || false,
+        hasResponse: hasResponse !== false
+      });
+
+      return responseUtils.success(res, {
+        dispute,
+        message: 'Đã xử lý penalty cho renter không trả hàng'
+      });
+    } catch (error) {
+      console.error('Process renter no return error:', error);
+      return responseUtils.error(res, error.message, 400);
+    }
+  }
+
 }
 
 module.exports = new DisputeController();

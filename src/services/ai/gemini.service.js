@@ -36,7 +36,7 @@ class AIService {
   }
 
   /**
-   * Generate AI response with context
+   * Generate AI response with context (with retry logic)
    * @param {string} userMessage - User's message
    * @param {Array} conversationHistory - Previous messages
    * @param {Object} context - Additional context (products, categories, etc.)
@@ -48,19 +48,14 @@ class AIService {
       this.initialize();
     }
 
-    try {
-      if (!this.ai) {
-        throw new Error('Gemini AI not initialized');
-      }
+    if (!this.ai) {
+      throw new Error('Gemini AI not initialized');
+    }
 
-      // Build system prompt with Pira context
-      const systemPrompt = this.buildSystemPrompt(context);
-
-      // Build conversation history
-      const conversationText = this.buildConversationHistory(conversationHistory);
-
-      // Combine prompt
-      const fullPrompt = `${systemPrompt}
+    // Build prompts
+    const systemPrompt = this.buildSystemPrompt(context);
+    const conversationText = this.buildConversationHistory(conversationHistory);
+    const fullPrompt = `${systemPrompt}
 
 ${conversationText}
 
@@ -68,16 +63,52 @@ User: ${userMessage}
 
 AI Assistant:`;
 
-      // NEW API: Use generateContent with model parameter
-      const response = await this.ai.models.generateContent({
-        model: 'gemini-2.5-flash',
-        contents: fullPrompt
-      });
+    // Retry configuration for 503 errors
+    const maxRetries = 3;
+    const baseDelay = 1000; // 1 second
 
-      return response.text;
-    } catch (error) {
-      console.error('AI generation error:', error);
-      throw error;
+    for (let attempt = 0; attempt < maxRetries; attempt++) {
+      try {
+        const response = await this.ai.models.generateContent({
+          model: 'gemini-2.5-flash',
+          contents: fullPrompt
+        });
+
+        return response.text;
+      } catch (error) {
+        const isLastAttempt = attempt === maxRetries - 1;
+
+        // 503 Service Unavailable - Retry with exponential backoff
+        if (error.status === 503 && !isLastAttempt) {
+          const delay = baseDelay * Math.pow(2, attempt); // Exponential backoff
+          console.warn(
+            `⚠️ Gemini overloaded (attempt ${attempt + 1}/${maxRetries}). Retrying in ${delay}ms...`
+          );
+          await new Promise((resolve) => setTimeout(resolve, delay));
+          continue; // Retry
+        }
+
+        // 429 Quota Exceeded - Don't retry
+        if (error.status === 429) {
+          console.error('🚫 Gemini API quota exceeded. Please check: https://ai.dev/usage');
+          const quotaError = new Error('Gemini API đã vượt quá quota miễn phí hôm nay.');
+          quotaError.status = 429;
+          quotaError.isQuotaError = true;
+          throw quotaError;
+        }
+
+        // 503 on last attempt or other errors
+        console.error('AI generation error:', error);
+
+        if (error.status === 503) {
+          const overloadError = new Error('Gemini AI đang quá tải. Vui lòng thử lại sau vài giây.');
+          overloadError.status = 503;
+          overloadError.isOverloadError = true;
+          throw overloadError;
+        }
+
+        throw error;
+      }
     }
   }
 

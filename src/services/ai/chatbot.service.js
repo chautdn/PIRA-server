@@ -17,44 +17,68 @@ class ChatbotService {
     try {
       const message = userMessage.toLowerCase().trim();
 
-      // Detect intent FIRST
+      // Detect intent
       const intent = this.detectIntent(message);
 
-      // ALWAYS search for relevant products based on message
+      // Search for relevant products based on message
       const searchResult = await this.smartProductSearch(message, intent);
 
-      // Get general context
+      // Get context for AI
       const context = {
         ...searchResult.context,
         intent: intent.type
       };
 
-      // Use AI to generate smart response if available
-      if (geminiService.isAvailable()) {
-        try {
-          const aiReply = await geminiService.generateResponse(
-            userMessage,
-            conversationHistory,
-            context
-          );
-
-          return {
-            reply: aiReply,
-            suggestedProducts: searchResult.suggestedProducts,
-            suggestedActions: searchResult.suggestedActions
-          };
-        } catch (aiError) {
-          // Fall through to smart response without AI
-        }
+      // Use Gemini AI ONLY - no fallback
+      if (!geminiService.isAvailable()) {
+        throw new Error('Gemini AI không khả dụng. Vui lòng kiểm tra cấu hình GEMINI_API_KEY.');
       }
 
-      // Smart response without AI - enhance searchResult with context-aware reply
-      return this.enhanceResponseWithContext(searchResult, message, intent);
+      const aiReply = await geminiService.generateResponse(
+        userMessage,
+        conversationHistory,
+        context
+      );
+
+      return {
+        reply: aiReply,
+        suggestedProducts: searchResult.suggestedProducts,
+        suggestedActions: searchResult.suggestedActions
+      };
     } catch (error) {
       console.error('Chatbot error:', error);
+
+      // Return error message to user
+      let errorMessage = 'Xin lỗi, tôi gặp sự cố khi xử lý câu hỏi. Vui lòng thử lại.';
+
+      // 429 - Quota exceeded
+      if (error.status === 429 || error.isQuotaError) {
+        errorMessage =
+          '⚠️ **Gemini AI đã vượt quá quota miễn phí hôm nay.**\n\nVui lòng thử lại sau hoặc liên hệ admin để cập nhật API key.\n\n📊 Kiểm tra quota: https://ai.dev/usage';
+      }
+      // 503 - Service overloaded
+      else if (error.status === 503 || error.isOverloadError) {
+        errorMessage =
+          '⚠️ **Gemini AI đang quá tải.**\n\nServer AI đang xử lý quá nhiều request. Vui lòng:\n• Đợi 10-30 giây rồi thử lại\n• Hoặc làm mới trang và hỏi lại câu hỏi';
+      }
+      // AI not initialized
+      else if (
+        error.message.includes('not initialized') ||
+        error.message.includes('không khả dụng')
+      ) {
+        errorMessage =
+          '⚠️ **Chatbot AI chưa được cấu hình.**\n\nVui lòng liên hệ admin để kiểm tra GEMINI_API_KEY.';
+      }
+      // Network or other errors
+      else if (error.code === 'ECONNREFUSED' || error.code === 'ETIMEDOUT') {
+        errorMessage =
+          '⚠️ **Không thể kết nối tới Gemini AI.**\n\nVui lòng kiểm tra kết nối internet và thử lại.';
+      }
+
       return {
-        reply: 'Xin lỗi, tôi gặp sự cố khi xử lý câu hỏi. Bạn có thể diễn đạt lại không?',
+        reply: errorMessage,
         suggestedActions: [
+          { label: '🔄 Thử lại', query: userMessage },
           { label: '🔍 Tìm sản phẩm', query: 'Tìm sản phẩm cho thuê' },
           { label: '💰 Hỏi về giá', query: 'Giá thuê như thế nào?' }
         ]

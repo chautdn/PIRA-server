@@ -79,6 +79,11 @@ const { startFrozenBalanceUnlockCron } = require('./scripts/frozenBalanceUnlockC
 startFrozenBalanceUnlockCron();
 console.log('✅ Frozen balance unlock cron job initialized');
 
+// Initialize dispute escalation cron job (daily at 2:00 AM)
+const { startDisputeEscalationCron } = require('./scripts/disputeEscalationCron');
+startDisputeEscalationCron();
+console.log('✅ Dispute escalation cron job initialized');
+
 // Initialize extension auto-refund cron job (every 10 minutes)
 const { startExtensionAutoRefundCron } = require('./scripts/extensionAutoRefundCron');
 startExtensionAutoRefundCron();
