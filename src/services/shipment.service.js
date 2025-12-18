@@ -245,6 +245,33 @@ class ShipmentService {
       throw new Error(`Cannot accept shipment with status ${shipment.status}. Must be PENDING.`);
     }
 
+    // Validate scheduled date - must be on or after scheduled date (at 00:00)
+    let scheduledDate = null;
+    if (shipment.scheduledAt) {
+      scheduledDate = new Date(shipment.scheduledAt);
+    } else if (shipment.subOrder) {
+      const rentalPeriod = shipment.subOrder.rentalPeriod;
+      if (rentalPeriod) {
+        if (shipment.type === 'DELIVERY' && rentalPeriod.startDate) {
+          scheduledDate = new Date(rentalPeriod.startDate);
+        } else if (shipment.type === 'RETURN' && rentalPeriod.endDate) {
+          scheduledDate = new Date(rentalPeriod.endDate);
+        }
+      }
+    }
+
+    if (scheduledDate) {
+      // Set to start of day
+      scheduledDate.setHours(0, 0, 0, 0);
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      
+      if (today < scheduledDate) {
+        const dateStr = scheduledDate.toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit', year: 'numeric' });
+        throw new Error(`Chưa đến ngày giao hàng! Bạn chỉ có thể nhận đơn từ 00:00 ngày ${dateStr}`);
+      }
+    }
+
     // Check if this specific shipment already has a different shipper assigned
     if (shipment.shipper && String(shipment.shipper) !== String(shipperId)) {
       throw new Error('This shipment is already assigned to another shipper');
