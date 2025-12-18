@@ -2090,19 +2090,93 @@ class ShipmentService {
         console.error(`   ⚠️  Notification to owner failed: ${err.message}`);
       }
 
-      // 6. Send notification to renter
+      // 6. Penalize renter with -20 creditScore
+      try {
+        if (renter && renter._id) {
+          const currentScore = renter.creditScore || 100;
+          renter.creditScore = Math.max(0, currentScore - 20);
+          await renter.save();
+          console.log(`   ✅ Renter ${renter._id} creditScore reduced by 20 points (${currentScore} → ${renter.creditScore})`);
+        }
+      } catch (err) {
+        console.error(`   ⚠️  Failed to update renter creditScore: ${err.message}`);
+      }
+
+      // 7. Compensate owner with 90% of 1 day rental price
+      try {
+        const Transaction = require('../models/Transaction');
+        const Wallet = require('../models/Wallet');
+        const SystemWalletService = require('./systemWallet.service');
+
+        // Calculate 1 day rental amount (90% goes to owner)
+        const totalRentalAmount = subOrder.pricing?.subtotalRental || 0;
+        const rentalDays = subOrder.pricing?.rentalDays || 1;
+        const oneDayRental = totalRentalAmount / rentalDays;
+        const compensationAmount = Math.floor(oneDayRental * 0.9);
+
+        if (compensationAmount > 0) {
+          // Get owner wallet
+          let ownerWallet = await Wallet.findOne({ user: owner._id });
+          if (!ownerWallet) {
+            ownerWallet = new Wallet({ user: owner._id, balance: 0 });
+            await ownerWallet.save();
+          }
+
+          // Create transaction for owner compensation
+          const compensationTxn = new Transaction({
+            user: owner._id,
+            type: 'COMPENSATION',
+            amount: compensationAmount,
+            status: 'success',
+            description: `Bồi thường 90% tiền thuê 1 ngày do renter không nhận hàng trả`,
+            metadata: {
+              subOrderId: subOrder._id,
+              subOrderNumber: subOrder.subOrderNumber,
+              shipmentId: shipment._id,
+              reason: 'RETURN_FAILED_RENTER_NO_CONTACT',
+              oneDayRental: oneDayRental,
+              compensationRate: 0.9
+            },
+            processedAt: new Date()
+          });
+          await compensationTxn.save();
+
+          // Update owner wallet balance
+          ownerWallet.balance += compensationAmount;
+          await ownerWallet.save();
+
+          // Deduct from system wallet
+          await SystemWalletService.recordTransaction({
+            amount: -compensationAmount,
+            type: 'COMPENSATION_PAYOUT',
+            description: `Bồi thường cho owner ${owner._id} do renter không nhận hàng trả`,
+            metadata: {
+              subOrderId: subOrder._id,
+              ownerId: owner._id,
+              transactionId: compensationTxn._id
+            }
+          });
+
+          console.log(`   ✅ Owner ${owner._id} compensated ${compensationAmount}đ (90% of 1 day rental)`);
+        }
+      } catch (err) {
+        console.error(`   ⚠️  Failed to compensate owner: ${err.message}`);
+      }
+
+      // 8. Send notification to renter
       try {
         const NotificationService = require('./notification.service');
         await NotificationService.createNotification({
           recipient: renter._id,
           title: '⚠️ Trả hàng thất bại',
-          message: `Shipper không thể liên lạc được với bạn để nhận hàng trả. Chủ sở hữu đang mở tranh chấp để giải quyết vấn đề này. Vui lòng chờ kết quả giải quyết.`,
+          message: `Shipper không thể liên lạc được với bạn để nhận hàng trả. Bạn bị trừ 20 điểm creditScore. Chủ sở hữu đang mở tranh chấp để giải quyết vấn đề này.`,
           type: 'SHIPMENT',
           category: 'WARNING',
           data: {
             shipmentId: shipment.shipmentId,
             subOrderNumber: subOrder.subOrderNumber,
-            reason: 'RETURN_FAILED'
+            reason: 'RETURN_FAILED',
+            creditScorePenalty: -20
           }
         });
       } catch (err) {
