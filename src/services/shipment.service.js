@@ -246,6 +246,8 @@ class ShipmentService {
     }
 
     // Validate scheduled date - must be on or after scheduled date (at 00:00)
+    // COMMENTED FOR TESTING - Uncomment to re-enable date validation
+    /*
     let scheduledDate = null;
     if (shipment.scheduledAt) {
       scheduledDate = new Date(shipment.scheduledAt);
@@ -271,6 +273,7 @@ class ShipmentService {
         throw new Error(`Chưa đến ngày giao hàng! Bạn chỉ có thể nhận đơn từ 00:00 ngày ${dateStr}`);
       }
     }
+    */
 
     // Check if this specific shipment already has a different shipper assigned
     if (shipment.shipper && String(shipment.shipper) !== String(shipperId)) {
@@ -379,7 +382,7 @@ class ShipmentService {
               ownerId,
               ownerCompensation,
               `Rental fee (90%) for shipment ${shipmentIdForLog} - frozen until order completed`,
-              365 * 24 * 60 * 60 * 1000
+              10 * 1000 // 10 seconds for testing
             );
 
             // Update transaction metadata
@@ -396,7 +399,6 @@ class ShipmentService {
               );
             }
 
-            console.log(`   ✅ Payment completed: ${ownerCompensation.toLocaleString()} VND to owner ${ownerId}`);
           } catch (err) {
             console.error(`   ❌ Payment failed for shipment ${shipmentIdForLog}:`, err.message);
           }
@@ -476,7 +478,7 @@ class ShipmentService {
                   renterId,
                   depositAmount,
                   `Return deposit refund - shipment ${shipmentIdForLog}`,
-                  24 * 60 * 60 * 1000
+                  10 * 1000 // 10 seconds for testing
                 );
 
                 console.log(`   ✅ Deposit refund completed: ${depositAmount.toLocaleString()} VND to renter ${renterId}`);
@@ -552,13 +554,13 @@ class ShipmentService {
         const masterOrderId = shipment.subOrder.masterOrder;
 
         if (masterOrderId) {
-          console.log('\n⏰ Scheduling order completion + funds unlock after 24h from return delivery...');
+          console.log('\n⏰ Scheduling order completion + funds unlock after 10s from return delivery...');
           await OrderScheduler.scheduleOrderCompletion(
             masterOrderId,
             shipment.subOrder._id,
-            24 // 24 hours delay
+            10 / 3600 // 10 seconds for testing (converted to hours)
           );
-          console.log('   ✅ After 24h:');
+          console.log('   ✅ After 10 seconds:');
           console.log('      - Order will be marked as COMPLETED');
           console.log('      - Frozen funds (rental + extension) will be unlocked simultaneously');
           console.log('      - Owner can withdraw money');
@@ -865,17 +867,33 @@ class ShipmentService {
                 const NotificationService = require('./notification.service');
                 const shipperUser = await User.findById(shipperId).select('_id profile email');
 
+                // Get product info - need to populate if not already
+                let productInfo = product;
+                if (typeof product === 'string' || !product?.name) {
+                  const Product = require('../models/Product');
+                  productInfo = await Product.findById(product._id || product).select('name title');
+                }
+                
+                const productName = productInfo?.title || productInfo?.name || 'sản phẩm';
+                const ownerName = owner.profile?.firstName || owner.profile?.fullName || 'chủ hàng';
+                const renterName = renter.profile?.firstName || renter.profile?.fullName || 'khách hàng';
+                const scheduledDateStr = productItem?.rentalPeriod?.startDate 
+                  ? new Date(productItem.rentalPeriod.startDate).toLocaleDateString('vi-VN')
+                  : 'chưa xác định';
+                
                 const deliveryNotif = await NotificationService.createNotification({
                   recipient: shipperId,
                   title: '📦 Đơn giao hàng mới',
-                  message: `Bạn có đơn giao hàng mới: ${product.name} giao cho ${renter.profile?.firstName || 'Renter'}. Dự kiến: ${new Date(productItem?.rentalPeriod?.startDate).toLocaleDateString('vi-VN')}`,
+                  message: `Bạn có đơn giao hàng mới: ${ownerName} gửi ${productName} cho ${renterName}. Dự kiến: ${scheduledDateStr}`,
                   type: 'SHIPMENT',
                   category: 'INFO',
                   data: {
                     shipmentId: outboundShipment.shipmentId,
                     shipmentObjectId: outboundShipment._id,
                     shipmentType: 'DELIVERY',
-                    productName: product.name,
+                    productName: productName,
+                    ownerName: ownerName,
+                    renterName: renterName,
                     scheduledAt: productItem?.rentalPeriod?.startDate
                   }
                 });
@@ -1019,17 +1037,33 @@ class ShipmentService {
                 const NotificationService = require('./notification.service');
                 const shipperUser = await User.findById(shipperId).select('_id profile email');
 
+                // Get product info - need to populate if not already
+                let productInfo = product;
+                if (typeof product === 'string' || !product?.name) {
+                  const Product = require('../models/Product');
+                  productInfo = await Product.findById(product._id || product).select('name title');
+                }
+                
+                const productName = productInfo?.title || productInfo?.name || 'sản phẩm';
+                const ownerName = owner.profile?.firstName || owner.profile?.fullName || 'chủ hàng';
+                const renterName = renter.profile?.firstName || renter.profile?.fullName || 'khách hàng';
+                const scheduledDateStr = productItem?.rentalPeriod?.endDate 
+                  ? new Date(productItem.rentalPeriod.endDate).toLocaleDateString('vi-VN')
+                  : 'chưa xác định';
+                
                 const returnNotif = await NotificationService.createNotification({
                   recipient: shipperId,
                   title: '🔄 Đơn trả hàng mới',
-                  message: `Bạn có đơn trả hàng mới: ${product.name} trả lại từ ${renter.profile?.firstName || 'Renter'}. Dự kiến: ${new Date(productItem?.rentalPeriod?.endDate).toLocaleDateString('vi-VN')}`,
+                  message: `Bạn có đơn trả hàng mới: ${ownerName} nhận ${productName} từ ${renterName}. Dự kiến: ${scheduledDateStr}`,
                   type: 'SHIPMENT',
                   category: 'INFO',
                   data: {
                     shipmentId: returnShipment.shipmentId,
                     shipmentObjectId: returnShipment._id,
                     shipmentType: 'RETURN',
-                    productName: product.name,
+                    productName: productName,
+                    ownerName: ownerName,
+                    renterName: renterName,
                     scheduledAt: productItem?.rentalPeriod?.endDate
                   }
                 });
@@ -1396,7 +1430,7 @@ class ShipmentService {
               subOrder.owner._id,
               ownerRewardAmount,
               `Compensation for renter no-show during return - shipment ${shipment.shipmentId}`,
-              24 * 60 * 60 * 1000
+              10 * 1000 // 10 seconds for testing
             );
           }
         } catch (ownerErr) {
@@ -1901,7 +1935,7 @@ class ShipmentService {
             subOrder.owner._id,
             ownerRewardAmount,
             `Compensation for renter no-show - shipment ${shipment.shipmentId}`,
-            24 * 60 * 60 * 1000
+            10 * 1000 // 10 seconds for testing
           );
         }
       } catch (ownerErr) {

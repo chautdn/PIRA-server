@@ -342,13 +342,25 @@ class EarlyReturnRequestService {
         
         if (shipper) {
           console.log('[Service] Shipper found:', { email: shipper.email, shipperId });
+          
+          // Build address string safely
+          const addressParts = [
+            returnAddress?.streetAddress,
+            returnAddress?.ward,
+            returnAddress?.district,
+            returnAddress?.city
+          ].filter(Boolean);
+          const fullAddress = addressParts.length > 0 ? addressParts.join(', ') : 'Địa chỉ sẽ được cập nhật';
+          
+          const scheduledDateStr = new Date(returnData.requestedReturnDate).toLocaleDateString('vi-VN');
+          
           // Create in-app notification for shipper
           const shipperNotification = new Notification({
             recipient: shipperId,
             sender: renterId,
             type: 'EARLY_RETURN_SHIPPER',
-            title: 'Cập nhật ngày nhận hàng trả',
-            message: `Đơn hàng ${subOrder.subOrderNumber} có ngày nhận hàng mới: ${new Date(returnData.requestedReturnDate).toLocaleDateString('vi-VN')}. Địa chỉ: ${returnAddress.streetAddress}, ${returnAddress.ward}, ${returnAddress.district}, ${returnAddress.city}`,
+            title: '🔄 Đơn trả hàng mới',
+            message: `Bạn có đơn trả hàng mới: ${subOrder.subOrderNumber}. Dự kiến: ${scheduledDateStr}`,
             relatedId: returnShipment._id,
             relatedModel: 'Shipment',
             metadata: {
@@ -356,14 +368,19 @@ class EarlyReturnRequestService {
               subOrderNumber: subOrder.subOrderNumber,
               newScheduledDate: returnData.requestedReturnDate,
               returnAddress: {
-                full: `${returnAddress.streetAddress}, ${returnAddress.ward}, ${returnAddress.district}, ${returnAddress.city}`,
-                coordinates: returnAddress.coordinates
+                full: fullAddress,
+                coordinates: returnAddress?.coordinates || null
               }
             }
           });
           await shipperNotification.save();
 
-          // Send socket notification to shipper
+          // Send realtime socket notification to shipper
+          if (global.chatGateway && typeof global.chatGateway.emitNotification === 'function') {
+            global.chatGateway.emitNotification(shipperId.toString(), shipperNotification);
+          }
+          
+          // Also send via emitToUser for backward compatibility
           if (global.chatGateway) {
             global.chatGateway.emitToUser(shipperId.toString(), 'shipment-schedule-updated', {
               type: 'shipment_schedule_updated',
@@ -371,8 +388,8 @@ class EarlyReturnRequestService {
               shipmentNumber: returnShipment.shipmentId,
               subOrderNumber: subOrder.subOrderNumber,
               newScheduledDate: returnData.requestedReturnDate,
-              returnAddress: `${returnAddress.streetAddress}, ${returnAddress.ward}, ${returnAddress.district}, ${returnAddress.city}`,
-              message: `Ngày nhận hàng trả đã được cập nhật thành ${new Date(returnData.requestedReturnDate).toLocaleDateString('vi-VN')}`
+              returnAddress: fullAddress,
+              message: `Ngày nhận hàng trả đã được cập nhật thành ${scheduledDateStr}`
             });
           }
 
