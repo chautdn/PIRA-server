@@ -2,7 +2,7 @@ const multer = require('multer');
 
 // Use memory storage so we can upload buffers directly to Cloudinary
 const storage = multer.memoryStorage();
-const upload = multer({ storage, limits: { fileSize: 10 * 1024 * 1024 } }); // 10MB limit per file
+const upload = multer({ storage, limits: { fileSize: 50 * 1024 * 1024 } }); // 50MB limit per file (to support videos)
 
 // Fields used for shipment proof uploads
 const shipmentProofFields = upload.fields([
