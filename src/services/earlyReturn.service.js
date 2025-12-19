@@ -965,7 +965,14 @@ class EarlyReturnRequestService {
 
       const [requests, total] = await Promise.all([
         EarlyReturnRequest.find(query)
-          .populate('subOrder', 'subOrderNumber status pricing')
+          .populate({
+            path: 'subOrder',
+            select: 'subOrderNumber status pricing products deliveryBatches',
+            populate: {
+              path: 'products.product',
+              select: 'title name images pricing'
+            }
+          })
           .populate({
             path: 'masterOrder',
             select: 'masterOrderNumber'
