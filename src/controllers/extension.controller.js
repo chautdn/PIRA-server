@@ -522,7 +522,7 @@ class ExtensionController {
             ownerId,
             ownerCompensation,
             `Extension fee (90%) for product: ${productToApprove.productName} - ${productToApprove.extensionDays} days`,
-            365 * 24 * 60 * 60 * 1000
+            10 * 1000 // 10 seconds for testing
           );
 
           // Update transaction metadata

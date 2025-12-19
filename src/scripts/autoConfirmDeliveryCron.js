@@ -34,7 +34,7 @@ async function autoConfirmDelivery() {
     console.log(`\n⏰ [Cron] Running auto-confirm delivery check...`);
     
     const now = new Date();
-    const twentyFourHoursAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+    const twentyFourHoursAgo = new Date(now.getTime() - 10 * 1000); // 10 seconds for testing
 
     // Find SubOrders that:
     // 1. Are in DELIVERED status (but not actually confirmed by renter yet - status should be before DELIVERED)

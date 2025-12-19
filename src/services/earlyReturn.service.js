@@ -173,22 +173,35 @@ class EarlyReturnRequestService {
       let returnShipment = null;
       if (deliveryMethod === 'DELIVERY') {
         returnShipment = await Shipment.findOne({
-          order: subOrderId,
+          subOrder: subOrderId,
           type: 'RETURN'
+        }).populate('shipper', 'email profile');
+
+        console.log('[Service] Found return shipment:', {
+          found: !!returnShipment,
+          shipmentId: returnShipment?.shipmentId,
+          hasShipper: !!returnShipment?.shipper,
+          shipperId: returnShipment?.shipper?._id || returnShipment?.shipper,
+          currentScheduledAt: returnShipment?.scheduledAt,
+          newScheduledAt: returnData.requestedReturnDate
         });
 
-        // Update return shipment with new address if provided
-        if (returnShipment && !returnData.useOriginalAddress) {
-          returnShipment.fromAddress = {
-            streetAddress: returnAddress.streetAddress,
-            ward: returnAddress.ward,
-            district: returnAddress.district,
-            city: returnAddress.city,
-            province: returnAddress.province,
-            coordinates: returnAddress.coordinates
-          };
+        // Update return shipment with new address and scheduled date
+        if (returnShipment) {
+          if (!returnData.useOriginalAddress) {
+            returnShipment.fromAddress = {
+              streetAddress: returnAddress.streetAddress,
+              ward: returnAddress.ward,
+              district: returnAddress.district,
+              city: returnAddress.city,
+              province: returnAddress.province,
+              coordinates: returnAddress.coordinates
+            };
+          }
+          // Always update scheduled date for early return
           returnShipment.scheduledAt = new Date(returnData.requestedReturnDate);
           await returnShipment.save();
+          console.log('[Service] Shipment updated with new scheduledAt:', returnShipment.scheduledAt);
         }
       }
 
@@ -309,6 +322,111 @@ class EarlyReturnRequestService {
           deliveryMethod,
           message: `${renterName} sẽ trả hàng sớm vào ${new Date(returnData.requestedReturnDate).toLocaleDateString('vi-VN')}. ${deliveryMethod === 'PICKUP' ? 'Khách hàng sẽ đến địa chỉ của bạn.' : 'Bạn cần có mặt để nhận hàng.'}`
         });
+      }
+
+      // 11. Send notification to shipper if shipment has a shipper assigned
+      console.log('[Service] Checking shipper notification:', {
+        deliveryMethod,
+        hasReturnShipment: !!returnShipment,
+        hasShipper: returnShipment?.shipper,
+        shipmentId: returnShipment?.shipmentId,
+        scheduledAt: returnShipment?.scheduledAt
+      });
+
+      if (deliveryMethod === 'DELIVERY' && returnShipment && returnShipment.shipper) {
+        console.log('[Service] Sending notification to shipper...');
+        
+        // Get shipper ID (handle both populated and non-populated cases)
+        const shipperId = returnShipment.shipper._id || returnShipment.shipper;
+        const shipper = returnShipment.shipper.email ? returnShipment.shipper : await User.findById(shipperId).select('email profile');
+        
+        if (shipper) {
+          console.log('[Service] Shipper found:', { email: shipper.email, shipperId });
+          
+          // Build address string safely
+          const addressParts = [
+            returnAddress?.streetAddress,
+            returnAddress?.ward,
+            returnAddress?.district,
+            returnAddress?.city
+          ].filter(Boolean);
+          const fullAddress = addressParts.length > 0 ? addressParts.join(', ') : 'Địa chỉ sẽ được cập nhật';
+          
+          const scheduledDateStr = new Date(returnData.requestedReturnDate).toLocaleDateString('vi-VN');
+          
+          // Create in-app notification for shipper
+          const shipperNotification = new Notification({
+            recipient: shipperId,
+            sender: renterId,
+            type: 'EARLY_RETURN_SHIPPER',
+            title: '🔄 Đơn trả hàng mới',
+            message: `Bạn có đơn trả hàng mới: ${subOrder.subOrderNumber}. Dự kiến: ${scheduledDateStr}`,
+            relatedId: returnShipment._id,
+            relatedModel: 'Shipment',
+            metadata: {
+              shipmentId: returnShipment.shipmentId,
+              subOrderNumber: subOrder.subOrderNumber,
+              newScheduledDate: returnData.requestedReturnDate,
+              returnAddress: {
+                full: fullAddress,
+                coordinates: returnAddress?.coordinates || null
+              }
+            }
+          });
+          await shipperNotification.save();
+
+          // Send realtime socket notification to shipper
+          if (global.chatGateway && typeof global.chatGateway.emitNotification === 'function') {
+            global.chatGateway.emitNotification(shipperId.toString(), shipperNotification);
+          }
+          
+          // Also send via emitToUser for backward compatibility
+          if (global.chatGateway) {
+            global.chatGateway.emitToUser(shipperId.toString(), 'shipment-schedule-updated', {
+              type: 'shipment_schedule_updated',
+              shipmentId: returnShipment._id,
+              shipmentNumber: returnShipment.shipmentId,
+              subOrderNumber: subOrder.subOrderNumber,
+              newScheduledDate: returnData.requestedReturnDate,
+              returnAddress: fullAddress,
+              message: `Ngày nhận hàng trả đã được cập nhật thành ${scheduledDateStr}`
+            });
+          }
+
+          // Send email to shipper
+          try {
+            const sendMail = require('../utils/mailer');
+            const scheduledDateStr = new Date(returnData.requestedReturnDate).toLocaleDateString('vi-VN', {
+              weekday: 'long',
+              year: 'numeric',
+              month: 'long',
+              day: 'numeric'
+            });
+            const shipperName = `${shipper.profile?.firstName || ''} ${shipper.profile?.lastName || ''}`.trim() || shipper.email;
+
+            const emailResult = await sendMail({
+              email: shipper.email,
+              subject: `🔄 Cập nhật ngày nhận hàng - ${returnShipment.shipmentId}`,
+              html: `
+                <h2>Xin chào ${shipperName},</h2>
+                <p>Đơn hàng trả của bạn đã được cập nhật ngày nhận hàng mới:</p>
+                <ul>
+                  <li><strong>Mã đơn vận chuyển:</strong> ${returnShipment.shipmentId}</li>
+                  <li><strong>Mã đơn hàng:</strong> ${subOrder.subOrderNumber}</li>
+                  <li><strong>Ngày nhận hàng mới:</strong> ${scheduledDateStr}</li>
+                  <li><strong>Địa chỉ nhận hàng:</strong> ${returnAddress.streetAddress}, ${returnAddress.ward}, ${returnAddress.district}, ${returnAddress.city}</li>
+                </ul>
+                <p><strong>Lý do:</strong> Khách hàng yêu cầu trả hàng sớm.</p>
+                <p>Vui lòng đăng nhập vào ứng dụng để xem chi tiết đơn hàng.</p>
+                <p>Cảm ơn!</p>
+              `
+            });
+            console.log(`📧 ✅ Email sent successfully to shipper ${shipper.email} about schedule update`, emailResult);
+          } catch (emailError) {
+            console.error('Failed to send email to shipper:', emailError);
+            // Don't throw error, continue the process
+          }
+        }
       }
 
       return {

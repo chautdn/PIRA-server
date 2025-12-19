@@ -40,6 +40,7 @@ const notificationSchema = new mongoose.Schema(
         'EARLY_RETURN_REQUEST',
         'EARLY_RETURN_UPDATED',
         'EARLY_RETURN_DELETED',
+        'EARLY_RETURN_SHIPPER',
         'SYSTEM',
         'REMINDER',
         'WITHDRAWAL'

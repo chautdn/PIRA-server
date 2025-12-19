@@ -155,6 +155,60 @@ class ExtensionService {
         { path: 'subOrder', select: 'subOrderNumber' }
       ]);
 
+      // Send real-time notification to owner
+      try {
+        const Notification = require('../models/Notification');
+        const notification = new Notification({
+          recipient: ownerId,
+          sender: renterId,
+          type: 'EXTENSION_REQUEST',
+          title: 'Yêu cầu gia hạn thuê mới',
+          message: `${masterOrder.renter.profile?.firstName || 'Khách hàng'} muốn gia hạn đơn hàng ${subOrder.subOrderNumber} thêm ${extensionDays} ngày (đến ${newEnd.toLocaleDateString('vi-VN')}). Phí: ${totalCost.toLocaleString('vi-VN')}đ`,
+          relatedId: savedRequest._id,
+          relatedModel: 'Extension',
+          metadata: {
+            extensionId: savedRequest._id,
+            subOrderNumber: subOrder.subOrderNumber,
+            extensionDays: extensionDays,
+            newEndDate: newEndDate,
+            totalCost: totalCost
+          }
+        });
+        await notification.save();
+
+        // Send socket notification to owner
+        if (global.chatGateway) {
+          // Emit notification event
+          global.chatGateway.emitNotification(ownerId.toString(), {
+            type: 'EXTENSION_REQUEST',
+            title: 'Yêu cầu gia hạn thuê mới',
+            message: notification.message,
+            timestamp: new Date().toISOString(),
+            data: {
+              extensionId: extensionRequest._id,
+              subOrderNumber: subOrder.subOrderNumber,
+              renterName: `${extensionRequest.renter.profile?.firstName || ''} ${extensionRequest.renter.profile?.lastName || ''}`.trim(),
+              extensionDays: extensionRequest.extensionDays,
+              totalCost: extensionRequest.totalCost
+            }
+          });
+          
+          // Emit custom extension-request event
+          global.chatGateway.emitToUser(ownerId.toString(), 'extension-request', {
+            type: 'extension_requested',
+            extensionId: savedRequest._id,
+            subOrderNumber: subOrder.subOrderNumber,
+            renterName: masterOrder.renter.profile?.firstName || 'Khách hàng',
+            extensionDays: extensionDays,
+            newEndDate: newEndDate,
+            totalCost: totalCost,
+            message: `Yêu cầu gia hạn ${extensionDays} ngày`
+          });
+        }
+      } catch (err) {
+        console.error('Failed to send extension request notification:', err);
+      }
+
       return populatedRequest;
     } catch (error) {
       console.error('Error details:', {
@@ -244,6 +298,20 @@ class ExtensionService {
       );
 
       console.log(`✅ Đã trừ ${amount.toLocaleString('vi-VN')}đ từ ví renter ${renterId} cho yêu cầu gia hạn`);
+
+      // Emit wallet update realtime
+      if (global.chatGateway) {
+        const updatedWallet = await user.wallet.populate('user');
+        global.chatGateway.emitWalletUpdate(renterId.toString(), {
+          type: 'EXTENSION_PAYMENT',
+          amount: amount,
+          newBalance: wallet.balance.available,
+          frozenBalance: wallet.balance.frozen,
+          action: 'deduct',
+          description: 'Thanh toán tiền gia hạn đơn thuê',
+          timestamp: new Date().toISOString()
+        });
+      }
 
       return {
         status: 'SUCCESS',
@@ -468,7 +536,7 @@ class ExtensionService {
             ownerId,
             ownerCompensation,
             `Phí gia hạn (90%) - ${extensionRequest.extensionDays} ngày`,
-            365 * 24 * 60 * 60 * 1000 // Frozen for 1 year, will unlock when order completed
+            10 * 1000 // 10 seconds for testing
           );
 
           // Update transaction metadata with subOrderId for unlock tracking
@@ -487,15 +555,76 @@ class ExtensionService {
           }
 
           console.log(`✅ Đã chuyển ${ownerCompensation.toLocaleString()} VND vào frozen wallet owner ${ownerId}`);
+          
+          // Emit wallet update realtime for owner (frozen balance increased)
+          if (global.chatGateway && transferResult?.userWallet) {
+            global.chatGateway.emitWalletUpdate(ownerId.toString(), {
+              type: 'EXTENSION_FEE_RECEIVED',
+              amount: ownerCompensation,
+              newBalance: transferResult.userWallet.balance.available,
+              frozenBalance: transferResult.userWallet.balance.frozen,
+              action: 'add_frozen',
+              description: `Phí gia hạn (90%) - ${extensionRequest.extensionDays} ngày (đóng băng 10 giây)`,
+              timestamp: new Date().toISOString()
+            });
+          }
         } catch (transferErr) {
           console.error('❌ Lỗi chuyển tiền cho owner:', transferErr.message);
           // Don't throw error, extension still approved
         }
       }
 
-      return await ExtensionRequest.findById(requestId).populate([
-        { path: 'renter', select: 'profile email' }
+      const result = await ExtensionRequest.findById(requestId).populate([
+        { path: 'renter', select: 'profile email' },
+        { path: 'owner', select: 'profile email' },
+        { path: 'subOrder', select: 'subOrderNumber' }
       ]);
+
+      // Send real-time notification to renter
+      try {
+        const Notification = require('../models/Notification');
+        const notification = new Notification({
+          recipient: result.renter._id,
+          sender: ownerId,
+          type: 'EXTENSION_APPROVED',
+          title: 'Yêu cầu gia hạn được chấp nhận',
+          message: `${result.owner.profile?.firstName || 'Chủ sở hữu'} đã chấp nhận yêu cầu gia hạn đơn hàng ${result.subOrder.subOrderNumber}. Thời gian thuê mới đến ${result.newEndDate.toLocaleDateString('vi-VN')}`,
+          relatedId: requestId,
+          relatedModel: 'Extension',
+          metadata: {
+            extensionId: requestId,
+            subOrderNumber: result.subOrder.subOrderNumber,
+            extensionDays: result.extensionDays,
+            newEndDate: result.newEndDate
+          }
+        });
+        await notification.save();
+
+        // Send socket notification to renter
+        if (global.chatGateway) {
+          // Emit notification to renter
+          global.chatGateway.emitNotification(result.renter._id.toString(), {
+            type: 'EXTENSION_APPROVED',
+            title: 'Yêu cầu gia hạn được chấp nhận',
+            message: notification.message,
+            timestamp: new Date().toISOString()
+          });
+          
+          global.chatGateway.emitToUser(result.renter._id.toString(), 'extension-approved', {
+            type: 'extension_approved',
+            extensionId: requestId,
+            subOrderNumber: result.subOrder.subOrderNumber,
+            ownerName: result.owner.profile?.firstName || 'Chủ sở hữu',
+            extensionDays: result.extensionDays,
+            newEndDate: result.newEndDate,
+            message: `Gia hạn được chấp nhận đến ${result.newEndDate.toLocaleDateString('vi-VN')}`
+          });
+        }
+      } catch (err) {
+        console.error('Failed to send extension approved notification:', err);
+      }
+
+      return result;
     } catch (error) {
       throw new Error('Không thể chấp nhận yêu cầu gia hạn: ' + error.message);
     }
@@ -538,7 +667,58 @@ class ExtensionService {
 
       await extensionRequest.save();
 
-      return extensionRequest;
+      // Populate for notification
+      const result = await ExtensionRequest.findById(requestId).populate([
+        { path: 'renter', select: 'profile email' },
+        { path: 'owner', select: 'profile email' },
+        { path: 'subOrder', select: 'subOrderNumber' }
+      ]);
+
+      // Send real-time notification to renter
+      try {
+        const Notification = require('../models/Notification');
+        const notification = new Notification({
+          recipient: result.renter._id,
+          sender: ownerId,
+          type: 'EXTENSION_REJECTED',
+          title: 'Yêu cầu gia hạn bị từ chối',
+          message: `${result.owner.profile?.firstName || 'Chủ sở hữu'} đã từ chối yêu cầu gia hạn đơn hàng ${result.subOrder.subOrderNumber}. Lý do: ${rejectionReason || 'Không có lý do'}. ${notes ? `Ghi chú: ${notes}` : ''}`,
+          relatedId: requestId,
+          relatedModel: 'Extension',
+          metadata: {
+            extensionId: requestId,
+            subOrderNumber: result.subOrder.subOrderNumber,
+            rejectionReason: rejectionReason,
+            notes: notes
+          }
+        });
+        await notification.save();
+
+        // Send socket notification to renter
+        if (global.chatGateway) {
+          // Emit notification
+          global.chatGateway.emitNotification(result.renter._id.toString(), {
+            type: 'EXTENSION_REJECTED',
+            title: 'Yêu cầu gia hạn bị từ chối',
+            message: notification.message,
+            timestamp: new Date().toISOString()
+          });
+          
+          global.chatGateway.emitToUser(result.renter._id.toString(), 'extension-rejected', {
+            type: 'extension_rejected',
+            extensionId: requestId,
+            subOrderNumber: result.subOrder.subOrderNumber,
+            ownerName: result.owner.profile?.firstName || 'Chủ sở hữu',
+            rejectionReason: rejectionReason,
+            notes: notes,
+            message: `Yêu cầu gia hạn bị từ chối: ${rejectionReason || 'Không có lý do'}`
+          });
+        }
+      } catch (err) {
+        console.error('Failed to send extension rejected notification:', err);
+      }
+
+      return result;
     } catch (error) {
       throw new Error('Không thể từ chối yêu cầu gia hạn: ' + error.message);
     }
@@ -556,7 +736,7 @@ class ExtensionService {
         const SystemWalletService = require('./systemWallet.service');
         const adminId = process.env.SYSTEM_ADMIN_ID || 'SYSTEM_AUTO_TRANSFER';
         
-        await SystemWalletService.transferToUser(
+        const refundResult = await SystemWalletService.transferToUser(
           adminId,
           renter,
           totalCost,
@@ -564,6 +744,19 @@ class ExtensionService {
         );
         
         console.log(`✅ Hoàn ${totalCost.toLocaleString('vi-VN')}đ tiền gia hạn về ví renter ${renter} - Lý do: ${reason}`);
+        
+        // Emit wallet update realtime for refund
+        if (global.chatGateway && refundResult?.userWallet) {
+          global.chatGateway.emitWalletUpdate(renter.toString(), {
+            type: 'EXTENSION_REFUND',
+            amount: totalCost,
+            newBalance: refundResult.userWallet.balance.available,
+            frozenBalance: refundResult.userWallet.balance.frozen,
+            action: 'add',
+            description: reason,
+            timestamp: new Date().toISOString()
+          });
+        }
       }
       // For other payment methods (PAYOS, COD), handle separately if needed
     } catch (error) {
