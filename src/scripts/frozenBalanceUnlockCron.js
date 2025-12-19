@@ -5,7 +5,7 @@ let cronJob = null;
 
 /**
  * Start cron job to unlock expired frozen funds
- * Runs every minute
+ * Runs every 5 seconds for testing (change to '* * * * *' for production)
  */
 function startFrozenBalanceUnlockCron() {
   // Stop existing job if any
@@ -13,16 +13,18 @@ function startFrozenBalanceUnlockCron() {
     cronJob.stop();
   }
 
-  // Run every minute
-  cronJob = cron.schedule('* * * * *', async () => {
+  // Run every 5 seconds for testing
+  const interval = setInterval(async () => {
     try {
       await FrozenBalanceService.unlockExpiredFrozenFunds();
     } catch (error) {
       console.error('❌ Error in frozen balance unlock cron job:', error);
     }
-  });
+  }, 5000);
 
-  console.log('🕐 Frozen balance unlock cron job started (runs every minute)');
+  cronJob = { stop: () => clearInterval(interval) };
+
+  console.log('🕐 Frozen balance unlock cron job started (runs every 5 seconds)');
 }
 
 /**

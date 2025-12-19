@@ -245,6 +245,36 @@ class ShipmentService {
       throw new Error(`Cannot accept shipment with status ${shipment.status}. Must be PENDING.`);
     }
 
+    // Validate scheduled date - must be on or after scheduled date (at 00:00)
+    // COMMENTED FOR TESTING - Uncomment to re-enable date validation
+    /*
+    let scheduledDate = null;
+    if (shipment.scheduledAt) {
+      scheduledDate = new Date(shipment.scheduledAt);
+    } else if (shipment.subOrder) {
+      const rentalPeriod = shipment.subOrder.rentalPeriod;
+      if (rentalPeriod) {
+        if (shipment.type === 'DELIVERY' && rentalPeriod.startDate) {
+          scheduledDate = new Date(rentalPeriod.startDate);
+        } else if (shipment.type === 'RETURN' && rentalPeriod.endDate) {
+          scheduledDate = new Date(rentalPeriod.endDate);
+        }
+      }
+    }
+
+    if (scheduledDate) {
+      // Set to start of day
+      scheduledDate.setHours(0, 0, 0, 0);
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      
+      if (today < scheduledDate) {
+        const dateStr = scheduledDate.toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit', year: 'numeric' });
+        throw new Error(`Chưa đến ngày giao hàng! Bạn chỉ có thể nhận đơn từ 00:00 ngày ${dateStr}`);
+      }
+    }
+    */
+
     // Check if this specific shipment already has a different shipper assigned
     if (shipment.shipper && String(shipment.shipper) !== String(shipperId)) {
       throw new Error('This shipment is already assigned to another shipper');
@@ -352,7 +382,7 @@ class ShipmentService {
               ownerId,
               ownerCompensation,
               `Rental fee (90%) for shipment ${shipmentIdForLog} - frozen until order completed`,
-              365 * 24 * 60 * 60 * 1000
+              10 * 1000 // 10 seconds for testing
             );
 
             // Update transaction metadata
@@ -369,7 +399,6 @@ class ShipmentService {
               );
             }
 
-            console.log(`   ✅ Payment completed: ${ownerCompensation.toLocaleString()} VND to owner ${ownerId}`);
           } catch (err) {
             console.error(`   ❌ Payment failed for shipment ${shipmentIdForLog}:`, err.message);
           }
@@ -449,7 +478,7 @@ class ShipmentService {
                   renterId,
                   depositAmount,
                   `Return deposit refund - shipment ${shipmentIdForLog}`,
-                  24 * 60 * 60 * 1000
+                  10 * 1000 // 10 seconds for testing
                 );
 
                 console.log(`   ✅ Deposit refund completed: ${depositAmount.toLocaleString()} VND to renter ${renterId}`);
@@ -525,13 +554,13 @@ class ShipmentService {
         const masterOrderId = shipment.subOrder.masterOrder;
 
         if (masterOrderId) {
-          console.log('\n⏰ Scheduling order completion + funds unlock after 24h from return delivery...');
+          console.log('\n⏰ Scheduling order completion + funds unlock after 10s from return delivery...');
           await OrderScheduler.scheduleOrderCompletion(
             masterOrderId,
             shipment.subOrder._id,
-            24 // 24 hours delay
+            10 / 3600 // 10 seconds for testing (converted to hours)
           );
-          console.log('   ✅ After 24h:');
+          console.log('   ✅ After 10 seconds:');
           console.log('      - Order will be marked as COMPLETED');
           console.log('      - Frozen funds (rental + extension) will be unlocked simultaneously');
           console.log('      - Owner can withdraw money');
@@ -838,17 +867,33 @@ class ShipmentService {
                 const NotificationService = require('./notification.service');
                 const shipperUser = await User.findById(shipperId).select('_id profile email');
 
+                // Get product info - need to populate if not already
+                let productInfo = product;
+                if (typeof product === 'string' || !product?.name) {
+                  const Product = require('../models/Product');
+                  productInfo = await Product.findById(product._id || product).select('name title');
+                }
+                
+                const productName = productInfo?.title || productInfo?.name || 'sản phẩm';
+                const ownerName = owner.profile?.firstName || owner.profile?.fullName || 'chủ hàng';
+                const renterName = renter.profile?.firstName || renter.profile?.fullName || 'khách hàng';
+                const scheduledDateStr = productItem?.rentalPeriod?.startDate 
+                  ? new Date(productItem.rentalPeriod.startDate).toLocaleDateString('vi-VN')
+                  : 'chưa xác định';
+                
                 const deliveryNotif = await NotificationService.createNotification({
                   recipient: shipperId,
                   title: '📦 Đơn giao hàng mới',
-                  message: `Bạn có đơn giao hàng mới: ${product.name} giao cho ${renter.profile?.firstName || 'Renter'}. Dự kiến: ${new Date(productItem?.rentalPeriod?.startDate).toLocaleDateString('vi-VN')}`,
+                  message: `Bạn có đơn giao hàng mới: ${ownerName} gửi ${productName} cho ${renterName}. Dự kiến: ${scheduledDateStr}`,
                   type: 'SHIPMENT',
                   category: 'INFO',
                   data: {
                     shipmentId: outboundShipment.shipmentId,
                     shipmentObjectId: outboundShipment._id,
                     shipmentType: 'DELIVERY',
-                    productName: product.name,
+                    productName: productName,
+                    ownerName: ownerName,
+                    renterName: renterName,
                     scheduledAt: productItem?.rentalPeriod?.startDate
                   }
                 });
@@ -992,17 +1037,33 @@ class ShipmentService {
                 const NotificationService = require('./notification.service');
                 const shipperUser = await User.findById(shipperId).select('_id profile email');
 
+                // Get product info - need to populate if not already
+                let productInfo = product;
+                if (typeof product === 'string' || !product?.name) {
+                  const Product = require('../models/Product');
+                  productInfo = await Product.findById(product._id || product).select('name title');
+                }
+                
+                const productName = productInfo?.title || productInfo?.name || 'sản phẩm';
+                const ownerName = owner.profile?.firstName || owner.profile?.fullName || 'chủ hàng';
+                const renterName = renter.profile?.firstName || renter.profile?.fullName || 'khách hàng';
+                const scheduledDateStr = productItem?.rentalPeriod?.endDate 
+                  ? new Date(productItem.rentalPeriod.endDate).toLocaleDateString('vi-VN')
+                  : 'chưa xác định';
+                
                 const returnNotif = await NotificationService.createNotification({
                   recipient: shipperId,
                   title: '🔄 Đơn trả hàng mới',
-                  message: `Bạn có đơn trả hàng mới: ${product.name} trả lại từ ${renter.profile?.firstName || 'Renter'}. Dự kiến: ${new Date(productItem?.rentalPeriod?.endDate).toLocaleDateString('vi-VN')}`,
+                  message: `Bạn có đơn trả hàng mới: ${ownerName} nhận ${productName} từ ${renterName}. Dự kiến: ${scheduledDateStr}`,
                   type: 'SHIPMENT',
                   category: 'INFO',
                   data: {
                     shipmentId: returnShipment.shipmentId,
                     shipmentObjectId: returnShipment._id,
                     shipmentType: 'RETURN',
-                    productName: product.name,
+                    productName: productName,
+                    ownerName: ownerName,
+                    renterName: renterName,
                     scheduledAt: productItem?.rentalPeriod?.endDate
                   }
                 });
@@ -1369,7 +1430,7 @@ class ShipmentService {
               subOrder.owner._id,
               ownerRewardAmount,
               `Compensation for renter no-show during return - shipment ${shipment.shipmentId}`,
-              24 * 60 * 60 * 1000
+              10 * 1000 // 10 seconds for testing
             );
           }
         } catch (ownerErr) {
@@ -1874,7 +1935,7 @@ class ShipmentService {
             subOrder.owner._id,
             ownerRewardAmount,
             `Compensation for renter no-show - shipment ${shipment.shipmentId}`,
-            24 * 60 * 60 * 1000
+            10 * 1000 // 10 seconds for testing
           );
         }
       } catch (ownerErr) {
@@ -2063,19 +2124,93 @@ class ShipmentService {
         console.error(`   ⚠️  Notification to owner failed: ${err.message}`);
       }
 
-      // 6. Send notification to renter
+      // 6. Penalize renter with -20 creditScore
+      try {
+        if (renter && renter._id) {
+          const currentScore = renter.creditScore || 100;
+          renter.creditScore = Math.max(0, currentScore - 20);
+          await renter.save();
+          console.log(`   ✅ Renter ${renter._id} creditScore reduced by 20 points (${currentScore} → ${renter.creditScore})`);
+        }
+      } catch (err) {
+        console.error(`   ⚠️  Failed to update renter creditScore: ${err.message}`);
+      }
+
+      // 7. Compensate owner with 90% of 1 day rental price
+      try {
+        const Transaction = require('../models/Transaction');
+        const Wallet = require('../models/Wallet');
+        const SystemWalletService = require('./systemWallet.service');
+
+        // Calculate 1 day rental amount (90% goes to owner)
+        const totalRentalAmount = subOrder.pricing?.subtotalRental || 0;
+        const rentalDays = subOrder.pricing?.rentalDays || 1;
+        const oneDayRental = totalRentalAmount / rentalDays;
+        const compensationAmount = Math.floor(oneDayRental * 0.9);
+
+        if (compensationAmount > 0) {
+          // Get owner wallet
+          let ownerWallet = await Wallet.findOne({ user: owner._id });
+          if (!ownerWallet) {
+            ownerWallet = new Wallet({ user: owner._id, balance: 0 });
+            await ownerWallet.save();
+          }
+
+          // Create transaction for owner compensation
+          const compensationTxn = new Transaction({
+            user: owner._id,
+            type: 'COMPENSATION',
+            amount: compensationAmount,
+            status: 'success',
+            description: `Bồi thường 90% tiền thuê 1 ngày do renter không nhận hàng trả`,
+            metadata: {
+              subOrderId: subOrder._id,
+              subOrderNumber: subOrder.subOrderNumber,
+              shipmentId: shipment._id,
+              reason: 'RETURN_FAILED_RENTER_NO_CONTACT',
+              oneDayRental: oneDayRental,
+              compensationRate: 0.9
+            },
+            processedAt: new Date()
+          });
+          await compensationTxn.save();
+
+          // Update owner wallet balance
+          ownerWallet.balance += compensationAmount;
+          await ownerWallet.save();
+
+          // Deduct from system wallet
+          await SystemWalletService.recordTransaction({
+            amount: -compensationAmount,
+            type: 'COMPENSATION_PAYOUT',
+            description: `Bồi thường cho owner ${owner._id} do renter không nhận hàng trả`,
+            metadata: {
+              subOrderId: subOrder._id,
+              ownerId: owner._id,
+              transactionId: compensationTxn._id
+            }
+          });
+
+          console.log(`   ✅ Owner ${owner._id} compensated ${compensationAmount}đ (90% of 1 day rental)`);
+        }
+      } catch (err) {
+        console.error(`   ⚠️  Failed to compensate owner: ${err.message}`);
+      }
+
+      // 8. Send notification to renter
       try {
         const NotificationService = require('./notification.service');
         await NotificationService.createNotification({
           recipient: renter._id,
           title: '⚠️ Trả hàng thất bại',
-          message: `Shipper không thể liên lạc được với bạn để nhận hàng trả. Chủ sở hữu đang mở tranh chấp để giải quyết vấn đề này. Vui lòng chờ kết quả giải quyết.`,
+          message: `Shipper không thể liên lạc được với bạn để nhận hàng trả. Bạn bị trừ 20 điểm creditScore. Chủ sở hữu đang mở tranh chấp để giải quyết vấn đề này.`,
           type: 'SHIPMENT',
           category: 'WARNING',
           data: {
             shipmentId: shipment.shipmentId,
             subOrderNumber: subOrder.subOrderNumber,
-            reason: 'RETURN_FAILED'
+            reason: 'RETURN_FAILED',
+            creditScorePenalty: -20
           }
         });
       } catch (err) {

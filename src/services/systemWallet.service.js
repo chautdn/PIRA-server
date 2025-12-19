@@ -866,7 +866,8 @@ class SystemWalletService {
         amount: ownerShareAmount,
         reason: 'RENTAL_FEE_TRANSFER',
         subOrderNumber: subOrderNumber,
-        unlocksAt: new Date(Date.now() + 24 * 60 * 60 * 1000), // 24 hours from now
+        // unlocksAt: new Date(Date.now() + 24 * 60 * 60 * 1000), // 24 hours from now
+        unlocksAt: new Date(Date.now() + 10 * 1000), // 10 seconds for testing
         status: 'FROZEN'
       });
       await frozenRecord.save({ session });
@@ -962,7 +963,8 @@ class SystemWalletService {
           userId: ownerId,
           availableBalance: ownerWallet.balance.available,
           frozenBalance: ownerWallet.balance.frozen,
-          unlocksAt: new Date(Date.now() + 24 * 60 * 60 * 1000)
+          // unlocksAt: new Date(Date.now() + 24 * 60 * 60 * 1000)
+          unlocksAt: new Date(Date.now() + 10 * 1000) // 10 seconds for testing
         },
         transfer: {
           totalRentalAmount: totalRentalAmount,
@@ -971,7 +973,8 @@ class SystemWalletService {
           platformFeePercentage: 20,
           ownerSharePercentage: 80,
           status: 'FROZEN',
-          unlocksAfter: '24 hours'
+          // unlocksAfter: '24 hours'
+          unlocksAfter: '10 seconds' // For testing
         },
         transactions: {
           system: systemTransaction,
@@ -1052,7 +1055,8 @@ class SystemWalletService {
         amount: depositAmount,
         reason: 'DEPOSIT_REFUND',
         subOrderNumber: subOrderNumber,
-        unlocksAt: new Date(Date.now() + 24 * 60 * 60 * 1000), // 24 hours from now
+        // unlocksAt: new Date(Date.now() + 24 * 60 * 60 * 1000), // 24 hours from now
+        unlocksAt: new Date(Date.now() + 10 * 1000), // 10 seconds for testing
         status: 'FROZEN',
         metadata: {
           adminId: adminId,
@@ -1098,7 +1102,8 @@ class SystemWalletService {
           subOrderNumber: subOrderNumber,
           depositAmount: depositAmount,
           status: 'FROZEN',
-          unlocksAfter: '24 hours',
+          // unlocksAfter: '24 hours',
+          unlocksAfter: '10 seconds', // For testing
           action: 'DEPOSIT_REFUND_RECEIVED'
         }
       });
@@ -1115,7 +1120,8 @@ class SystemWalletService {
           amount: depositAmount,
           status: 'FROZEN',
           frozenBalance: renterWallet.balance.frozen,
-          unlocksAt: new Date(Date.now() + 24 * 60 * 60 * 1000)
+          // unlocksAt: new Date(Date.now() + 24 * 60 * 60 * 1000)
+          unlocksAt: new Date(Date.now() + 10 * 1000) // 10 seconds for testing
         });
       }
 
@@ -1127,12 +1133,14 @@ class SystemWalletService {
           userId: renterId,
           availableBalance: renterWallet.balance.available,
           frozenBalance: renterWallet.balance.frozen,
-          unlocksAt: new Date(Date.now() + 24 * 60 * 60 * 1000)
+          // unlocksAt: new Date(Date.now() + 24 * 60 * 60 * 1000)
+          unlocksAt: new Date(Date.now() + 10 * 1000) // 10 seconds for testing
         },
         transfer: {
           depositAmount: depositAmount,
           status: 'FROZEN',
-          unlocksAfter: '24 hours'
+          // unlocksAfter: '24 hours'
+          unlocksAfter: '10 seconds' // For testing
         },
         transactions: {
           system: systemTransaction,
@@ -1211,6 +1219,20 @@ class SystemWalletService {
       // Add to user wallet FROZEN balance
       userWallet.balance.frozen += amount;
       await userWallet.save({ session });
+
+      // Create frozen record for automatic unlock
+      const FrozenBalance = require('../models/FrozenBalance');
+      const frozenRecord = new FrozenBalance({
+        wallet: userWallet._id,
+        user: userId,
+        amount: amount,
+        reason: 'RENTAL_FEE_TRANSFER',
+        subOrderNumber: description.includes('SubOrder') ? description.split('SubOrder')[1]?.split(' ')[0]?.trim() : null,
+        unlocksAt: new Date(Date.now() + unfreezeDuration),
+        status: 'FROZEN'
+      });
+      await frozenRecord.save({ session });
+      console.log(`   ✅ Created FrozenBalance record: unlocks at ${frozenRecord.unlocksAt.toISOString()}`);
 
       // Create transaction records
       // System transaction - for audit only, will be filtered in user's history query

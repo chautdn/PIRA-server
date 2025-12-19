@@ -68,12 +68,15 @@ const {
 startShipmentCronJob();
 startShipperNotificationEmailCronJob();
 console.log('✅ Shipment cron job initialized');
-console.log('✅ Shipper notification email cron job initialized');
 
-// Initialize frozen balance unlock cron job (every minute)
-const { startFrozenBalanceUnlockCron } = require('./scripts/frozenBalanceUnlockCron');
+// Initialize frozen balance unlock cron job
+const {
+  startFrozenBalanceUnlockCron,
+  runFrozenBalanceUnlockImmediately
+} = require('./scripts/frozenBalanceUnlockCron');
 startFrozenBalanceUnlockCron();
-console.log('✅ Frozen balance unlock cron job initialized');
+runFrozenBalanceUnlockImmediately(); // Run on startup
+console.log('✅ Frozen balance unlock cron job initialized (runs every 5 seconds)');
 
 // Initialize dispute escalation cron job (daily at 2:00 AM)
 const { startDisputeEscalationCron } = require('./scripts/disputeEscalationCron');
