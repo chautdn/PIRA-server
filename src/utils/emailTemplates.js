@@ -275,6 +275,74 @@ const emailTemplates = {
       </table>
     </body>
     </html>
+  `,
+
+  disputeNotificationEmail: (recipientName, complainantName, disputeId, disputeType, productName, description, disputeUrl, createdAt) => `
+    <!DOCTYPE html>
+    <html lang="vi">
+    <head>
+      <meta charset="UTF-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      <title>Thông báo khiếu nại mới</title>
+    </head>
+    <body style="margin: 0; padding: 0; font-family: Arial, Helvetica, sans-serif; background-color: #f4f4f4;">
+      <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="max-width: 600px; margin: 20px auto; background-color: #ffffff; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+        <tr>
+          <td style="padding: 20px 0; text-align: center; background-color: #dc3545; border-top-left-radius: 8px; border-top-right-radius: 8px;">
+            <img src="https://via.placeholder.com/150x50?text=PIRA+System" alt="Logo" style="max-width: 150px; height: auto;">
+          </td>
+        </tr>
+        <tr>
+          <td style="padding: 30px;">
+            <h1 style="font-size: 24px; color: #dc3545; margin: 0 0 20px; text-align: center;">⚠️ Bạn có khiếu nại mới</h1>
+            <p style="font-size: 16px; color: #555555; line-height: 1.6; margin: 0 0 20px;">Xin chào <strong>${recipientName}</strong>,</p>
+            <p style="font-size: 16px; color: #555555; line-height: 1.6; margin: 0 0 20px;">Bạn vừa nhận được một khiếu nại mới từ <strong>${complainantName}</strong>. Vui lòng xem xét và phản hồi trong thời gian sớm nhất.</p>
+            
+            <div style="background-color: #f8d7da; border-left: 4px solid #dc3545; padding: 15px; margin: 20px 0; border-radius: 4px;">
+              <p style="margin: 0 0 10px; font-weight: bold; color: #721c24;">📋 Thông tin khiếu nại:</p>
+              <p style="margin: 0 0 8px; color: #721c24;"><strong>Mã khiếu nại:</strong> ${disputeId}</p>
+              <p style="margin: 0 0 8px; color: #721c24;"><strong>Loại khiếu nại:</strong> ${disputeType}</p>
+              <p style="margin: 0 0 8px; color: #721c24;"><strong>Sản phẩm:</strong> ${productName}</p>
+              <p style="margin: 0; color: #721c24;"><strong>Thời gian tạo:</strong> ${createdAt}</p>
+            </div>
+
+            <div style="background-color: #fff3cd; border-left: 4px solid #ffc107; padding: 15px; margin: 20px 0; border-radius: 4px;">
+              <p style="margin: 0 0 10px; font-weight: bold; color: #856404;">📝 Mô tả khiếu nại:</p>
+              <p style="margin: 0; color: #856404;">${description || 'Không có mô tả chi tiết'}</p>
+            </div>
+
+            <div style="background-color: #d1ecf1; border-left: 4px solid #17a2b8; padding: 15px; margin: 20px 0; border-radius: 4px;">
+              <p style="margin: 0 0 10px; font-weight: bold; color: #0c5460;">⏰ Lưu ý quan trọng:</p>
+              <ul style="margin: 10px 0; padding-left: 20px; color: #0c5460;">
+                <li>Bạn có <strong>48 giờ</strong> để phản hồi khiếu nại này</li>
+                <li>Nếu không phản hồi, hệ thống sẽ tự động xử lý theo quy định</li>
+                <li>Vui lòng chuẩn bị bằng chứng nếu cần thiết</li>
+              </ul>
+            </div>
+
+            <p style="font-size: 16px; color: #555555; line-height: 1.6; margin: 20px 0;">Nhấp vào nút bên dưới để xem chi tiết và phản hồi khiếu nại:</p>
+            
+            <table role="presentation" border="0" cellpadding="0" cellspacing="0" style="margin: 20px auto;">
+              <tr>
+                <td style="text-align: center;">
+                  <a href="${disputeUrl}" style="display: inline-block; padding: 12px 24px; background-color: #dc3545; color: #ffffff; text-decoration: none; font-size: 16px; border-radius: 4px; font-weight: bold;">Xem khiếu nại</a>
+                </td>
+              </tr>
+            </table>
+
+            <p style="font-size: 14px; color: #777777; line-height: 1.6; margin: 20px 0 0;">Nếu bạn có bất kỳ thắc mắc nào, vui lòng liên hệ với bộ phận hỗ trợ.</p>
+            <p style="font-size: 14px; color: #777777; line-height: 1.6; margin: 10px 0 0;">Trân trọng,<br>Đội ngũ PIRA System</p>
+          </td>
+        </tr>
+        <tr>
+          <td style="padding: 20px; text-align: center; background-color: #f8f8f8; border-bottom-left-radius: 8px; border-bottom-right-radius: 8px;">
+            <p style="font-size: 14px; color: #777777; margin: 0;">© 2025 PIRA System. All rights reserved.</p>
+            <p style="font-size: 12px; color: #999999; margin: 10px 0 0;">Email: support@pira.com | Hotline: 1900 xxxx</p>
+          </td>
+        </tr>
+      </table>
+    </body>
+    </html>
   `
 };
 
