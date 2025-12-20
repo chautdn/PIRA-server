@@ -12,6 +12,51 @@ const { sendDisputeNotificationEmail } = require('../utils/mailer');
 
 class DisputeService {
   /**
+   * Helper: Emit socket event cho dispute (real-time updates)
+   * @param {String} event - Tên event (dispute:new, dispute:statusChanged, etc.)
+   * @param {Object} data - Dữ liệu để emit
+   * @param {Array|String} userIds - ID(s) của user(s) cần nhận event
+   * @param {Boolean} includeAdmins - Có thêm tất cả Admin vào recipients không (default: true)
+   */
+  async _emitDisputeSocket(event, data, userIds, includeAdmins = true) {
+    try {
+      if (!global.disputeSocket) {
+        console.warn('Dispute socket not initialized');
+        return;
+      }
+
+      let ids = Array.isArray(userIds) ? userIds : [userIds];
+      
+      // Convert to string IDs - handle both ObjectId and populated User objects
+      ids = ids.map(id => {
+        if (!id) return null;
+        // If it's a populated User object, get _id
+        if (id._id) return id._id.toString();
+        // If it's an ObjectId or string
+        return id.toString();
+      }).filter(Boolean);
+      
+      // Auto-add all Admins to recipients for dispute events
+      if (includeAdmins) {
+        const User = require('../models/User');
+        const admins = await User.find({ role: 'ADMIN' }).select('_id');
+        const adminIds = admins.map(a => a._id.toString());
+        ids = [...ids, ...adminIds];
+        // Remove duplicates
+        ids = [...new Set(ids)];
+      }
+      
+      global.disputeSocket.emitToUsers(ids, event, {
+        ...data,
+        timestamp: new Date()
+      });
+      console.log(`📡 Emitted ${event} to users:`, ids);
+    } catch (error) {
+      console.error('Error emitting dispute socket:', error);
+    }
+  }
+
+  /**
    * Helper: Tạo query tìm dispute theo _id hoặc disputeId
    */
   _buildDisputeQuery(disputeId) {
@@ -553,6 +598,19 @@ class DisputeService {
       // Don't throw error to prevent blocking the main flow
     }
 
+    // ===== EMIT SOCKET: Thông báo real-time cho respondent về dispute mới =====
+    const complainantInfo = await User.findById(complainantId);
+    await this._emitDisputeSocket('dispute:new', {
+      disputeId: dispute._id,
+      disputeNumber: dispute.disputeId,
+      creatorId: complainantId,
+      creatorName: complainantInfo?.profile?.fullName || 'Người dùng',
+      orderId: subOrder.masterOrder?._id || subOrder.masterOrder,
+      reason: this._getDisputeTypeLabel(type),
+      status: dispute.status,
+      message: `${complainantInfo?.profile?.fullName || 'Người dùng'} đã tạo khiếu nại: ${this._getDisputeTypeLabel(type)}`
+    }, respondentId);
+
     return dispute.populate(['complainant', 'respondent', 'subOrder']);
   }
 
@@ -951,6 +1009,33 @@ class DisputeService {
       console.error('Failed to create respondent response notification:', error);
     }
 
+    // ===== EMIT SOCKET: Thông báo real-time cho complainant về phản hồi =====
+    const respondentInfo = await User.findById(respondentId);
+    await this._emitDisputeSocket('dispute:responseReceived', {
+      disputeId: dispute._id,
+      disputeNumber: dispute.disputeId,
+      response: decision,
+      respondentId: respondentId,
+      respondentName: respondentInfo?.profile?.fullName || 'Người dùng',
+      status: dispute.status,
+      message: decision === 'ACCEPTED'
+        ? `${respondentInfo?.profile?.fullName || 'Đối phương'} đã chấp nhận khiếu nại`
+        : `${respondentInfo?.profile?.fullName || 'Đối phương'} đã từ chối khiếu nại`
+    }, dispute.complainant);
+
+    // Nếu từ chối, cũng emit status change cho cả 2 bên
+    if (decision !== 'ACCEPTED') {
+      await this._emitDisputeSocket('dispute:statusChanged', {
+        disputeId: dispute._id,
+        disputeNumber: dispute.disputeId,
+        status: dispute.status,
+        previousStatus: 'OPEN',
+        message: dispute.shipmentType === 'RETURN' 
+          ? 'Khiếu nại chuyển sang giai đoạn đàm phán'
+          : 'Khiếu nại đang chờ Admin xem xét'
+      }, [dispute.complainant, dispute.respondent]);
+    }
+
     return dispute.populate(['complainant', 'respondent']);
   }
 
@@ -1036,6 +1121,17 @@ class DisputeService {
     } catch (error) {
       console.error('Failed to create admin review notification:', error);
     }
+
+    // ===== EMIT SOCKET: Thông báo real-time về quyết định của Admin =====
+    await this._emitDisputeSocket('dispute:adminDecisionMade', {
+      disputeId: dispute._id,
+      disputeNumber: dispute.disputeId,
+      status: dispute.status,
+      decision: whoIsRight,
+      decisionText: decisionText,
+      adminNote: reasoning,
+      message: 'Admin đã đưa ra quyết định cho khiếu nại của bạn'
+    }, [dispute.complainant, dispute.respondent]);
 
     return dispute.populate(['complainant', 'respondent', 'assignedAdmin']);
   }
@@ -1159,6 +1255,16 @@ class DisputeService {
             console.error('Failed to create admin decision response notification:', error);
           }
 
+          // ===== EMIT SOCKET: Thông báo dispute đã resolve =====
+          await this._emitDisputeSocket('dispute:completed', {
+            disputeId: dispute._id,
+            disputeNumber: dispute.disputeId,
+            status: 'RESOLVED',
+            resolution: dispute.resolution?.resolutionText,
+            resolutionSource: 'ADMIN_DECISION',
+            message: 'Khiếu nại đã được giải quyết - Cả hai bên đã chấp nhận quyết định của Admin'
+          }, [dispute.complainant, dispute.respondent]);
+
           return dispute.populate(['complainant', 'respondent', 'assignedAdmin']);
         } catch (error) {
           await session.abortTransaction();
@@ -1199,6 +1305,16 @@ class DisputeService {
         });
 
         await dispute.save();
+
+        // ===== EMIT SOCKET: Thông báo negotiation bắt đầu =====
+        await this._emitDisputeSocket('dispute:negotiationResult', {
+          disputeId: dispute._id,
+          disputeNumber: dispute.disputeId,
+          status: dispute.status,
+          response: 'REJECTED',
+          newStatus: 'IN_NEGOTIATION',
+          message: 'Một bên đã từ chối quyết định admin. Chuyển sang giai đoạn đàm phán.'
+        }, [dispute.complainant, dispute.respondent]);
 
         // Gửi notification cho bên kia
         try {
@@ -2026,6 +2142,18 @@ class DisputeService {
         .populate('complainant', 'profile email')
         .populate('respondent', 'profile email')
         .populate('assignedAdmin', 'profile email');
+
+      // ===== EMIT SOCKET: Thông báo quyết định cuối cùng (Owner Dispute) =====
+      await this._emitDisputeSocket('dispute:completed', {
+        disputeId: dispute._id,
+        disputeNumber: dispute.disputeId,
+        status: 'RESOLVED',
+        resolution: dispute.resolution?.resolutionText,
+        resolutionSource: dispute.resolution?.resolutionSource || 'THIRD_PARTY',
+        decision: decision,
+        whoIsRight: decision === 'COMPLAINANT_RIGHT' ? 'Owner' : 'Renter',
+        message: `Admin đã đưa ra quyết định cuối cùng - ${decision === 'COMPLAINANT_RIGHT' ? 'Owner đúng, renter bồi thường' : 'Renter đúng, mở khóa tiền cọc'}`
+      }, [dispute.complainant, dispute.respondent]);
 
       // Gửi notification
       try {

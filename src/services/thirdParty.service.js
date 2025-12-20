@@ -11,6 +11,54 @@ const notificationService = require('./notification.service');
 
 class ThirdPartyService {
   /**
+   * Helper: Emit socket event cho dispute (real-time updates)
+   * @param {String} event - Tên event
+   * @param {Object} data - Dữ liệu để emit
+   * @param {Array|String} userIds - ID(s) của user(s) cần nhận event
+   * @param {Boolean} includeAdmins - Có thêm tất cả Admin vào recipients không (default: true)
+   */
+  async _emitDisputeSocket(event, data, userIds, includeAdmins = true) {
+    try {
+      if (!global.disputeSocket) {
+        console.warn('Dispute socket not initialized');
+        return;
+      }
+
+      let ids = Array.isArray(userIds) ? userIds : [userIds];
+      
+      // Convert to string IDs - handle both ObjectId and populated User objects
+      ids = ids.map(id => {
+        if (!id) return null;
+        // If it's a populated User object, get _id
+        if (id._id) return id._id.toString();
+        // If it's an ObjectId or string
+        return id.toString();
+      }).filter(Boolean);
+      
+      // Auto-add all Admins to recipients for dispute events
+      if (includeAdmins) {
+        const admins = await User.find({ role: 'ADMIN' }).select('_id');
+        const adminIds = admins.map(a => a._id.toString());
+        ids = [...ids, ...adminIds];
+        // Remove duplicates
+        ids = [...new Set(ids)];
+      }
+      
+      console.log(`📡 [ThirdParty] Preparing to emit ${event}`);
+      console.log(`   Recipients: ${ids.join(', ')}`);
+      console.log(`   Data:`, JSON.stringify(data, null, 2));
+      
+      global.disputeSocket.emitToUsers(ids, event, {
+        ...data,
+        timestamp: new Date()
+      });
+      console.log(`✅ [ThirdParty] Emitted ${event} to ${ids.length} users`);
+    } catch (error) {
+      console.error('Error emitting dispute socket from third party:', error);
+    }
+  }
+
+  /**
    * Helper: Tạo query tìm dispute theo _id hoặc disputeId
    */
   _buildDisputeQuery(disputeId) {
@@ -153,6 +201,16 @@ class ThirdPartyService {
     } catch (error) {
       console.error('Failed to create third party escalation notification:', error);
     }
+
+    // ===== EMIT SOCKET: Thông báo chuyển sang bên thứ 3 =====
+    await this._emitDisputeSocket('dispute:escalatedNotification', {
+      disputeId: dispute._id,
+      disputeNumber: dispute.disputeId,
+      escalatedTo: 'THIRD_PARTY',
+      escalatedBy: adminId,
+      thirdPartyName: thirdPartyInfo.name,
+      message: `Tranh chấp đã được chuyển sang bên thứ 3: ${thirdPartyInfo.name}`
+    }, [dispute.complainant, dispute.respondent]);
 
     return dispute.populate(['complainant', 'respondent', 'assignedAdmin']);
   }
@@ -406,6 +464,16 @@ class ThirdPartyService {
           console.error('Failed to send RENTER_NO_RETURN resolution notifications:', notifErr);
         }
 
+        // ===== EMIT SOCKET: Thông báo dispute resolved =====
+        await this._emitDisputeSocket('dispute:completed', {
+          disputeId: dispute._id,
+          disputeNumber: dispute.disputeId,
+          status: 'RESOLVED',
+          resolution: dispute.resolution?.resolutionText,
+          resolutionSource: 'THIRD_PARTY',
+          message: 'Tranh chấp đã được chuyển cho công an xử lý - Tiền cọc đã chuyển cho owner'
+        }, [dispute.complainant, dispute.respondent]);
+
       } catch (error) {
         await session.abortTransaction();
         session.endSession();
@@ -414,6 +482,15 @@ class ThirdPartyService {
     } else {
       // Các case khác - giữ nguyên flow cũ (chỉ save và chờ upload evidence)
       await dispute.save();
+      
+      // ===== EMIT SOCKET: Thông báo admin đã chia sẻ thông tin 2 bên =====
+      await this._emitDisputeSocket('dispute:statusChanged', {
+        disputeId: dispute._id,
+        disputeNumber: dispute.disputeId,
+        status: dispute.status,
+        previousStatus: 'THIRD_PARTY_ESCALATED',
+        message: 'Admin đã chia sẻ thông tin cá nhân 2 bên và ảnh bằng chứng shipper'
+      }, [dispute.complainant, dispute.respondent]);
     }
 
     return dispute;
@@ -522,6 +599,27 @@ class ThirdPartyService {
       console.error('Failed to create evidence upload notification:', error);
     }
 
+    // ===== EMIT SOCKET: Thông báo bằng chứng mới =====
+    const uploaderInfo = await User.findById(userId);
+    
+    await this._emitDisputeSocket('dispute:newEvidence', {
+      disputeId: dispute._id,
+      disputeNumber: dispute.disputeId,
+      uploaderId: userId,
+      uploaderName: uploaderInfo?.profile?.fullName || 'Người dùng',
+      evidenceType: 'THIRD_PARTY',
+      message: `${uploaderInfo?.profile?.fullName || 'Người dùng'} đã upload kết quả từ bên thứ 3`
+    }, [dispute.complainant, dispute.respondent]);
+
+    // Emit status change
+    await this._emitDisputeSocket('dispute:statusChanged', {
+      disputeId: dispute._id,
+      disputeNumber: dispute.disputeId,
+      status: 'THIRD_PARTY_EVIDENCE_UPLOADED',
+      previousStatus: 'THIRD_PARTY_ESCALATED',
+      message: 'Bằng chứng từ bên thứ 3 đã được upload - chờ Admin xử lý'
+    }, [dispute.complainant, dispute.respondent]);
+
     return dispute;
   }
 
@@ -615,6 +713,15 @@ class ThirdPartyService {
     } catch (error) {
       console.error('Failed to create rejection notification:', error);
     }
+
+    // ===== EMIT SOCKET: Thông báo bằng chứng bị từ chối =====
+    await this._emitDisputeSocket('dispute:statusChanged', {
+      disputeId: dispute._id,
+      disputeNumber: dispute.disputeId,
+      status: 'THIRD_PARTY_ESCALATED',
+      previousStatus: 'THIRD_PARTY_EVIDENCE_UPLOADED',
+      message: `Admin từ chối bằng chứng: ${reason}. Vui lòng upload lại.`
+    }, [dispute.complainant, dispute.respondent]);
 
     return dispute;
   }
@@ -881,6 +988,17 @@ class ThirdPartyService {
       } catch (error) {
         console.error('Failed to create final decision notification:', error);
       }
+
+      // ===== EMIT SOCKET: Thông báo quyết định cuối cùng =====
+      await this._emitDisputeSocket('dispute:completed', {
+        disputeId: dispute._id,
+        disputeNumber: dispute.disputeId,
+        status: 'RESOLVED',
+        resolution: resolutionText,
+        resolutionSource: 'THIRD_PARTY',
+        whoIsRight,
+        message: 'Admin đã đưa ra quyết định cuối cùng - Khiếu nại đã kết thúc'
+      }, [dispute.complainant, dispute.respondent]);
 
       return dispute.populate(['complainant', 'respondent', 'assignedAdmin']);
     } catch (error) {
