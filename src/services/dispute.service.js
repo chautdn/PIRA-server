@@ -8,6 +8,7 @@ const Transaction = require('../models/Transaction');
 const { generateDisputeId, generateShipmentId } = require('../utils/idGenerator');
 const notificationService = require('./notification.service');
 const ChatGateway = require('../socket/chat.gateway');
+const { sendDisputeNotificationEmail } = require('../utils/mailer');
 
 class DisputeService {
   /**
@@ -320,6 +321,10 @@ class DisputeService {
         path: 'masterOrder',
         select: '_id renter' // Lấy _id và renter
       })
+      .populate({
+        path: 'products.product',
+        select: 'name title' // Lấy tên sản phẩm
+      })
       .lean(); // Dùng lean() để không trigger Mongoose middleware khi save
     
     if (!subOrder) {
@@ -328,7 +333,9 @@ class DisputeService {
 
     // Kiểm tra product tồn tại
     const product = subOrder.products[productIndex];
-    if (!product || product.product.toString() !== productId.toString()) {
+    // Sau khi populate, product.product có thể là object hoặc ObjectId
+    const productIdFromSubOrder = product?.product?._id || product?.product;
+    if (!product || productIdFromSubOrder?.toString() !== productId.toString()) {
       throw new Error('Product không tồn tại trong SubOrder');
     }
 
@@ -528,6 +535,22 @@ class DisputeService {
       }
     } catch (error) {
       console.error('Failed to create dispute notification:', error);
+    }
+
+    // Gửi email thông báo cho respondent
+    try {
+      const respondent = await User.findById(respondentId);
+      const complainantUser = await User.findById(complainantId);
+      
+      if (respondent && complainantUser) {
+        // Lấy tên sản phẩm từ populated product
+        const productData = subOrder.products[productIndex]?.product;
+        const productName = productData?.name || productData?.title || 'Sản phẩm';
+        await sendDisputeNotificationEmail(respondent, complainantUser, dispute, productName);
+      }
+    } catch (emailError) {
+      console.error('Failed to send dispute email notification:', emailError);
+      // Don't throw error to prevent blocking the main flow
     }
 
     return dispute.populate(['complainant', 'respondent', 'subOrder']);
@@ -1304,7 +1327,8 @@ class DisputeService {
         populate: [
           { path: 'owner', select: 'profile email phone' },
           { path: 'masterOrder', populate: { path: 'renter', select: 'profile email phone' } },
-          { path: 'products.product' }
+          { path: 'products.product' },
+          { path: 'contract' }
         ]
       })
       .populate('negotiationRoom.chatRoomId')
