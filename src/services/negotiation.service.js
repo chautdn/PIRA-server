@@ -1106,7 +1106,7 @@ class NegotiationService {
    * @returns {Promise<Dispute>}
    */
   async uploadThirdPartyEvidence(disputeId, userId, evidenceData) {
-    const { documents, photos, officialDecision } = evidenceData;
+    const { documents, photos, videos, officialDecision } = evidenceData;
 
     const dispute = await Dispute.findOne(this._buildDisputeQuery(disputeId));
 
@@ -1135,6 +1135,7 @@ class NegotiationService {
     dispute.thirdPartyResolution.evidence = {
       documents: documents || [],
       photos: photos || [],
+      videos: videos || [],
       officialDecision: officialDecision || '',
       uploadedBy: userId,
       uploadedAt: new Date()

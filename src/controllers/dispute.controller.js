@@ -290,12 +290,13 @@ class DisputeController {
   async uploadThirdPartyEvidence(req, res) {
     try {
       const { disputeId } = req.params;
-      const { documents, photos, officialDecision } = req.body;
+      const { documents, photos, videos, officialDecision } = req.body;
       const userId = req.user._id;
 
       const dispute = await thirdPartyService.uploadThirdPartyEvidence(disputeId, userId, {
         documents,
         photos,
+        videos,
         officialDecision
       });
 
@@ -362,12 +363,13 @@ class DisputeController {
   async uploadThirdPartyEvidence(req, res) {
     try {
       const { disputeId } = req.params;
-      const { documents, photos, officialDecision } = req.body;
+      const { documents, photos, videos, officialDecision } = req.body;
       const userId = req.user._id;
 
       const dispute = await negotiationService.uploadThirdPartyEvidence(disputeId, userId, {
         documents,
         photos,
+        videos,
         officialDecision
       });
 

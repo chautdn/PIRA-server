@@ -427,7 +427,7 @@ class ThirdPartyService {
    * @returns {Promise<Dispute>}
    */
   async uploadThirdPartyEvidence(disputeId, userId, evidence) {
-    const { documents, photos, officialDecision } = evidence;
+    const { documents, photos, videos, officialDecision } = evidence;
 
     const dispute = await Dispute.findOne(this._buildDisputeQuery(disputeId));
     if (!dispute) {
@@ -450,6 +450,7 @@ class ThirdPartyService {
     dispute.thirdPartyResolution.evidence = {
       documents: documents || [],
       photos: photos || [],
+      videos: videos || [],
       officialDecision,
       uploadedBy: userId,
       uploadedAt: new Date()

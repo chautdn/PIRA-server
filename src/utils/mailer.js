@@ -122,5 +122,87 @@ const sendShipperNotificationEmail = async (shipper, shipment, product, renterIn
   }
 };
 
+/**
+ * Send dispute notification email to respondent
+ * @param {Object} respondent - Respondent user object
+ * @param {Object} complainant - Complainant user object (person who created dispute)
+ * @param {Object} dispute - Dispute object
+ * @param {String} productName - Product name
+ */
+const sendDisputeNotificationEmail = async (respondent, complainant, dispute, productName) => {
+  try {
+    const emailTemplates = require('./emailTemplates');
+    
+    if (!respondent.email) {
+      console.warn('⚠️ Respondent email not found:', respondent._id);
+      return null;
+    }
+
+    const respondentName = respondent.profile?.fullName || 
+      `${respondent.profile?.firstName || ''} ${respondent.profile?.lastName || ''}`.trim() || 
+      respondent.email;
+    
+    const complainantName = complainant.profile?.fullName || 
+      `${complainant.profile?.firstName || ''} ${complainant.profile?.lastName || ''}`.trim() || 
+      complainant.email;
+
+    // Mapping dispute type to Vietnamese label
+    const disputeTypeLabels = {
+      'WRONG_PRODUCT': 'Sản phẩm sai mô tả',
+      'DAMAGED_ON_DELIVERY': 'Hư hỏng khi giao hàng',
+      'DAMAGED_ON_RETURN': 'Hư hỏng khi trả hàng',
+      'DAMAGED_BY_SHIPPER': 'Hư hỏng do shipper',
+      'RENTER_NO_RETURN': 'Renter không trả hàng',
+      'OTHER': 'Khác'
+    };
+    
+    const disputeTypeLabel = disputeTypeLabels[dispute.type] || dispute.type;
+    
+    const createdAt = new Date(dispute.createdAt).toLocaleString('vi-VN', {
+      weekday: 'long',
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit'
+    });
+
+    const disputeUrl = `${process.env.CLIENT_URL || 'http://localhost:5173'}/disputes/${dispute._id}`;
+
+    const html = emailTemplates.disputeNotificationEmail(
+      respondentName,
+      complainantName,
+      dispute.disputeId,
+      disputeTypeLabel,
+      productName || 'Sản phẩm',
+      dispute.description,
+      disputeUrl,
+      createdAt
+    );
+
+    const subject = `[PIRA] ⚠️ Bạn có khiếu nại mới #${dispute.disputeId}`;
+
+    console.log(`📧 Sending dispute notification email to ${respondent.email}:`);
+    console.log(`   Respondent: ${respondentName}`);
+    console.log(`   Complainant: ${complainantName}`);
+    console.log(`   Dispute ID: ${dispute.disputeId}`);
+    console.log(`   Dispute Type: ${disputeTypeLabel}`);
+
+    const result = await sendMail({
+      email: respondent.email,
+      subject,
+      html
+    });
+
+    console.log(`✅ Dispute notification email sent successfully to ${respondent.email}`);
+    return result;
+  } catch (error) {
+    console.error('❌ Error sending dispute notification email:', error.message);
+    // Don't throw error to prevent blocking the main flow
+    return null;
+  }
+};
+
 module.exports = sendMail;
 module.exports.sendShipperNotificationEmail = sendShipperNotificationEmail;
+module.exports.sendDisputeNotificationEmail = sendDisputeNotificationEmail;
