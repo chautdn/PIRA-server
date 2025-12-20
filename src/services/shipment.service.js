@@ -355,6 +355,31 @@ class ShipmentService {
     }
 
     if (shipment.type === 'DELIVERY') {
+        // ✅ IMPORTANT: Calculate rental amount BEFORE updating product status
+        // Only include products that were NOT REJECTED (all non-rejected products should be counted)
+        console.log(`   🔍 Checking products for rental calculation (BEFORE status update):`);
+        shipment.subOrder.products.forEach((p, idx) => {
+          console.log(`      Product ${idx}: status="${p.productStatus}", rental=${(p.totalRental || 0).toLocaleString()} VND`);
+        });
+        
+        // Filter out REJECTED products (products rejected before contract signing)
+        const rentedProducts = shipment.subOrder.products.filter(
+          p => p.productStatus !== 'REJECTED'
+        );
+        
+        const rentalAmount = rentedProducts.reduce(
+          (sum, p) => sum + (p.totalRental || 0), 
+          0
+        );
+        
+        console.log(`   📊 Rental calculation:`);
+        console.log(`      - Total products: ${shipment.subOrder.products.length}`);
+        console.log(`      - Rented products (not REJECTED): ${rentedProducts.length}`);
+        rentedProducts.forEach(p => {
+          console.log(`        • Product ${p._id}: ${(p.totalRental || 0).toLocaleString()} VND`);
+        });
+        console.log(`      - Total rental amount: ${rentalAmount.toLocaleString()} VND`);
+
         // DELIVERY: product → ACTIVE, subOrder → ACTIVE
         if (shipment.productIndex !== undefined) {
           shipment.subOrder.products[shipment.productIndex].productStatus = 'ACTIVE';
@@ -365,26 +390,6 @@ class ShipmentService {
       // Transfer 90% of rental fee to owner (frozen until order completed)
       // Process in background to avoid blocking response
       const PaymentQueue = require('./paymentQueue.service');
-      
-      // ✅ FIX: Only calculate rental from PENDING products in deliveryBatches
-      let rentalAmount = 0;
-      if (shipment.subOrder.deliveryBatches && shipment.subOrder.deliveryBatches.length > 0) {
-        // Get product IDs from PENDING batches
-        const pendingProductIds = shipment.subOrder.deliveryBatches
-          .filter(batch => batch.shippingFee?.status === 'PENDING')
-          .flatMap(batch => batch.products.map(p => p.toString()));
-        
-        // Sum rental fees from these products only
-        rentalAmount = shipment.subOrder.products
-          .filter(p => pendingProductIds.includes(p._id.toString()))
-          .reduce((sum, p) => sum + (p.totalRental || 0), 0);
-        
-        console.log(`   📊 Rental calculation: ${pendingProductIds.length} PENDING products, total: ${rentalAmount.toLocaleString()} VND`);
-      } else {
-        // Fallback to old behavior if no deliveryBatches
-        rentalAmount = shipment.subOrder.pricing?.subtotalRental || 0;
-        console.log(`   ⚠️  No deliveryBatches found, using pricing.subtotalRental: ${rentalAmount.toLocaleString()} VND`);
-      }
       
       const ownerCompensation = Math.floor(rentalAmount * 0.9); // 90% of rental fee
 
