@@ -602,13 +602,8 @@ class ExtensionService {
 
         // Send socket notification to renter
         if (global.chatGateway) {
-          // Emit notification to renter
-          global.chatGateway.emitNotification(result.renter._id.toString(), {
-            type: 'EXTENSION_APPROVED',
-            title: 'Yêu cầu gia hạn được chấp nhận',
-            message: notification.message,
-            timestamp: new Date().toISOString()
-          });
+          // Emit notification with full notification object including _id
+          global.chatGateway.emitNotification(result.renter._id.toString(), notification);
           
           global.chatGateway.emitToUser(result.renter._id.toString(), 'extension-approved', {
             type: 'extension_approved',
@@ -617,6 +612,7 @@ class ExtensionService {
             ownerName: result.owner.profile?.firstName || 'Chủ sở hữu',
             extensionDays: result.extensionDays,
             newEndDate: result.newEndDate,
+            extensionCost: extensionRequest.totalCost,
             message: `Gia hạn được chấp nhận đến ${result.newEndDate.toLocaleDateString('vi-VN')}`
           });
         }
@@ -696,13 +692,8 @@ class ExtensionService {
 
         // Send socket notification to renter
         if (global.chatGateway) {
-          // Emit notification
-          global.chatGateway.emitNotification(result.renter._id.toString(), {
-            type: 'EXTENSION_REJECTED',
-            title: 'Yêu cầu gia hạn bị từ chối',
-            message: notification.message,
-            timestamp: new Date().toISOString()
-          });
+          // Emit notification with full notification object including _id
+          global.chatGateway.emitNotification(result.renter._id.toString(), notification);
           
           global.chatGateway.emitToUser(result.renter._id.toString(), 'extension-rejected', {
             type: 'extension_rejected',
@@ -711,7 +702,8 @@ class ExtensionService {
             ownerName: result.owner.profile?.firstName || 'Chủ sở hữu',
             rejectionReason: rejectionReason,
             notes: notes,
-            message: `Yêu cầu gia hạn bị từ chối: ${rejectionReason || 'Không có lý do'}`
+            refundAmount: extensionRequest.totalCost,
+            message: `Yêu cầu gia hạn bị từ chối: ${rejectionReason || 'Không có lý do'}. Tiền đã được hoàn trả.`
           });
         }
       } catch (err) {

@@ -129,6 +129,7 @@ class ShipmentService {
   async getShipment(id) {
     return Shipment.findById(id).populate({
       path: 'subOrder',
+      select: 'subOrderNumber rentalPeriod products deliveryBatches masterOrder owner',
       populate: [
         {
           path: 'masterOrder',
@@ -141,6 +142,11 @@ class ShipmentService {
         {
           path: 'owner',
           select: 'profile email phone'
+        },
+        {
+          path: 'products.product',
+          model: 'Product',
+          select: 'title images price description category'
         }
       ]
     }).populate('shipper');
@@ -150,6 +156,7 @@ class ShipmentService {
     const shipments = await Shipment.find({ shipper: shipperId })
       .populate({
         path: 'subOrder',
+        select: 'subOrderNumber rentalPeriod products deliveryBatches masterOrder owner',
         populate: [
           {
             path: 'masterOrder',
@@ -358,7 +365,27 @@ class ShipmentService {
       // Transfer 90% of rental fee to owner (frozen until order completed)
       // Process in background to avoid blocking response
       const PaymentQueue = require('./paymentQueue.service');
-      const rentalAmount = shipment.subOrder.pricing?.subtotalRental || 0;
+      
+      // ✅ FIX: Only calculate rental from PENDING products in deliveryBatches
+      let rentalAmount = 0;
+      if (shipment.subOrder.deliveryBatches && shipment.subOrder.deliveryBatches.length > 0) {
+        // Get product IDs from PENDING batches
+        const pendingProductIds = shipment.subOrder.deliveryBatches
+          .filter(batch => batch.shippingFee?.status === 'PENDING')
+          .flatMap(batch => batch.products.map(p => p.toString()));
+        
+        // Sum rental fees from these products only
+        rentalAmount = shipment.subOrder.products
+          .filter(p => pendingProductIds.includes(p._id.toString()))
+          .reduce((sum, p) => sum + (p.totalRental || 0), 0);
+        
+        console.log(`   📊 Rental calculation: ${pendingProductIds.length} PENDING products, total: ${rentalAmount.toLocaleString()} VND`);
+      } else {
+        // Fallback to old behavior if no deliveryBatches
+        rentalAmount = shipment.subOrder.pricing?.subtotalRental || 0;
+        console.log(`   ⚠️  No deliveryBatches found, using pricing.subtotalRental: ${rentalAmount.toLocaleString()} VND`);
+      }
+      
       const ownerCompensation = Math.floor(rentalAmount * 0.9); // 90% of rental fee
 
       if (ownerCompensation > 0 && shipment.subOrder.owner) {
@@ -622,7 +649,21 @@ class ShipmentService {
     if (shipment.type === 'DELIVERY' && shipment.subOrder) {
       try {
         const ownerId = shipment.subOrder.owner;
-        const rentalAmount = shipment.subOrder.pricing?.subtotalRental || 0;
+        
+        // ✅ FIX: Calculate rental from PENDING products only
+        let rentalAmount = 0;
+        if (shipment.subOrder.deliveryBatches && shipment.subOrder.deliveryBatches.length > 0) {
+          const pendingProductIds = shipment.subOrder.deliveryBatches
+            .filter(batch => batch.shippingFee?.status === 'PENDING')
+            .flatMap(batch => batch.products.map(p => p.toString()));
+          
+          rentalAmount = shipment.subOrder.products
+            .filter(p => pendingProductIds.includes(p._id.toString()))
+            .reduce((sum, p) => sum + (p.totalRental || 0), 0);
+        } else {
+          rentalAmount = shipment.subOrder.pricing?.subtotalRental || 0;
+        }
+        
         const depositAmount = shipment.subOrder.pricing?.subtotalDeposit || 0;
 
         // Only update status if SubOrder is not already ACTIVE (was already set by shipper markDelivered)
@@ -766,6 +807,12 @@ class ShipmentService {
             continue;
           }
 
+          // ✅ NEW: Skip products that are not CONFIRMED
+          if (productItem.productStatus !== 'CONFIRMED') {
+            console.log(`        ⏭️ Skipping product ${product.name || product._id} - status: ${productItem.productStatus} (not CONFIRMED)`);
+            continue;
+          }
+
           // Get owner and renter addresses
           const ownerAddress = owner.address || {};
           const renterDeliveryAddress = masterOrder.deliveryAddress || {}; // Use delivery address from order, not profile
@@ -904,6 +951,27 @@ class ShipmentService {
                   typeof global.chatGateway.emitNotification === 'function'
                 ) {
                   global.chatGateway.emitNotification(shipperId.toString(), deliveryNotif);
+                }
+
+                // ✅ Emit shipment:created event for real-time shipment list update
+                if (
+                  global.chatGateway &&
+                  typeof global.chatGateway.emitShipmentCreated === 'function'
+                ) {
+                  global.chatGateway.emitShipmentCreated(shipperId.toString(), {
+                    shipment: {
+                      _id: outboundShipment._id,
+                      shipmentId: outboundShipment.shipmentId,
+                      type: 'DELIVERY',
+                      status: outboundShipment.status,
+                      scheduledAt: outboundShipment.scheduledAt,
+                      productName: productName,
+                      ownerName: ownerName,
+                      renterName: renterName
+                    },
+                    timestamp: new Date().toISOString()
+                  });
+                  console.log(`        ✅ Emitted shipment:created event to shipper ${shipperId}`);
                 }
 
                 // Send email notification with complete shipment details
@@ -1074,6 +1142,27 @@ class ShipmentService {
                   typeof global.chatGateway.emitNotification === 'function'
                 ) {
                   global.chatGateway.emitNotification(shipperId.toString(), returnNotif);
+                }
+
+                // ✅ Emit shipment:created event for real-time shipment list update
+                if (
+                  global.chatGateway &&
+                  typeof global.chatGateway.emitShipmentCreated === 'function'
+                ) {
+                  global.chatGateway.emitShipmentCreated(shipperId.toString(), {
+                    shipment: {
+                      _id: returnShipment._id,
+                      shipmentId: returnShipment.shipmentId,
+                      type: 'RETURN',
+                      status: returnShipment.status,
+                      scheduledAt: returnShipment.scheduledAt,
+                      productName: productName,
+                      ownerName: ownerName,
+                      renterName: renterName
+                    },
+                    timestamp: new Date().toISOString()
+                  });
+                  console.log(`        ✅ Emitted shipment:created event to shipper ${shipperId}`);
                 }
 
                 // Send email notification with complete shipment details
@@ -2142,8 +2231,23 @@ class ShipmentService {
         const Wallet = require('../models/Wallet');
         const SystemWalletService = require('./systemWallet.service');
 
-        // Calculate 1 day rental amount (90% goes to owner)
-        const totalRentalAmount = subOrder.pricing?.subtotalRental || 0;
+        // ✅ FIX: Calculate rental from PENDING products only
+        let totalRentalAmount = 0;
+        if (subOrder.deliveryBatches && subOrder.deliveryBatches.length > 0) {
+          const pendingProductIds = subOrder.deliveryBatches
+            .filter(batch => batch.shippingFee?.status === 'PENDING')
+            .flatMap(batch => batch.products.map(p => p.toString()));
+          
+          totalRentalAmount = subOrder.products
+            .filter(p => pendingProductIds.includes(p._id.toString()))
+            .reduce((sum, p) => sum + (p.totalRental || 0), 0);
+          
+          console.log(`   📊 Compensation calculation: ${pendingProductIds.length} PENDING products = ${totalRentalAmount.toLocaleString()} VND`);
+        } else {
+          totalRentalAmount = subOrder.pricing?.subtotalRental || 0;
+          console.log(`   ⚠️ No deliveryBatches, using pricing.subtotalRental`);
+        }
+        
         const rentalDays = subOrder.pricing?.rentalDays || 1;
         const oneDayRental = totalRentalAmount / rentalDays;
         const compensationAmount = Math.floor(oneDayRental * 0.9);

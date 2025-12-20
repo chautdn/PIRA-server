@@ -84,12 +84,14 @@ class ChatGateway {
 
       // Join user to their personal room
       socket.join(`user:${socket.userId}`);
+      console.log(`[ChatGateway] ✅ User ${socket.userId} joined room: user:${socket.userId}`);
 
       // Emit online status
       this.emitOnlineUsers();
 
       // Send authentication success
       socket.emit('auth:success', { user: user });
+      console.log(`[ChatGateway] ✅ Authentication success sent to user ${socket.userId}`);
     } catch (error) {
       throw new Error(`Authentication failed: ${error.message}`);
     }

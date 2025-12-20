@@ -1626,7 +1626,26 @@ class RentalOrderController {
       let transferError = null;
       try {
         const ownerId = savedSubOrder.owner;
-        const totalRentalAmount = savedSubOrder.pricing?.subtotalRental;
+        
+        // ✅ FIX: Calculate rental from PENDING products in deliveryBatches only
+        let totalRentalAmount = 0;
+        if (savedSubOrder.deliveryBatches && savedSubOrder.deliveryBatches.length > 0) {
+          // Get product IDs from PENDING batches
+          const pendingProductIds = savedSubOrder.deliveryBatches
+            .filter(batch => batch.shippingFee?.status === 'PENDING')
+            .flatMap(batch => batch.products.map(p => p.toString()));
+          
+          // Sum rental fees from these products only
+          totalRentalAmount = savedSubOrder.products
+            .filter(p => pendingProductIds.includes(p._id.toString()))
+            .reduce((sum, p) => sum + (p.totalRental || 0), 0);
+          
+          console.log(`   📊 Rental calculation: ${pendingProductIds.length} PENDING products = ${totalRentalAmount.toLocaleString()} VND`);
+        } else {
+          // Fallback to old behavior if no deliveryBatches
+          totalRentalAmount = savedSubOrder.pricing?.subtotalRental;
+          console.log(`   ⚠️ No deliveryBatches, using pricing.subtotalRental: ${totalRentalAmount} VND`);
+        }
 
         console.log(`\n💳 Auto Transfer Rental Fee (80% to owner, 20% platform fee):`);
         console.log(`   ✅ Renter confirmed delivery - SubOrder status changed to DELIVERED`);
