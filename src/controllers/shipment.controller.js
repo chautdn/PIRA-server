@@ -357,36 +357,37 @@ class ShipmentController {
         return res.status(403).json({ status: 'error', message: 'Only assigned shipper can upload proof' });
       }
 
-      // Validate: minimum 3 images, maximum 10 images
+      // Validate: minimum 3 files (images/videos), maximum 10 files
       if (files.length === 0) {
-        return res.status(400).json({ status: 'error', message: 'At least 3 images are required' });
+        return res.status(400).json({ status: 'error', message: 'At least 3 images/videos are required' });
       }
       if (files.length < 3) {
         return res.status(400).json({ 
           status: 'error', 
-          message: `Minimum 3 images required. You uploaded ${files.length} image(s)` 
+          message: `Minimum 3 images/videos required. You uploaded ${files.length} file(s)` 
         });
       }
       if (files.length > 10) {
         return res.status(400).json({ 
           status: 'error', 
-          message: `Maximum 10 images allowed. You uploaded ${files.length} image(s)` 
+          message: `Maximum 10 images/videos allowed. You uploaded ${files.length} file(s)` 
         });
       }
 
       // Upload all files to Cloudinary in parallel
       const imageUrls = [];
       try {
-        console.log(`📤 Uploading ${files.length} image(s) to Cloudinary for shipment ${shipmentId}...`);
-        const uploadPromises = files.map(file => CloudinaryService.uploadImage(file.buffer));
+        console.log(`📤 Uploading ${files.length} file(s) (images/videos) to Cloudinary for shipment ${shipmentId}...`);
+        const uploadPromises = files.map(file => CloudinaryService.uploadFile(file.buffer, file.mimetype));
         const uploadResults = await Promise.all(uploadPromises);
-        uploadResults.forEach((uploadResult) => {
+        uploadResults.forEach((uploadResult, index) => {
           imageUrls.push(uploadResult.secure_url);
-          console.log(`✅ Image uploaded: ${uploadResult.secure_url}`);
+          const fileType = files[index].mimetype.startsWith('video/') ? 'Video' : 'Image';
+          console.log(`✅ ${fileType} uploaded: ${uploadResult.secure_url}`);
         });
       } catch (uploadErr) {
         console.error(`❌ Cloudinary upload failed:`, uploadErr.message);
-        return res.status(400).json({ status: 'error', message: 'Image upload to Cloudinary failed: ' + uploadErr.message });
+        return res.status(400).json({ status: 'error', message: 'File upload to Cloudinary failed: ' + uploadErr.message });
       }
 
       // Find or create ShipmentProof
