@@ -866,8 +866,7 @@ class SystemWalletService {
         amount: ownerShareAmount,
         reason: 'RENTAL_FEE_TRANSFER',
         subOrderNumber: subOrderNumber,
-        // unlocksAt: new Date(Date.now() + 24 * 60 * 60 * 1000), // 24 hours from now
-        unlocksAt: new Date(Date.now() + 10 * 1000), // 10 seconds for testing
+        unlocksAt: new Date(Date.now() + 24 * 60 * 60 * 1000), // 24 hours from now
         status: 'FROZEN'
       });
       await frozenRecord.save({ session });
@@ -963,8 +962,7 @@ class SystemWalletService {
           userId: ownerId,
           availableBalance: ownerWallet.balance.available,
           frozenBalance: ownerWallet.balance.frozen,
-          // unlocksAt: new Date(Date.now() + 24 * 60 * 60 * 1000)
-          unlocksAt: new Date(Date.now() + 10 * 1000) // 10 seconds for testing
+          unlocksAt: new Date(Date.now() + 24 * 60 * 60 * 1000)
         },
         transfer: {
           totalRentalAmount: totalRentalAmount,
@@ -973,8 +971,7 @@ class SystemWalletService {
           platformFeePercentage: 20,
           ownerSharePercentage: 80,
           status: 'FROZEN',
-          // unlocksAfter: '24 hours'
-          unlocksAfter: '10 seconds' // For testing
+          unlocksAfter: '24 hours'
         },
         transactions: {
           system: systemTransaction,
@@ -1055,8 +1052,7 @@ class SystemWalletService {
         amount: depositAmount,
         reason: 'DEPOSIT_REFUND',
         subOrderNumber: subOrderNumber,
-        // unlocksAt: new Date(Date.now() + 24 * 60 * 60 * 1000), // 24 hours from now
-        unlocksAt: new Date(Date.now() + 10 * 1000), // 10 seconds for testing
+        unlocksAt: new Date(Date.now() + 24 * 60 * 60 * 1000), // 24 hours from now
         status: 'FROZEN',
         metadata: {
           adminId: adminId,
@@ -1102,8 +1098,7 @@ class SystemWalletService {
           subOrderNumber: subOrderNumber,
           depositAmount: depositAmount,
           status: 'FROZEN',
-          // unlocksAfter: '24 hours',
-          unlocksAfter: '10 seconds', // For testing
+          unlocksAfter: '24 hours',
           action: 'DEPOSIT_REFUND_RECEIVED'
         }
       });
@@ -1120,8 +1115,7 @@ class SystemWalletService {
           amount: depositAmount,
           status: 'FROZEN',
           frozenBalance: renterWallet.balance.frozen,
-          // unlocksAt: new Date(Date.now() + 24 * 60 * 60 * 1000)
-          unlocksAt: new Date(Date.now() + 10 * 1000) // 10 seconds for testing
+          unlocksAt: new Date(Date.now() + 24 * 60 * 60 * 1000)
         });
       }
 
@@ -1133,14 +1127,12 @@ class SystemWalletService {
           userId: renterId,
           availableBalance: renterWallet.balance.available,
           frozenBalance: renterWallet.balance.frozen,
-          // unlocksAt: new Date(Date.now() + 24 * 60 * 60 * 1000)
-          unlocksAt: new Date(Date.now() + 10 * 1000) // 10 seconds for testing
+          unlocksAt: new Date(Date.now() + 24 * 60 * 60 * 1000)
         },
         transfer: {
           depositAmount: depositAmount,
           status: 'FROZEN',
-          // unlocksAfter: '24 hours'
-          unlocksAfter: '10 seconds' // For testing
+          unlocksAfter: '24 hours'
         },
         transactions: {
           system: systemTransaction,

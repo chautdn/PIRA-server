@@ -155,6 +155,7 @@ exports.createReview = async (req, res) => {
 			// Verify user has a completed order with this owner/shipper
 			const MasterOrder = require('../models/MasterOrder');
 			const SubOrder = require('../models/SubOrder');
+			const Shipment = require('../models/Shipment');
 			
 			// Find a completed MasterOrder for this renter
 			const completedMasterOrders = await MasterOrder.find({
@@ -164,7 +165,7 @@ exports.createReview = async (req, res) => {
 			
 			console.log('🔍 Found completed orders for renter:', completedMasterOrders.length);
 			
-			// Check if any SubOrder in these MasterOrders has a product owned by the reviewee
+			// Check if any SubOrder in these MasterOrders has a product owned by the reviewee OR a shipper that is the reviewee
 			let hasOrderWithReviewee = false;
 			for (const masterOrder of completedMasterOrders) {
 				for (const subOrderRef of masterOrder.subOrders || []) {
@@ -182,6 +183,20 @@ exports.createReview = async (req, res) => {
 							}
 						}
 					}
+					
+					// Check if reviewee is a shipper for this SubOrder
+					if (!hasOrderWithReviewee) {
+						const shipment = await Shipment.findOne({
+							subOrder: subOrderId,
+							shipper: safeReviewee
+						});
+						
+						if (shipment) {
+							hasOrderWithReviewee = true;
+							console.log('✅ Found shipment with reviewee as shipper in completed order');
+						}
+					}
+					
 					if (hasOrderWithReviewee) break;
 				}
 				if (hasOrderWithReviewee) break;
@@ -253,49 +268,121 @@ exports.createReview = async (req, res) => {
 			// ignore
 		}
 
-		// Create notification for product owner
+		// Send real-time notifications for product/owner/shipper reviews
 		try {
-			const Notification = require('../models/Notification');
+			const { sendNotification } = require('../services/notification.service');
 			const Product = require('../models/Product');
+			const User = require('../models/User');
 			
-			if (safeProduct) {
-				const productDoc = await Product.findById(safeProduct).select('name owner');
+			const reviewerName = req.user?.profile?.firstName || req.user?.email || 'Khách hàng';
+			
+			// PRODUCT_REVIEW: notify product owner
+			if (normalizedType === 'PRODUCT_REVIEW' && safeProduct) {
+				// Query product directly to get full details (use 'title' not 'name')
+				const productDoc = await Product.findById(safeProduct).select('title owner');
+				
+				console.log('📝 Product review details:', {
+					productId: safeProduct,
+					productDoc: productDoc ? { title: productDoc.title, owner: productDoc.owner } : null,
+					reviewId: review._id
+				});
 				
 				if (productDoc && productDoc.owner) {
-					const reviewerName = req.user?.profile?.firstName || req.user?.email || 'Khách hàng';
-					const isProductReview = normalizedType === 'PRODUCT_REVIEW';
+					const productName = productDoc.title || 'Sản phẩm';
 					
-					let notificationTitle, notificationMessage;
-					if (isProductReview) {
-						notificationTitle = `Đánh giá mới cho sản phẩm "${productDoc.name}"`;
-						notificationMessage = `${reviewerName} đã đánh giá sản phẩm của bạn với ${rating} sao`;
+					await sendNotification(
+						productDoc.owner,
+						`⭐ Đánh giá mới cho sản phẩm "${productName}"`,
+						`${reviewerName} đã đánh giá sản phẩm của bạn với ${rating} sao`,
+						{
+							type: 'REVIEW',
+							category: 'INFO',
+							relatedReview: review._id,
+							relatedProduct: safeProduct,
+							actions: [
+								{
+									label: 'Xem đánh giá',
+									url: `/product/${safeProduct}?tab=reviews`,
+									action: 'VIEW_REVIEW'
+								}
+							],
+							data: {
+								reviewId: review._id.toString(),
+								productId: safeProduct.toString(),
+								productName,
+								rating: Number(rating),
+								reviewerName
+							}
+						}
+					);
+					
+					console.log('✅ Product review notification sent to owner:', productDoc.owner);
+				} else {
+					console.error('❌ Product not found or has no owner:', safeProduct);
+				}
+			}
+			
+			// USER_REVIEW: notify owner or shipper based on reviewee
+			if (normalizedType === 'USER_REVIEW' && safeReviewee) {
+				const revieweeDoc = await User.findById(safeReviewee).select('profile role');
+				
+				console.log('🔍 USER_REVIEW notification debug:', {
+					safeReviewee,
+					safeProduct,
+					hasProduct: !!safeProduct,
+					reviewId: review._id
+				});
+				
+				if (revieweeDoc) {
+					const isShipper = revieweeDoc.role === 'SHIPPER';
+					const revieweeRole = isShipper ? 'shipper' : 'chủ sản phẩm';
+					const revieweeName = revieweeDoc.profile?.firstName || 'bạn';
+					
+					// Determine review URL
+					// If review has product, redirect to product detail with reviews tab
+					// Otherwise, redirect to profile reviews page
+					let reviewUrl;
+					if (safeProduct) {
+						reviewUrl = `/product/${safeProduct}?tab=reviews&reviewId=${review._id}`;
+						console.log('✅ Using product URL:', reviewUrl);
 					} else {
-						notificationTitle = `Đánh giá mới từ khách hàng`;
-						notificationMessage = `${reviewerName} đã đánh giá bạn với ${rating} sao`;
+						reviewUrl = isShipper 
+							? `/profile/${safeReviewee}?tab=reviews&reviewId=${review._id}`
+							: `/profile/${safeReviewee}?tab=reviews&reviewId=${review._id}`;
+						console.log('⚠️ No product, using profile URL:', reviewUrl);
 					}
 					
-					await Notification.create({
-						recipient: productDoc.owner,
-						type: 'REVIEW',
-						category: 'INFO',
-						title: notificationTitle,
-						message: notificationMessage,
-						relatedProduct: safeProduct,
-						actions: [
-							{
-								label: 'Xem đánh giá',
-								url: `/product/${safeProduct}?activeTab=reviews`,
-								action: 'VIEW_REVIEW'
+					await sendNotification(
+						safeReviewee,
+						`⭐ Đánh giá mới từ khách hàng`,
+						`${reviewerName} đã đánh giá bạn với tư cách ${revieweeRole} với ${rating} sao`,
+						{
+							type: 'REVIEW',
+							category: 'INFO',
+							relatedReview: review._id,
+							relatedProduct: safeProduct, // Include product if available
+							actions: [
+								{
+									label: 'Xem đánh giá',
+									url: reviewUrl,
+									action: 'VIEW_REVIEW'
+								}
+							],
+							data: {
+								reviewId: review._id.toString(),
+								productId: safeProduct ? safeProduct.toString() : null,
+								rating: Number(rating),
+								reviewerName,
+								revieweeRole: isShipper ? 'SHIPPER' : 'OWNER'
 							}
-						],
-						status: 'SENT'
-					});
+						}
+					);
 					
-					console.log('✅ Created notification for product owner');
+					console.log(`✅ User review notification sent to ${revieweeRole}:`, safeReviewee);
 				}
 			}
 		} catch (notifErr) {
-			console.error('Error creating notification:', notifErr);
+			console.error('❌ Error sending review notification:', notifErr);
 			// Don't fail the review creation if notification fails
 		}
 
@@ -696,11 +783,9 @@ exports.getReviewsByProduct = async (req, res) => {
 			if (target === 'PRODUCT') {
 				query.type = 'PRODUCT_REVIEW';
 			} else if (target === 'OWNER' || target === 'SHIPPER') {
-				// owner/shipper are user reviews; ensure we filter by the correct
-				// reviewee (owner or shipper). If the client provided a valid
-				// reviewee param, use it. Otherwise try to derive the reviewee from
-				// the product document (product.owner for OWNER, product.shipper for SHIPPER).
+				// owner/shipper are user reviews
 				query.type = 'USER_REVIEW';
+				
 				if (reviewee && mongoose.Types.ObjectId.isValid(reviewee)) {
 					query.reviewee = reviewee;
 				} else {
@@ -711,15 +796,29 @@ exports.getReviewsByProduct = async (req, res) => {
 						// if product not found, return empty
 						return res.json({ data: [], pagination: { page, limit, total: 0 } });
 					}
+					
 					if (target === 'OWNER') {
-						if (prod.owner) query.reviewee = prod.owner;
-						else return res.json({ data: [], pagination: { page, limit, total: 0 } });
-					} else if (target === 'SHIPPER') {
-						if (prod.shipper) query.reviewee = prod.shipper;
-						else {
-							// No shipper assigned yet: include reviews that were created with intendedFor='SHIPPER'
-							query.$or = [ { intendedFor: 'SHIPPER' } ];
+						if (prod.owner) {
+							query.reviewee = prod.owner;
+						} else {
+							return res.json({ data: [], pagination: { page, limit, total: 0 } });
 						}
+					} else if (target === 'SHIPPER') {
+						// For SHIPPER reviews: since Product doesn't have shipper field,
+						// we need to find reviews where:
+						// 1. intendedFor is 'SHIPPER', OR
+						// 2. reviewee is a user with SHIPPER role
+						// Use $or to match either condition
+						const User = require('../models/User');
+						const shippers = await User.find({ role: 'SHIPPER' }).select('_id').lean();
+						const shipperIds = shippers.map(s => s._id);
+						
+						query.$or = [
+							{ intendedFor: 'SHIPPER' },
+							{ reviewee: { $in: shipperIds } }
+						];
+						
+						console.log('🚚 Shipper query with $or:', { shipperCount: shipperIds.length });
 					}
 				}
 			}

@@ -104,6 +104,27 @@ const recommendationController = {
     } catch (error) {
       next(error);
     }
+  },
+
+  /**
+   * Get top rated and most rented products (randomized)
+   * GET /api/recommendations/top-rated-most-rented
+   */
+  getTopRatedAndMostRented: async (req, res, next) => {
+    try {
+      const filters = {
+        limit: Math.min(parseInt(req.query.limit) || 12, 50)
+      };
+
+      const result = await recommendationService.getTopRatedAndMostRented(filters);
+
+      new SUCCESS({
+        message: 'Top rated and most rented products retrieved successfully',
+        metadata: result
+      }).send(res);
+    } catch (error) {
+      next(error);
+    }
   }
 };
 

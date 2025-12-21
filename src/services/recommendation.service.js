@@ -660,6 +660,85 @@ const recommendationService = {
       // Fallback to hot products
       return recommendationService.getHotProducts(filters);
     }
+  },
+
+  /**
+   * Get top products based on rating and rental count, randomly shuffled
+   * For home page "Discover Latest Travel Equipment" carousel
+   */
+  getTopRatedAndMostRented: async (filters = {}) => {
+    const {
+      limit = 12
+    } = filters;
+
+    const limitNum = Math.min(50, Math.max(1, parseInt(limit)));
+
+    try {
+      // Fetch products with good ratings (3.5+) and at least some rental history
+      const topProducts = await Product.find({
+        status: 'ACTIVE',
+        'metrics.averageRating': { $gte: 3.5 },
+        $or: [
+          { 'metrics.rentalCount': { $gte: 1 } },
+          { 'metrics.reviewCount': { $gte: 3 } }
+        ]
+      })
+        .populate('owner', 'profile email')
+        .populate('category', 'name')
+        .populate('subCategory', 'name')
+        .sort({
+          'metrics.averageRating': -1,
+          'metrics.rentalCount': -1,
+          'metrics.reviewCount': -1
+        })
+        .limit(limitNum * 2) // Fetch more to have variety for randomization
+        .lean();
+
+      // If not enough products with rental history, add high-rated products
+      if (topProducts.length < limitNum) {
+        const existingIds = topProducts.map(p => p._id);
+        const additionalProducts = await Product.find({
+          status: 'ACTIVE',
+          'metrics.averageRating': { $gte: 3.5 },
+          _id: { $nin: existingIds }
+        })
+          .populate('owner', 'profile email')
+          .populate('category', 'name')
+          .populate('subCategory', 'name')
+          .sort({
+            'metrics.averageRating': -1,
+            'metrics.reviewCount': -1,
+            'metrics.viewCount': -1
+          })
+          .limit(limitNum - topProducts.length)
+          .lean();
+        
+        topProducts.push(...additionalProducts);
+      }
+
+      // Randomize the products using Fisher-Yates shuffle algorithm
+      for (let i = topProducts.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [topProducts[i], topProducts[j]] = [topProducts[j], topProducts[i]];
+      }
+
+      // Take only the requested amount after shuffling
+      const shuffledProducts = topProducts.slice(0, limitNum);
+
+      return {
+        products: shuffledProducts,
+        pagination: {
+          page: 1,
+          limit: limitNum,
+          total: shuffledProducts.length,
+          pages: 1
+        }
+      };
+    } catch (error) {
+      console.error('Error getting top rated and most rented products:', error);
+      // Fallback to hot products
+      return recommendationService.getHotProducts(filters);
+    }
   }
 };
 
