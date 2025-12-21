@@ -43,4 +43,10 @@ router.get(
   recommendationController.getRecommendedProducts
 );
 
+// Get top rated and most rented products (public endpoint)
+router.get(
+  '/top-rated-most-rented',
+  recommendationController.getTopRatedAndMostRented
+);
+
 module.exports = router;
