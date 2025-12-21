@@ -58,10 +58,25 @@ const productSchema = new mongoose.Schema(
     ],
     videos: [
       {
-        url: String,
+        url: {
+          type: String,
+          required: true
+        },
+        publicId: String,
         title: String,
         duration: Number,
-        thumbnail: String
+        thumbnail: String,
+        format: String,
+        size: Number,
+        moderation: {
+          labels: [String],
+          categoryMatch: Boolean,
+          confidence: String,
+          validated: {
+            type: Boolean,
+            default: false
+          }
+        }
       }
     ],
 

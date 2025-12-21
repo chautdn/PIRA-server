@@ -66,7 +66,7 @@ router.get('/:id', paramValidation, ownerProductController.getProductById);
 router.post(
   '/',
   kycCheck.requireOwnerKYC, // Check KYC and Bank Account before allowing product creation
-  ownerProductController.uploadMiddleware,
+  ownerProductController.combinedUploadMiddleware,
   productValidation,
   (req, res, next) => {
     // Middleware validation handler
@@ -108,6 +108,23 @@ router.delete(
     param('imageId').isMongoId().withMessage('Valid image ID is required')
   ],
   ownerProductController.deleteImage
+);
+
+// Video upload routes
+router.post(
+  '/:id/upload-videos',
+  paramValidation,
+  ownerProductController.videoUploadMiddleware,
+  ownerProductController.uploadVideos
+);
+
+router.delete(
+  '/:id/videos/:videoId',
+  [
+    param('id').isMongoId().withMessage('Valid product ID is required'),
+    param('videoId').isMongoId().withMessage('Valid video ID is required')
+  ],
+  ownerProductController.deleteVideo
 );
 
 router.get(
