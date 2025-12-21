@@ -4,6 +4,7 @@ const User = require('../models/User');
 const Category = require('../models/Category');
 const slugify = require('slugify');
 const ImageValidationService = require('./ai/imageValidation.service');
+const VideoModerationService = require('./ai/videoModeration.service');
 const CloudinaryService = require('./cloudinary/cloudinary.service');
 const ProductQuantityValidationService = require('./productQuantityValidation.service');
 const promotedProductCache = require('../utils/promotedProductCache');
@@ -430,6 +431,98 @@ const ownerProductService = {
       return product;
     } catch (error) {
       throw new Error('Error removing image: ' + error.message);
+    }
+  },
+
+  /**
+   * Upload and validate videos for product
+   */
+  uploadAndValidateVideos: async (videoFiles, categoryId) => {
+    try {
+      return await VideoModerationService.uploadAndModerateVideos(videoFiles, categoryId);
+    } catch (error) {
+      throw error;
+    }
+  },
+
+  /**
+   * Add videos to product
+   */
+  addVideosToProduct: async (ownerId, productId, videos) => {
+    try {
+      const product = await Product.findOne({
+        _id: productId,
+        owner: ownerId,
+        deletedAt: { $exists: false }
+      });
+
+      if (!product) {
+        throw new Error('Product not found or access denied');
+      }
+
+      // Format videos for storage
+      const formattedVideos = videos.map((video) => ({
+        url: video.url,
+        publicId: video.publicId,
+        title: video.filename || 'Product Video',
+        duration: video.duration,
+        thumbnail: video.thumbnail,
+        format: video.format,
+        size: video.size,
+        moderation: {
+          labels: video.moderation?.labels || [],
+          categoryMatch: video.moderation?.categoryValidation?.isRelevant || false,
+          confidence: video.moderation?.categoryValidation?.confidence || 'UNKNOWN',
+          validated: true
+        }
+      }));
+
+      product.videos = [...product.videos, ...formattedVideos];
+      await product.save();
+
+      return product;
+    } catch (error) {
+      throw new Error('Error adding videos: ' + error.message);
+    }
+  },
+
+  /**
+   * Remove video from product
+   */
+  removeVideoFromProduct: async (ownerId, productId, videoId) => {
+    try {
+      const product = await Product.findOne({
+        _id: productId,
+        owner: ownerId,
+        deletedAt: { $exists: false }
+      });
+
+      if (!product) {
+        throw new Error('Product not found or access denied');
+      }
+
+      const videoIndex = product.videos.findIndex((vid) => vid._id.toString() === videoId);
+      if (videoIndex === -1) {
+        throw new Error('Video not found');
+      }
+
+      const videoToDelete = product.videos[videoIndex];
+
+      // Delete from Cloudinary
+      try {
+        if (videoToDelete.publicId) {
+          await CloudinaryService.deleteVideo(videoToDelete.publicId);
+        }
+      } catch (cloudinaryError) {
+        console.warn('Failed to delete video from cloudinary:', cloudinaryError.message);
+      }
+
+      product.videos.splice(videoIndex, 1);
+      await product.save();
+
+      return product;
+    } catch (error) {
+      throw new Error('Error removing video: ' + error.message);
     }
   },
 

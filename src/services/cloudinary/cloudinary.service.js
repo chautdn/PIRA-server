@@ -58,18 +58,52 @@ class CloudinaryService {
       }
 
       cloudinary.uploader
+        .upload_stream(uploadOptions, (error, result) => {
+          if (error) {
+            console.error('Cloudinary upload error:', error);
+            reject(error);
+          } else {
+            resolve(result);
+          }
+        })
+        .end(fileBuffer);
+    });
+  }
+
+  /**
+   * Upload video to Cloudinary
+   * @param {Buffer} videoBuffer - Video buffer
+   * @param {Object} options - Upload options
+   * @returns {Object} Upload result
+   */
+  static async uploadVideo(videoBuffer, options = {}) {
+    return new Promise((resolve, reject) => {
+      cloudinary.uploader
         .upload_stream(
-          uploadOptions,
+          {
+            resource_type: 'video',
+            folder: options.folder || 'products/videos',
+            ...options
+          },
           (error, result) => {
             if (error) {
-              console.error('Cloudinary upload error:', error);
+              console.error('Cloudinary video upload error:', error);
               reject(error);
             } else {
-              resolve(result);
+              resolve({
+                url: result.secure_url,
+                publicId: result.public_id,
+                duration: result.duration,
+                format: result.format,
+                bytes: result.bytes,
+                width: result.width,
+                height: result.height,
+                thumbnail: result.secure_url.replace(/\.[^.]+$/, '.jpg')
+              });
             }
           }
         )
-        .end(fileBuffer);
+        .end(videoBuffer);
     });
   }
 
@@ -83,6 +117,36 @@ class CloudinaryService {
       return await cloudinary.uploader.destroy(publicId);
     } catch (error) {
       console.warn('Failed to delete from cloudinary:', error.message);
+      throw error;
+    }
+  }
+
+  /**
+   * Delete video from Cloudinary
+   * @param {string} publicId - Video public ID
+   * @returns {Object} Deletion result
+   */
+  static async deleteVideo(publicId) {
+    try {
+      return await cloudinary.uploader.destroy(publicId, {
+        resource_type: 'video'
+      });
+    } catch (error) {
+      console.warn('Failed to delete video from cloudinary:', error.message);
+      throw error;
+    }
+  }
+
+  /**
+   * Delete multiple videos from Cloudinary
+   * @param {Array} publicIds - Array of public IDs
+   */
+  static async deleteVideos(publicIds) {
+    try {
+      const promises = publicIds.map((publicId) => this.deleteVideo(publicId));
+      return await Promise.all(promises);
+    } catch (error) {
+      console.error('Error deleting videos:', error);
       throw error;
     }
   }

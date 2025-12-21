@@ -8,7 +8,7 @@ const storage = multer.memoryStorage();
 const upload = multer({
   storage: storage,
   limits: {
-    fileSize: 10 * 1024 * 1024, // 10MB limit
+    fileSize: 10 * 1024 * 1024, // 10MB limit for images
     files: 10 // Maximum 10 files
   },
   fileFilter: (req, file, cb) => {
@@ -16,6 +16,38 @@ const upload = multer({
       cb(null, true);
     } else {
       cb(new Error('Only image files are allowed'), false);
+    }
+  }
+});
+
+// Multer config for video uploads
+const videoUpload = multer({
+  storage: storage,
+  limits: {
+    fileSize: 100 * 1024 * 1024, // 100MB limit for videos
+    files: 5 // Maximum 5 videos
+  },
+  fileFilter: (req, file, cb) => {
+    if (file.mimetype.startsWith('video/')) {
+      cb(null, true);
+    } else {
+      cb(new Error('Only video files are allowed'), false);
+    }
+  }
+});
+
+// Combined upload middleware for both images and videos
+const combinedUpload = multer({
+  storage: storage,
+  limits: {
+    fileSize: 100 * 1024 * 1024, // 100MB limit to accommodate videos
+    files: 15 // 10 images + 5 videos max
+  },
+  fileFilter: (req, file, cb) => {
+    if (file.mimetype.startsWith('image/') || file.mimetype.startsWith('video/')) {
+      cb(null, true);
+    } else {
+      cb(new Error('Only image and video files are allowed'), false);
     }
   }
 });
@@ -93,13 +125,20 @@ const ownerProductController = {
       const productData = req.body;
 
       let imageValidationResults = [];
+      let videoValidationResults = [];
+
+      // When using upload.fields(), files are organized by field name
+      const imageFiles = req.files?.images || [];
+      const videoFiles = req.files?.videos || [];
+
+      console.log('📁 Received files - Images:', imageFiles.length, 'Videos:', videoFiles.length);
 
       // Handle uploaded images if any
-      if (req.files && req.files.length > 0) {
+      if (imageFiles.length > 0) {
         try {
           // This will validate ALL images first, then upload only if ALL pass
           const uploadedImages = await ownerProductService.uploadAndValidateImages(
-            req.files,
+            imageFiles,
             productData.category
           );
 
@@ -207,7 +246,119 @@ const ownerProductController = {
         }
       }
 
-      // Create product only if all images passed validation
+      // Handle uploaded videos if any
+      if (videoFiles.length > 0) {
+        try {
+          const uploadResult = await ownerProductService.uploadAndValidateVideos(
+            videoFiles,
+            productData.category
+          );
+
+          // Extract validation results for response
+          videoValidationResults = uploadResult.uploadedVideos.map((video) => ({
+            url: video.url,
+            categoryMatch: video.moderation?.categoryValidation?.isRelevant,
+            confidence: video.moderation?.categoryValidation?.confidence,
+            detectedLabels: video.moderation?.labels || [],
+            duration: video.duration
+          }));
+
+          // Set videos for product creation
+          productData.videos = uploadResult.uploadedVideos.map((video) => ({
+            url: video.url,
+            publicId: video.publicId,
+            title: video.filename || 'Product Video',
+            duration: video.duration,
+            thumbnail: video.thumbnail,
+            format: video.format,
+            size: video.size,
+            moderation: {
+              labels: video.moderation?.labels || [],
+              categoryMatch: video.moderation?.categoryValidation?.isRelevant || false,
+              confidence: video.moderation?.categoryValidation?.confidence || 'UNKNOWN',
+              validated: true
+            }
+          }));
+
+          // If there were validation errors/warnings, include them in response
+          if (uploadResult.validationErrors && uploadResult.validationErrors.length > 0) {
+            console.warn('Some videos had validation warnings:', uploadResult.validationErrors);
+          }
+        } catch (videoValidationError) {
+          // Check if error has validationErrors array
+          if (videoValidationError.validationErrors) {
+            const validationErrors = videoValidationError.validationErrors;
+            const explicitErrors = validationErrors.filter((e) => e.type === 'EXPLICIT_CONTENT');
+            const categoryErrors = validationErrors.filter((e) => e.type === 'CATEGORY_MISMATCH');
+            const processingErrors = validationErrors.filter((e) => e.type === 'PROCESSING_ERROR');
+
+            // Determine primary error type
+            let errorType = 'VIDEO_VALIDATION_ERROR';
+            let details = {
+              reason: 'Video validation failed',
+              suggestion: 'Please check your videos and try again.'
+            };
+
+            if (explicitErrors.length > 0) {
+              errorType = 'EXPLICIT_CONTENT';
+              details = {
+                reason: 'Videos contain inappropriate/explicit content',
+                suggestion: 'Please upload appropriate, family-friendly videos only.'
+              };
+            } else if (categoryErrors.length > 0) {
+              errorType = 'CATEGORY_MISMATCH';
+              details = {
+                reason: 'Videos do not match the product category',
+                suggestion:
+                  'Please upload videos that clearly show the product matching your category.'
+              };
+            } else if (processingErrors.length > 0) {
+              errorType = 'PROCESSING_ERROR';
+              details = {
+                reason: 'Error processing videos',
+                suggestion:
+                  'Please try again with different videos or contact support if the issue persists.'
+              };
+            }
+
+            // Create errorBreakdown
+            const errorBreakdown = {
+              total: validationErrors.length,
+              explicit: explicitErrors.length,
+              category: categoryErrors.length,
+              other: processingErrors.length,
+              details: validationErrors.map((error) => ({
+                fileName: error.filename,
+                type: error.type,
+                message: error.reason
+              }))
+            };
+
+            return res.status(400).json({
+              success: false,
+              message: 'Video validation failed',
+              error: videoValidationError.message,
+              errorType: errorType,
+              details: details,
+              errorBreakdown: errorBreakdown
+            });
+          }
+
+          // Generic error response
+          return res.status(400).json({
+            success: false,
+            message: 'Video validation failed',
+            error: videoValidationError.message,
+            errorType: 'VIDEO_VALIDATION_ERROR',
+            details: {
+              reason: 'Videos do not match the product category',
+              suggestion: 'Please upload videos that are relevant to the product category.'
+            }
+          });
+        }
+      }
+
+      // Create product only if all images and videos passed validation
       const product = await ownerProductService.createOwnerProduct(ownerId, productData);
 
       // Send response with AI validation results
@@ -238,6 +389,25 @@ const ownerProductController = {
                   averageNsfwValue:
                     imageValidationResults.reduce((sum, img) => sum + (img.nsfwValue || 0), 0) /
                     imageValidationResults.length
+                }
+              }
+            : null,
+        videoValidation:
+          videoValidationResults.length > 0
+            ? {
+                totalVideos: videoValidationResults.length,
+                results: videoValidationResults,
+                summary: {
+                  allVideosRelevant: videoValidationResults.every((vid) => vid.categoryMatch),
+                  highConfidenceVideos: videoValidationResults.filter(
+                    (vid) => vid.confidence === 'HIGH'
+                  ).length,
+                  mediumConfidenceVideos: videoValidationResults.filter(
+                    (vid) => vid.confidence === 'MEDIUM'
+                  ).length,
+                  lowConfidenceVideos: videoValidationResults.filter(
+                    (vid) => vid.confidence === 'LOW'
+                  ).length
                 }
               }
             : null
@@ -404,6 +574,157 @@ const ownerProductController = {
       return res.status(200).json({
         success: true,
         message: 'Image deleted successfully',
+        data: product
+      });
+    } catch (error) {
+      if (!res.headersSent) {
+        const statusCode = error.message.includes('not found') ? 404 : 500;
+        return res.status(statusCode).json({
+          success: false,
+          message: error.message
+        });
+      }
+    }
+  },
+
+  // POST /api/owner/products/:id/upload-videos
+  uploadVideos: async (req, res) => {
+    try {
+      if (!req.files || req.files.length === 0) {
+        return res.status(400).json({
+          success: false,
+          message: 'No videos provided'
+        });
+      }
+
+      const ownerId = req.user._id;
+      const productId = req.params.id;
+
+      // Get product to get category for validation
+      const existingProduct = await ownerProductService.getOwnerProductById(ownerId, productId);
+
+      try {
+        const uploadResult = await ownerProductService.uploadAndValidateVideos(
+          req.files,
+          existingProduct.category._id
+        );
+
+        // Add validated videos to product
+        const product = await ownerProductService.addVideosToProduct(
+          ownerId,
+          productId,
+          uploadResult.uploadedVideos
+        );
+
+        // Prepare response
+        const response = {
+          success: true,
+          message: 'Videos uploaded successfully',
+          data: product
+        };
+
+        // Include validation errors if any videos failed
+        if (uploadResult.validationErrors && uploadResult.validationErrors.length > 0) {
+          response.validationWarnings = uploadResult.validationErrors;
+          response.message = 'Some videos uploaded successfully, but some failed validation';
+        }
+
+        return res.status(200).json(response);
+      } catch (videoValidationError) {
+        // Check if error has validationErrors array
+        if (videoValidationError.validationErrors) {
+          const validationErrors = videoValidationError.validationErrors;
+          const explicitErrors = validationErrors.filter((e) => e.type === 'EXPLICIT_CONTENT');
+          const categoryErrors = validationErrors.filter((e) => e.type === 'CATEGORY_MISMATCH');
+          const processingErrors = validationErrors.filter((e) => e.type === 'PROCESSING_ERROR');
+
+          // Determine primary error type
+          let errorType = 'VIDEO_VALIDATION_ERROR';
+          let details = {
+            reason: 'Video validation failed',
+            suggestion: 'Please check your videos and try again.'
+          };
+
+          if (explicitErrors.length > 0) {
+            errorType = 'EXPLICIT_CONTENT';
+            details = {
+              reason: 'Videos contain inappropriate/explicit content',
+              suggestion: 'Please upload appropriate, family-friendly videos only.'
+            };
+          } else if (categoryErrors.length > 0) {
+            errorType = 'CATEGORY_MISMATCH';
+            details = {
+              reason: 'Videos do not match the product category',
+              suggestion:
+                'Please upload videos that clearly show the product matching your category.'
+            };
+          } else if (processingErrors.length > 0) {
+            errorType = 'PROCESSING_ERROR';
+            details = {
+              reason: 'Error processing videos',
+              suggestion:
+                'Please try again with different videos or contact support if the issue persists.'
+            };
+          }
+
+          // Create errorBreakdown
+          const errorBreakdown = {
+            total: validationErrors.length,
+            explicit: explicitErrors.length,
+            category: categoryErrors.length,
+            other: processingErrors.length,
+            details: validationErrors.map((error) => ({
+              fileName: error.filename,
+              type: error.type,
+              message: error.reason
+            }))
+          };
+
+          return res.status(400).json({
+            success: false,
+            message: 'Video validation failed',
+            error: videoValidationError.message,
+            errorType: errorType,
+            details: details,
+            errorBreakdown: errorBreakdown
+          });
+        }
+
+        // Generic error response
+        return res.status(400).json({
+          success: false,
+          message: 'Video validation failed',
+          error: videoValidationError.message,
+          errorType: 'VIDEO_VALIDATION_ERROR',
+          details: {
+            reason: 'Videos do not match the product category',
+            suggestion: 'Please upload videos that are relevant to the product category.'
+          }
+        });
+      }
+    } catch (error) {
+      if (!res.headersSent) {
+        const statusCode = error.message.includes('not found') ? 404 : 500;
+        return res.status(statusCode).json({
+          success: false,
+          message: error.message
+        });
+      }
+    }
+  },
+
+  // DELETE /api/owner/products/:id/videos/:videoId
+  deleteVideo: async (req, res) => {
+    try {
+      const ownerId = req.user._id;
+      const productId = req.params.id;
+      const videoId = req.params.videoId;
+
+      const product = await ownerProductService.removeVideoFromProduct(ownerId, productId, videoId);
+
+      return res.status(200).json({
+        success: true,
+        message: 'Video deleted successfully',
         data: product
       });
     } catch (error) {
@@ -934,5 +1255,10 @@ const ownerProductController = {
 // Export upload middleware along with controller
 module.exports = {
   ...ownerProductController,
-  uploadMiddleware: upload.array('images', 10)
+  uploadMiddleware: upload.array('images', 10),
+  videoUploadMiddleware: videoUpload.array('videos', 5),
+  combinedUploadMiddleware: combinedUpload.fields([
+    { name: 'images', maxCount: 10 },
+    { name: 'videos', maxCount: 5 }
+  ])
 };
