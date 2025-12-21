@@ -952,9 +952,20 @@ const ownerProductController = {
       const updateData = req.body;
 
       let imageValidationResults = [];
+      let videoValidationResults = [];
 
       // Handle new images with AI validation if provided
-      if (req.files && req.files.length > 0) {
+      const imageFiles = req.files?.images || [];
+      const videoFiles = req.files?.videos || [];
+
+      console.log(
+        '📁 Update - Received files - Images:',
+        imageFiles.length,
+        'Videos:',
+        videoFiles.length
+      );
+
+      if (imageFiles.length > 0) {
         try {
           // Get product to retrieve category for validation
           const existingProduct = await ownerProductService.getOwnerProductById(ownerId, productId);
@@ -962,7 +973,7 @@ const ownerProductController = {
 
           // Validate and upload images with AI
           const uploadedImages = await ownerProductService.uploadAndValidateImages(
-            req.files,
+            imageFiles,
             categoryId
           );
 
@@ -1062,6 +1073,97 @@ const ownerProductController = {
         }
       }
 
+      // Handle new videos with AI validation if provided
+      if (videoFiles.length > 0) {
+        try {
+          // Get product to retrieve category for validation
+          const existingProduct = await ownerProductService.getOwnerProductById(ownerId, productId);
+          const categoryId = existingProduct.category._id || existingProduct.category;
+
+          // Validate and upload videos with AI
+          const videoResult = await ownerProductService.uploadAndValidateVideos(
+            videoFiles,
+            categoryId
+          );
+
+          // Extract the uploadedVideos array from the result object
+          const uploadedVideos = videoResult.uploadedVideos || [];
+
+          // Extract validation results for response
+          videoValidationResults = uploadedVideos.map((vid) => ({
+            url: vid.url,
+            categoryMatch: vid.categoryMatch,
+            confidence: vid.confidence,
+            validated: vid.validated
+          }));
+
+          // Set validated videos for update
+          updateData.newVideos = uploadedVideos;
+        } catch (videoValidationError) {
+          console.error('Video validation error:', videoValidationError);
+
+          // Handle video validation errors
+          if (videoValidationError.validationErrors) {
+            const validationErrors = videoValidationError.validationErrors;
+            const explicitErrors = validationErrors.filter((e) => e.type === 'EXPLICIT_CONTENT');
+            const categoryErrors = validationErrors.filter((e) => e.type === 'CATEGORY_MISMATCH');
+
+            let errorType = 'VIDEO_VALIDATION_ERROR';
+            let details = {
+              reason: 'Video validation failed',
+              suggestion: 'Please check your videos and try again.'
+            };
+
+            if (explicitErrors.length > 0) {
+              errorType = 'EXPLICIT_CONTENT';
+              details = {
+                reason: 'Videos contain inappropriate content',
+                suggestion: 'Please upload appropriate, family-friendly videos only.'
+              };
+            } else if (categoryErrors.length > 0) {
+              errorType = 'CATEGORY_MISMATCH';
+              details = {
+                reason: 'Videos do not match the product category',
+                suggestion:
+                  'Please upload videos that clearly show the product matching your category.'
+              };
+            }
+
+            const errorBreakdown = {
+              total: validationErrors.length,
+              explicit: explicitErrors.length,
+              category: categoryErrors.length,
+              other: validationErrors.length - explicitErrors.length - categoryErrors.length,
+              details: validationErrors.map((error) => ({
+                videoId: error.videoId,
+                type: error.type,
+                message: error.reason
+              }))
+            };
+
+            return res.status(400).json({
+              success: false,
+              message: 'Video validation failed',
+              error: videoValidationError.message,
+              errorType: errorType,
+              errorBreakdown: errorBreakdown,
+              details: details
+            });
+          }
+
+          return res.status(400).json({
+            success: false,
+            message: 'Video validation failed',
+            error: videoValidationError.message,
+            errorType: 'VIDEO_VALIDATION_ERROR',
+            details: {
+              reason: 'Video validation failed',
+              suggestion: 'Please check your videos and try again.'
+            }
+          });
+        }
+      }
+
       const product = await ownerProductService.updateProductSafeFields(
         ownerId,
         productId,
@@ -1086,6 +1188,20 @@ const ownerProductController = {
                   averageNsfwValue:
                     imageValidationResults.reduce((sum, img) => sum + (img.nsfwValue || 0), 0) /
                     imageValidationResults.length
+                }
+              }
+            : null,
+        videoValidation:
+          videoValidationResults.length > 0
+            ? {
+                totalVideos: videoValidationResults.length,
+                results: videoValidationResults,
+                summary: {
+                  allVideosRelevant: videoValidationResults.every((vid) => vid.categoryMatch),
+                  allVideosValidated: videoValidationResults.every((vid) => vid.validated),
+                  averageConfidence:
+                    videoValidationResults.reduce((sum, vid) => sum + (vid.confidence || 0), 0) /
+                    videoValidationResults.length
                 }
               }
             : null

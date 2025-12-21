@@ -964,6 +964,19 @@ const ownerProductService = {
         product.images = [...product.images, ...imageData];
       }
 
+      // Handle video updates with AI validation
+      if (updateData.newVideos && Array.isArray(updateData.newVideos)) {
+        // newVideos are already validated and uploaded by the controller
+        // Just extract the video data
+        const videoData = updateData.newVideos.map((vid) => ({
+          url: vid.url,
+          publicId: vid.publicId,
+          thumbnail: vid.thumbnail || null,
+          duration: vid.duration || null
+        }));
+        product.videos = [...(product.videos || []), ...videoData];
+      }
+
       // Update the safe fields
       Object.assign(product, safeFields);
       const updatedProduct = await product.save();

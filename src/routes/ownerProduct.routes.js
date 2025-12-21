@@ -167,7 +167,7 @@ router.delete('/:id/soft-delete', paramValidation, ownerProductController.softDe
 router.put(
   '/:id/safe-update',
   paramValidation,
-  ownerProductController.uploadMiddleware,
+  ownerProductController.combinedUploadMiddleware,
   [
     body('title')
       .optional()
