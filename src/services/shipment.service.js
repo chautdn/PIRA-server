@@ -244,30 +244,50 @@ class ShipmentService {
   }
 
   async shipperAccept(shipmentId, shipperId) {
-    const shipment = await Shipment.findById(shipmentId).populate('subOrder');
+    const shipment = await Shipment.findById(shipmentId).populate({
+      path: 'subOrder',
+      populate: {
+        path: 'products.product',
+        select: 'title'
+      }
+    });
     if (!shipment) throw new Error('Shipment not found');
+
+    console.log('🔍 [shipperAccept] Shipment details:', {
+      shipmentId: shipment._id,
+      type: shipment.type,
+      scheduledAt: shipment.scheduledAt,
+      hasSubOrder: !!shipment.subOrder,
+      subOrderId: shipment.subOrder?._id,
+      rentalPeriod: shipment.subOrder?.rentalPeriod
+    });
 
     // Validate shipment is in PENDING status
     if (shipment.status !== 'PENDING') {
       throw new Error(`Cannot accept shipment with status ${shipment.status}. Must be PENDING.`);
     }
 
-    // Validate scheduled date - must be on or after scheduled date (at 00:00)
-    // COMMENTED FOR TESTING - Uncomment to re-enable date validation
-    /*
+    // Validate scheduled date - shipper can only accept from 00:00 on scheduled date
     let scheduledDate = null;
     if (shipment.scheduledAt) {
       scheduledDate = new Date(shipment.scheduledAt);
+      console.log('📅 Using shipment.scheduledAt:', scheduledDate);
     } else if (shipment.subOrder) {
       const rentalPeriod = shipment.subOrder.rentalPeriod;
+      console.log('📅 Checking rentalPeriod:', rentalPeriod);
       if (rentalPeriod) {
         if (shipment.type === 'DELIVERY' && rentalPeriod.startDate) {
           scheduledDate = new Date(rentalPeriod.startDate);
+          console.log('📅 Using rentalPeriod.startDate for DELIVERY:', scheduledDate);
         } else if (shipment.type === 'RETURN' && rentalPeriod.endDate) {
           scheduledDate = new Date(rentalPeriod.endDate);
+          console.log('📅 Using rentalPeriod.endDate for RETURN:', scheduledDate);
         }
       }
     }
+
+    console.log('📅 Final scheduledDate:', scheduledDate);
+    console.log('📅 Shipment type:', shipment.type);
 
     if (scheduledDate) {
       // Set to start of day
@@ -275,12 +295,21 @@ class ShipmentService {
       const today = new Date();
       today.setHours(0, 0, 0, 0);
       
+      console.log('📅 Comparison:', {
+        today: today.toISOString(),
+        scheduledDate: scheduledDate.toISOString(),
+        todayLessThanScheduled: today < scheduledDate
+      });
+      
       if (today < scheduledDate) {
         const dateStr = scheduledDate.toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit', year: 'numeric' });
+        console.log('❌ Date validation failed - throwing error');
         throw new Error(`Chưa đến ngày giao hàng! Bạn chỉ có thể nhận đơn từ 00:00 ngày ${dateStr}`);
       }
+      console.log('✅ Date validation passed');
+    } else {
+      console.log('⚠️ No scheduledDate found - skipping date validation');
     }
-    */
 
     // Check if this specific shipment already has a different shipper assigned
     if (shipment.shipper && String(shipment.shipper) !== String(shipperId)) {
@@ -414,7 +443,7 @@ class ShipmentService {
               ownerId,
               ownerCompensation,
               `Rental fee (90%) for shipment ${shipmentIdForLog} - frozen until order completed`,
-              10 * 1000 // 10 seconds for testing
+              24 * 60 * 60 * 1000 // 24 hours
             );
 
             // Update transaction metadata
@@ -510,7 +539,7 @@ class ShipmentService {
                   renterId,
                   depositAmount,
                   `Return deposit refund - shipment ${shipmentIdForLog}`,
-                  10 * 1000 // 10 seconds for testing
+                  24 * 60 * 60 * 1000 // 24 hours
                 );
 
                 console.log(`   ✅ Deposit refund completed: ${depositAmount.toLocaleString()} VND to renter ${renterId}`);
@@ -586,13 +615,13 @@ class ShipmentService {
         const masterOrderId = shipment.subOrder.masterOrder;
 
         if (masterOrderId) {
-          console.log('\n⏰ Scheduling order completion + funds unlock after 10s from return delivery...');
+          console.log('\n⏰ Scheduling order completion + funds unlock after 24h from return delivery...');
           await OrderScheduler.scheduleOrderCompletion(
             masterOrderId,
             shipment.subOrder._id,
-            10 / 3600 // 10 seconds for testing (converted to hours)
+            24 // 24 hours
           );
-          console.log('   ✅ After 10 seconds:');
+          console.log('   ✅ After 24 hours:');
           console.log('      - Order will be marked as COMPLETED');
           console.log('      - Frozen funds (rental + extension) will be unlocked simultaneously');
           console.log('      - Owner can withdraw money');
@@ -1524,7 +1553,7 @@ class ShipmentService {
               subOrder.owner._id,
               ownerRewardAmount,
               `Compensation for renter no-show during return - shipment ${shipment.shipmentId}`,
-              10 * 1000 // 10 seconds for testing
+              24 * 60 * 60 * 1000 // 24 hours
             );
           }
         } catch (ownerErr) {
@@ -2029,7 +2058,7 @@ class ShipmentService {
             subOrder.owner._id,
             ownerRewardAmount,
             `Compensation for renter no-show - shipment ${shipment.shipmentId}`,
-            10 * 1000 // 10 seconds for testing
+            24 * 60 * 60 * 1000 // 24 hours
           );
         }
       } catch (ownerErr) {

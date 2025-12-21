@@ -9,6 +9,7 @@ const http = require('http');
 const { Server } = require('socket.io');
 const ChatGateway = require('./socket/chat.gateway');
 const orderSocket = require('./socket/orderSocket');
+const { setSocketIO } = require('./services/notification.service');
 
 const PORT = process.env.PORT || 5000;
 
@@ -37,6 +38,10 @@ const io = new Server(server, {
 const chatGateway = new ChatGateway(io);
 global.chatGateway = chatGateway; // Make available globally
 global.io = io; // Make Socket.IO instance available globally for order/contract events
+
+// Set socket IO for notification service
+setSocketIO(io);
+console.log('✅ Socket.IO set for notification service');
 
 // Initialize order socket for real-time order/contract updates
 orderSocket(io);
