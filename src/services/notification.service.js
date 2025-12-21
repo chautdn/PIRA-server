@@ -1,6 +1,12 @@
 const Notification = require('../models/Notification');
 const { NotFoundError } = require('../core/error');
 
+// Get io instance from app
+let io;
+const setSocketIO = (socketIO) => {
+  io = socketIO;
+};
+
 const notificationService = {
   // Create a notification
   createNotification: async (notificationData) => {
@@ -130,6 +136,9 @@ const sendNotification = async (recipientId, title, body, options = {}) => {
       type = 'SYSTEM',
       category = 'INFO',
       relatedExtension = null,
+      relatedReview = null,
+      relatedProduct = null,
+      actions = [],
       data = {}
     } = options;
 
@@ -141,6 +150,9 @@ const sendNotification = async (recipientId, title, body, options = {}) => {
       type,
       category,
       relatedExtension,
+      relatedReview,
+      relatedProduct,
+      actions,
       data,
       status: 'DELIVERED'
     });
@@ -154,6 +166,38 @@ const sendNotification = async (recipientId, title, body, options = {}) => {
       title
     });
 
+    // Emit socket event to user if io is available
+    if (io) {
+      // Use 'user:' prefix to match ChatGateway room naming
+      io.to(`user:${recipientId}`).emit('notification:new', {
+        notification: {
+          _id: notification._id,
+          title: notification.title,
+          message: notification.message,
+          type: notification.type,
+          category: notification.category,
+          status: notification.status,
+          createdAt: notification.createdAt,
+          actions: notification.actions,
+          data: notification.data
+        }
+      });
+      
+      console.log('📡 Socket event emitted: notification:new to user:' + recipientId);
+
+      // Also emit updated notification count
+      const unreadCount = await Notification.countDocuments({
+        recipient: recipientId,
+        status: { $in: ['PENDING', 'SENT', 'DELIVERED'] }
+      });
+
+      io.to(`user:${recipientId}`).emit('notification:count', {
+        unreadCount
+      });
+
+      console.log('📡 Socket event emitted: notification:count (' + unreadCount + ') to user:' + recipientId);
+    }
+
     return notification;
   } catch (error) {
     console.error('❌ Error creating notification:', error);
@@ -164,3 +208,4 @@ const sendNotification = async (recipientId, title, body, options = {}) => {
 
 module.exports = notificationService;
 module.exports.sendNotification = sendNotification;
+module.exports.setSocketIO = setSocketIO;

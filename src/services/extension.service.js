@@ -536,7 +536,7 @@ class ExtensionService {
             ownerId,
             ownerCompensation,
             `Phí gia hạn (90%) - ${extensionRequest.extensionDays} ngày`,
-            10 * 1000 // 10 seconds for testing
+            24 * 60 * 60 * 1000 // 24 hours
           );
 
           // Update transaction metadata with subOrderId for unlock tracking
@@ -564,7 +564,7 @@ class ExtensionService {
               newBalance: transferResult.userWallet.balance.available,
               frozenBalance: transferResult.userWallet.balance.frozen,
               action: 'add_frozen',
-              description: `Phí gia hạn (90%) - ${extensionRequest.extensionDays} ngày (đóng băng 10 giây)`,
+              description: `Phí gia hạn (90%) - ${extensionRequest.extensionDays} ngày (đóng băng 24h)`,
               timestamp: new Date().toISOString()
             });
           }

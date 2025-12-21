@@ -500,6 +500,16 @@ class ExtensionController {
       // Tiền đã được trừ từ renter khi gửi yêu cầu gia hạn
       // Bây giờ chỉ cần chuyển 90% vào frozen wallet của owner
 
+      // Get product name if not available in extension
+      let productName = productToApprove.productName;
+      if (!productName) {
+        const subOrderProduct = subOrder.products.find(
+          p => p.product._id.toString() === productToApprove.productId.toString()
+        );
+        productName = subOrderProduct?.product?.name || 'Unknown Product';
+        console.log('⚠️ ProductName not in extension, fetched from subOrder:', productName);
+      }
+
       // Transfer 90% extension fee to owner (frozen until order completed)
       const Transaction = require('../models/Transaction');
       const ownerCompensation = Math.floor(productToApprove.extensionFee * 0.9); // 90% of extension fee
@@ -510,7 +520,7 @@ class ExtensionController {
           owner: ownerId,
           amount: ownerCompensation,
           extensionFee: productToApprove.extensionFee,
-          productName: productToApprove.productName,
+          productName,
           extensionDays: productToApprove.extensionDays
         });
 
@@ -521,8 +531,8 @@ class ExtensionController {
             adminId,
             ownerId,
             ownerCompensation,
-            `Extension fee (90%) for product: ${productToApprove.productName} - ${productToApprove.extensionDays} days`,
-            10 * 1000 // 10 seconds for testing
+            `Extension fee (90%) for product: ${productName} - ${productToApprove.extensionDays} days`,
+            24 * 60 * 60 * 1000 // 24 hours
           );
 
           // Update transaction metadata
@@ -560,21 +570,61 @@ class ExtensionController {
       }
 
       // Update return shipment endDate if exists
+      let returnShipment;
       try {
-        const returnShipment = await Shipment.findOne({
+        returnShipment = await Shipment.findOne({
           subOrder: extension.subOrder,
           type: 'RETURN',
           productIndex: subOrder.products.findIndex(p => p._id.toString() === productToApprove.productId.toString())
-        });
+        }).populate('shipper');
 
         if (returnShipment) {
           returnShipment.scheduledAt = new Date(productToApprove.newEndDate);
           await returnShipment.save();
           console.log('🚚 Updated return shipment:', {
             shipmentId: returnShipment._id,
-            productName: productToApprove.productName,
-            newScheduleDate: productToApprove.newEndDate
+            productName: productName,
+            newScheduleDate: productToApprove.newEndDate,
+            shipperId: returnShipment.shipper?._id
           });
+
+          // Send notification to shipper about updated schedule
+          if (returnShipment.shipper) {
+            try {
+              await sendNotification(
+                returnShipment.shipper._id,
+                '📅 Lịch trình giao hàng đã thay đổi',
+                `Ngày trả hàng cho sản phẩm "${productName}" đã được gia hạn đến ${new Date(productToApprove.newEndDate).toLocaleDateString('vi-VN')}`,
+                {
+                  type: 'SHIPMENT_SCHEDULE_UPDATED',
+                  category: 'INFO',
+                  relatedShipment: returnShipment._id,
+                  data: {
+                    shipmentId: returnShipment._id.toString(),
+                    productName,
+                    oldDate: new Date(productToApprove.currentEndDate).toLocaleDateString('vi-VN'),
+                    newDate: new Date(productToApprove.newEndDate).toLocaleDateString('vi-VN'),
+                    extensionDays: productToApprove.extensionDays
+                  }
+                }
+              );
+              console.log('✅ Schedule update notification sent to shipper');
+
+              // Emit socket event to shipper for real-time update
+              const io = req.app.get('io');
+              if (io) {
+                io.to(`user:${returnShipment.shipper._id}`).emit('shipment:scheduleUpdated', {
+                  shipmentId: returnShipment._id.toString(),
+                  productName,
+                  newScheduledAt: productToApprove.newEndDate,
+                  extensionDays: productToApprove.extensionDays
+                });
+                console.log('📡 Socket event emitted to shipper:', `user:${returnShipment.shipper._id}`);
+              }
+            } catch (notifErr) {
+              console.error('Failed to notify shipper about schedule update:', notifErr.message);
+            }
+          }
         }
       } catch (shipmentErr) {
         console.error('Failed to update shipment:', shipmentErr.message);

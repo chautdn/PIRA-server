@@ -386,11 +386,17 @@ const getWalletBalance = async (userId) => {
       user = await User.findById(userId).populate('wallet');
     }
 
+    // Ensure all balance values are numbers
+    const available = Number(user.wallet.balance.available) || 0;
+    const frozen = Number(user.wallet.balance.frozen) || 0;
+    const pending = Number(user.wallet.balance.pending) || 0;
+    const display = Number(user.wallet.balance.display) || (available + frozen);
+
     return {
-      balance: user.wallet.balance.display || user.wallet.balance.available,
-      available: user.wallet.balance.available,
-      frozen: user.wallet.balance.frozen,
-      pending: user.wallet.balance.pending,
+      balance: display,
+      available,
+      frozen,
+      pending,
       currency: user.wallet.currency,
       status: user.wallet.status
     };

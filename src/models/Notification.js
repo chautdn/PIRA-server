@@ -62,6 +62,10 @@ const notificationSchema = new mongoose.Schema(
       type: mongoose.Schema.Types.ObjectId,
       ref: 'Product'
     },
+    relatedReview: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Review'
+    },
     relatedDispute: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'Dispute'
