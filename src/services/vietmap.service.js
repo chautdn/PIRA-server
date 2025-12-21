@@ -26,10 +26,10 @@ class VietMapService {
     params.append('vehicle', 'bike'); // hoặc 'motorcycle' nếu muốn chính xác hơn
     params.append('optimize', 'true');
 
-    console.log('VietMap Route request urlsearchParams:', params.toString());
+    // VietMap Route request
     try {
       const response = await axios.get(url, { params, timeout: 10000 });
-      console.log('VietMap Route response:', response.data);
+      // VietMap Route response received
 
       if (response.data?.code === 'OK' || response.data?.code === 'Ok') {
         if (response.data.paths?.length > 0) {
@@ -52,7 +52,7 @@ class VietMapService {
     } catch (error) {
       // BỎ FALLBACK HAVERSINE HOÀN TOÀN (nếu bạn muốn tính phí chính xác)
       // Chỉ log lỗi, trả về thất bại rõ ràng
-      console.error('VietMap Route failed:', error.message);
+      // VietMap Route failed
       throw new Error(`Không thể tính khoảng cách thực tế: ${error.message}`);
     }
   }
@@ -185,7 +185,7 @@ class VietMapService {
         message: 'Tính phí ship theo khoảng cách thực tế bằng VietMap'
       };
     } catch (error) {
-      console.error('❌ Error calculating SubOrder shipping:', error);
+      // Error calculating SubOrder shipping
       throw error; // Throw error thay vì return success: false
     }
   }
@@ -238,7 +238,7 @@ class VietMapService {
         throw new Error('No location found for the given address');
       }
     } catch (error) {
-      console.error('Geocoding Error:', error.message);
+      // Geocoding Error
       return {
         success: false,
         error: error.message
@@ -291,7 +291,7 @@ class VietMapService {
         throw new Error('No address found for the given coordinates');
       }
     } catch (error) {
-      console.error('Reverse Geocoding Error:', error.message);
+      // Reverse Geocoding Error
       return {
         success: false,
         error: error.message

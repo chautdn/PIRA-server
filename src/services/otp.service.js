@@ -84,11 +84,6 @@ class OTPService {
       orderId
     });
 
-    console.log(`📧 Sending OTP to ${userEmail} (${userRole}): ${otp}`);
-    console.log(
-      `🔑 OTP Key: ${key}, Expires at: ${new Date(expiresAt).toISOString()}, Sent count: ${sentCount}/3`
-    );
-
     try {
       // Send OTP email
       const emailHtml = emailTemplates.contractSigningOTP(userName, userRole, orderId, otp, 5);
@@ -98,9 +93,6 @@ class OTPService {
         subject: `Mã xác minh ký hợp đồng thuê #${orderId} - PIRA`,
         html: emailHtml
       });
-
-      console.log(`✅ OTP email sent successfully to ${userEmail}`);
-
       return {
         success: true,
         message: `Mã OTP đã được gửi đến email ${this.maskEmail(userEmail)}. Mã có hiệu lực trong 5 phút.`,
@@ -109,8 +101,6 @@ class OTPService {
         remainingAttempts: 3 - sentCount
       };
     } catch (error) {
-      console.error('❌ Error sending OTP email:', error);
-      // Remove OTP from store if email sending failed
       this.otpStore.delete(key);
       throw new BadRequest('Không thể gửi mã OTP. Vui lòng thử lại sau.');
     }
@@ -150,14 +140,13 @@ class OTPService {
 
     // Verify OTP
     if (otpData.otp !== otp.trim()) {
-      console.log(`❌ Invalid OTP attempt ${otpData.attempts}/5 for key: ${key}`);
-      this.otpStore.set(key, otpData); // Update attempts
+           this.otpStore.set(key, otpData); // Update attempts
       throw new BadRequest(`Mã OTP không chính xác. Bạn còn ${5 - otpData.attempts} lần thử.`);
     }
 
     // OTP is correct - remove from store
     this.otpStore.delete(key);
-    console.log(`✅ OTP verified successfully for key: ${key}`);
+    
 
     return {
       success: true,
@@ -230,7 +219,6 @@ class OTPService {
         clearedCount++;
       }
     }
-    console.log(`🗑️ Cleared ${clearedCount} OTP(s) for user ${userId}`);
   }
 }
 

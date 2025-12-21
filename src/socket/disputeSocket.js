@@ -10,7 +10,7 @@ const initDisputeSocket = (io) => {
   const disputeNamespace = io.of('/');
 
   disputeNamespace.on('connection', (socket) => {
-    console.log('🔌 Dispute socket connected:', socket.id);
+    // Dispute socket connected
 
     // Register user for dispute updates
     socket.on('dispute:register', (userId) => {
@@ -19,11 +19,10 @@ const initDisputeSocket = (io) => {
       const userIdStr = userId.toString();
       socket.join(`user:${userIdStr}`);
       userSockets.set(socket.id, userIdStr);
-      
+
       // Log all rooms this socket is in
       const rooms = Array.from(socket.rooms);
-      console.log(`👤 User ${userIdStr} registered for dispute updates`);
-      console.log(`   Socket ${socket.id} rooms: ${rooms.join(', ')}`);
+      // User registered for dispute updates
     });
 
     // When dispute is created - notify respondent
@@ -73,9 +72,10 @@ const initDisputeSocket = (io) => {
         response, // 'ACCEPTED' or 'REJECTED'
         respondentName,
         timestamp: new Date(),
-        message: response === 'ACCEPTED'
-          ? `${respondentName} đã chấp nhận khiếu nại`
-          : `${respondentName} đã từ chối khiếu nại`
+        message:
+          response === 'ACCEPTED'
+            ? `${respondentName} đã chấp nhận khiếu nại`
+            : `${respondentName} đã từ chối khiếu nại`
       };
 
       // Notify dispute creator
@@ -86,7 +86,15 @@ const initDisputeSocket = (io) => {
 
     // When negotiation message is sent
     socket.on('dispute:negotiationMessage', (data) => {
-      const { disputeId, renterId, ownerId, senderId, senderName, message: msgContent, type } = data;
+      const {
+        disputeId,
+        renterId,
+        ownerId,
+        senderId,
+        senderName,
+        message: msgContent,
+        type
+      } = data;
 
       const payload = {
         disputeId,
@@ -108,7 +116,8 @@ const initDisputeSocket = (io) => {
 
     // When negotiation offer is accepted/rejected
     socket.on('dispute:negotiationResponse', (data) => {
-      const { disputeId, renterId, ownerId, responderId, responderName, offerResponse, newStatus } = data;
+      const { disputeId, renterId, ownerId, responderId, responderName, offerResponse, newStatus } =
+        data;
 
       const payload = {
         disputeId,
@@ -117,9 +126,10 @@ const initDisputeSocket = (io) => {
         response: offerResponse, // 'ACCEPTED' or 'REJECTED'
         newStatus,
         timestamp: new Date(),
-        message: offerResponse === 'ACCEPTED'
-          ? `${responderName} đã đồng ý với đề xuất thương lượng`
-          : `${responderName} đã từ chối đề xuất thương lượng`
+        message:
+          offerResponse === 'ACCEPTED'
+            ? `${responderName} đã đồng ý với đề xuất thương lượng`
+            : `${responderName} đã từ chối đề xuất thương lượng`
       };
 
       // Notify both parties
@@ -140,9 +150,10 @@ const initDisputeSocket = (io) => {
         escalatedTo, // 'THIRD_PARTY' or 'ADMIN'
         escalatedBy,
         timestamp: new Date(),
-        message: escalatedTo === 'THIRD_PARTY'
-          ? 'Khiếu nại đã được chuyển đến bên thứ ba để xác minh'
-          : 'Khiếu nại đã được chuyển đến Admin để quyết định'
+        message:
+          escalatedTo === 'THIRD_PARTY'
+            ? 'Khiếu nại đã được chuyển đến bên thứ ba để xác minh'
+            : 'Khiếu nại đã được chuyển đến Admin để quyết định'
       };
 
       // Notify both parties
@@ -244,7 +255,7 @@ const initDisputeSocket = (io) => {
       const userId = userSockets.get(socket.id);
       if (userId) {
         userSockets.delete(socket.id);
-        console.log(`👋 User ${userId} disconnected from dispute socket`);
+        // User disconnected from dispute socket
       }
     });
   });
@@ -253,27 +264,25 @@ const initDisputeSocket = (io) => {
   const emitToUser = (userId, event, data) => {
     if (userId) {
       const userIdStr = userId.toString();
-      console.log(`📡 [DisputeSocket] Emitting ${event} to user:${userIdStr}`);
+      // Emitting event to user
       io.to(`user:${userIdStr}`).emit(event, data);
     }
   };
 
   // Helper function to emit to multiple users
   const emitToUsers = (userIds, event, data) => {
-    console.log(`📡 [DisputeSocket] emitToUsers called`);
-    console.log(`   Event: ${event}`);
-    console.log(`   UserIds: ${userIds.join(', ')}`);
-    
-    userIds.forEach(userId => {
+    // Emitting to multiple users
+
+    userIds.forEach((userId) => {
       if (userId) {
         const userIdStr = userId.toString();
         const roomName = `user:${userIdStr}`;
-        
+
         // Check if room has any sockets
         const room = io.sockets.adapter.rooms.get(roomName);
         const socketsInRoom = room ? room.size : 0;
-        
-        console.log(`   -> Emitting to ${roomName} (${socketsInRoom} sockets in room)`);
+
+        // Emitting to room
         io.to(roomName).emit(event, data);
       }
     });
@@ -283,12 +292,12 @@ const initDisputeSocket = (io) => {
   const emitToDisputeParties = (renterId, ownerId, event, data) => {
     if (renterId) {
       const renterIdStr = renterId.toString();
-      console.log(`📡 [DisputeSocket] Emitting ${event} to renter:${renterIdStr}`);
+      // Emitting to renter
       io.to(`user:${renterIdStr}`).emit(event, data);
     }
     if (ownerId) {
       const ownerIdStr = ownerId.toString();
-      console.log(`📡 [DisputeSocket] Emitting ${event} to owner:${ownerIdStr}`);
+      // Emitting to owner
       io.to(`user:${ownerIdStr}`).emit(event, data);
     }
   };

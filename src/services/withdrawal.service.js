@@ -104,13 +104,7 @@ const withdrawalService = {
         throw new NotFoundError('Wallet not found');
       }
 
-      console.log('💰 Wallet balance check:', {
-        userId,
-        requestedAmount: amount,
-        availableBalance: wallet.balance.available,
-        frozenBalance: wallet.balance.frozen,
-        pendingBalance: wallet.balance.pending
-      });
+      // Wallet balance check
 
       // 6. Check available balance
       if (wallet.balance.available < amount) {

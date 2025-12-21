@@ -190,21 +190,12 @@ class VisualSearchService {
     try {
       const { limit = 20, minScore = 0.1, includeInactive = false } = options;
 
-      console.log(
-        '🔍 Starting visual search with concepts (English):',
-        concepts.map((c) => c.name)
-      );
 
       // 1. Translate concepts sang tiếng Việt
       const translatedConcepts = TranslationService.translateConcepts(concepts);
 
-      console.log(
-        '🇻🇳 Translated to Vietnamese:',
-        translatedConcepts.map((c) => `${c.nameEnglish} → ${c.nameVietnamese}`)
-      );
 
       if (translatedConcepts.length === 0) {
-        console.log('⚠️ No valid concepts after translation');
         return {
           products: [],
           matchedCategories: [],
@@ -218,27 +209,15 @@ class VisualSearchService {
         status: 'ACTIVE',
         deletedAt: { $exists: false }
       });
-
-      console.log(`📂 Found ${allCategories.length} active categories`);
-
       // 3. Map concepts (đã dịch) to categories
       const matchedCategories = await this.mapConceptsToCategories(
         translatedConcepts,
         allCategories
       );
 
-      console.log(
-        '🎯 Matched categories:',
-        matchedCategories.slice(0, 5).map((mc) => ({
-          name: mc.category.name,
-          score: mc.score.toFixed(2),
-          concepts: mc.matchedConcepts.map((c) => c.nameVietnamese || c.name)
-        }))
-      );
 
-      if (matchedCategories.length === 0) {
-        console.log('⚠️ No categories matched, searching all products');
-      }
+
+ 
 
       // 3. Tìm products trong các categories đã match (hoặc tất cả nếu không match)
       const categoryIds =
@@ -262,7 +241,6 @@ class VisualSearchService {
         .limit(limit * 3) // Lấy nhiều hơn để score
         .lean();
 
-      console.log(`📦 Found ${products.length} products in matched categories`);
 
       // 4. Score và sort products (dùng translated concepts)
       const scoredProducts = products
@@ -274,14 +252,6 @@ class VisualSearchService {
         .sort((a, b) => b.visualSearchScore - a.visualSearchScore)
         .slice(0, limit);
 
-      console.log(
-        '✅ Top scored products:',
-        scoredProducts.slice(0, 5).map((p) => ({
-          title: p.title,
-          score: p.visualSearchScore.toFixed(3),
-          category: p.category?.name
-        }))
-      );
 
       return {
         products: scoredProducts,
@@ -291,7 +261,6 @@ class VisualSearchService {
         originalConcepts: concepts.map((c) => c.name) // Keep original English concepts
       };
     } catch (error) {
-      console.error('❌ Visual search error:', error);
       throw error;
     }
   }

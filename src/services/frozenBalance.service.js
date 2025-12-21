@@ -13,14 +13,11 @@ class FrozenBalanceService {
       
       // Find all frozen records that should be unlocked (unlocksAt <= now)
       const now = new Date();
-      console.log(`\n🔍 [FrozenBalance] Checking for expired frozen funds at ${now.toISOString()}`);
       
       const expiredFrozenRecords = await FrozenBalance.find({
         status: 'FROZEN',
         unlocksAt: { $lte: now }
       }).populate('wallet').populate('user');
-
-      console.log(`   Found ${expiredFrozenRecords.length} expired frozen record(s)`);
 
       if (expiredFrozenRecords.length === 0) {
         return { success: true, unlockedCount: 0, message: 'No frozen funds to unlock' };
@@ -40,14 +37,11 @@ class FrozenBalanceService {
 
 
           // Move from frozen to available
-          console.log(`   💰 Unlocking ${amount.toLocaleString()}đ for user ${user._id}`);
-          console.log(`      Before: frozen=${wallet.balance.frozen.toLocaleString()}đ, available=${wallet.balance.available.toLocaleString()}đ`);
-          
+
           wallet.balance.frozen -= amount;
           wallet.balance.available += amount;
           await wallet.save({ session });
           
-          console.log(`      After: frozen=${wallet.balance.frozen.toLocaleString()}đ, available=${wallet.balance.available.toLocaleString()}đ`);
 
           // Update frozen record status
           frozenRecord.status = 'UNLOCKED';
@@ -86,7 +80,7 @@ class FrozenBalanceService {
 
           // Emit socket update to notify user
           if (global.chatGateway) {
-            console.log(`      📡 Emitting wallet update via socket to user ${user._id}`);
+       
             global.chatGateway.emitWalletUpdate(user._id.toString(), {
               type: 'FROZEN_FUND_UNLOCKED',
               amount: amount,

@@ -157,7 +157,7 @@ const createTopUpSession = async (userId, amount, metadata = {}) => {
       validation
     };
   } catch (error) {
-    console.error('Payment session creation error:', error);
+    // Payment session creation error
     throw new Error(`Failed to create payment session: ${error.message}`);
   }
 };
@@ -255,7 +255,7 @@ const processWebhook = async (webhookData) => {
       return { message: 'Payment failed', transaction: updatedTransaction };
     }
   } catch (error) {
-    console.error('❌ Webhook processing error:', error);
+    // Webhook processing error
     throw new Error(`Webhook processing failed: ${error.message}`);
   }
 };
@@ -412,7 +412,7 @@ const getTransactionHistory = async (userId, options = {}) => {
     } = options;
 
     // Build query
-    const query = { 
+    const query = {
       user: userId,
       'metadata.hideFromUserHistory': { $ne: true } // Hide system audit transactions
     };
@@ -523,7 +523,7 @@ const createPaymentLink = async (paymentData) => {
       qrCode: paymentLink.qrCode
     };
   } catch (error) {
-    console.error('Payment link creation error:', error);
+    // Payment link creation error
     throw new Error(`Failed to create payment link: ${error.message}`);
   }
 };
@@ -589,7 +589,7 @@ const createOrderPaymentSession = async (userId, amount, orderInfo, metadata = {
       qrCode: paymentLink.qrCode // For QR display like wallet top-up
     };
   } catch (error) {
-    console.error('Order payment creation error:', error);
+    // Order payment creation error
     throw new Error(`Failed to create order payment: ${error.message}`);
   }
 };
@@ -785,7 +785,7 @@ const processOrderPaymentWebhook = async (webhookData) => {
       return { message: 'Order payment failed', orderCompleted: false };
     }
   } catch (error) {
-    console.error('Order payment webhook error:', error);
+    // Order payment webhook error
     throw new Error(`Failed to process order payment webhook: ${error.message}`);
   }
 };

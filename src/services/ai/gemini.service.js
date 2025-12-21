@@ -26,7 +26,6 @@ class AIService {
     try {
       // NEW API: Client automatically gets API key from GEMINI_API_KEY env var
       this.ai = new GoogleGenAI({});
-      console.log('✅ Gemini AI initialized successfully (gemini-2.5-flash)');
       this.initialized = true;
     } catch (error) {
       console.error('❌ Gemini AI initialization failed:', error.message);

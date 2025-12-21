@@ -8,7 +8,7 @@ const orderSocketHandler = (io) => {
   const userSockets = new Map(); // userId -> socketId
 
   io.on('connection', (socket) => {
-    console.log(`🔌 Order socket connected: ${socket.id}`);
+    // Order socket connected
 
     // User authentication and registration
     socket.on('order:register', (userId) => {
@@ -16,7 +16,7 @@ const orderSocketHandler = (io) => {
         userSockets.set(userId.toString(), socket.id);
         socket.userId = userId.toString();
         socket.join(`user:${userId}`); // Join user-specific room
-        console.log(`✅ User ${userId} registered for order updates`);
+        // User registered for order updates
       }
     });
 
@@ -32,7 +32,7 @@ const orderSocketHandler = (io) => {
           orderData,
           timestamp: new Date()
         });
-        console.log(`📦 New order ${orderId} notification sent to owner ${ownerId}`);
+        // New order notification sent to owner
       }
     });
 
@@ -60,7 +60,7 @@ const orderSocketHandler = (io) => {
         });
       }
 
-      console.log(`🔄 Order ${orderId} status updated to ${status}`);
+      // Order status updated
     });
 
     // Contract signed - notify both parties
@@ -77,7 +77,7 @@ const orderSocketHandler = (io) => {
           signedBy,
           timestamp: new Date()
         });
-        console.log(`📝 Contract ${contractId} signature notification sent`);
+        // Contract signature notification sent
       }
     });
 
@@ -96,7 +96,7 @@ const orderSocketHandler = (io) => {
         }
       });
 
-      console.log(`✅ Contract ${contractId} completed notification sent`);
+      // Contract completed notification sent
     });
 
     // Payment received - notify owner
@@ -110,7 +110,7 @@ const orderSocketHandler = (io) => {
           paymentMethod,
           timestamp: new Date()
         });
-        console.log(`💰 Payment notification sent to owner ${ownerId}`);
+        // Payment notification sent to owner
       }
     });
 
@@ -129,7 +129,7 @@ const orderSocketHandler = (io) => {
         }
       });
 
-      console.log(`🚚 Shipment ${shipmentId} status updated to ${status}`);
+      // Shipment status updated
     });
 
     // Early return request
@@ -142,7 +142,7 @@ const orderSocketHandler = (io) => {
           orderId,
           timestamp: new Date()
         });
-        console.log(`🔙 Early return request notification sent to owner ${ownerId}`);
+        // Early return request notification sent to owner
       }
     });
 
@@ -156,7 +156,7 @@ const orderSocketHandler = (io) => {
           orderId,
           timestamp: new Date()
         });
-        console.log(`⏰ Extension request notification sent to owner ${ownerId}`);
+        // Extension request notification sent to owner
       }
     });
 
@@ -164,9 +164,9 @@ const orderSocketHandler = (io) => {
     socket.on('disconnect', () => {
       if (socket.userId) {
         userSockets.delete(socket.userId);
-        console.log(`❌ User ${socket.userId} disconnected from order updates`);
+        // User disconnected from order updates
       }
-      console.log(`🔌 Order socket disconnected: ${socket.id}`);
+      // Order socket disconnected
     });
   });
 

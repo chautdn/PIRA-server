@@ -44,15 +44,10 @@ class ThirdPartyService {
         ids = [...new Set(ids)];
       }
       
-      console.log(`📡 [ThirdParty] Preparing to emit ${event}`);
-      console.log(`   Recipients: ${ids.join(', ')}`);
-      console.log(`   Data:`, JSON.stringify(data, null, 2));
-      
       global.disputeSocket.emitToUsers(ids, event, {
         ...data,
         timestamp: new Date()
       });
-      console.log(`✅ [ThirdParty] Emitted ${event} to ${ids.length} users`);
     } catch (error) {
       console.error('Error emitting dispute socket from third party:', error);
     }

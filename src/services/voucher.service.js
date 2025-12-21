@@ -16,9 +16,7 @@ class VoucherService {
       user.loyaltyPoints = (user.loyaltyPoints || 0) + points;
       await user.save();
 
-      console.log(
-        `✅ Awarded ${points} loyalty points to user ${user.email}. Total: ${user.loyaltyPoints}`
-      );
+      // Awarded loyalty points to user
 
       return {
         success: true,
@@ -28,7 +26,7 @@ class VoucherService {
         reason
       };
     } catch (error) {
-      console.error('❌ Error awarding loyalty points:', error);
+      // Error awarding loyalty points
       throw error;
     }
   }
@@ -88,9 +86,7 @@ class VoucherService {
       user.loyaltyPoints -= requiredPoints;
       await user.save();
 
-      console.log(
-        `✅ User ${user.email} redeemed voucher ${code} (${discountPercent}% off) for ${requiredPoints} points`
-      );
+      // User redeemed voucher
 
       return {
         success: true,
@@ -105,7 +101,7 @@ class VoucherService {
         remainingPoints: user.loyaltyPoints
       };
     } catch (error) {
-      console.error('❌ Error redeeming voucher:', error);
+      // Error redeeming voucher
       throw error;
     }
   }
@@ -138,7 +134,7 @@ class VoucherService {
         }
       };
     } catch (error) {
-      console.error('❌ Error validating voucher:', error);
+      // Error validating voucher
       throw error;
     }
   }
@@ -168,7 +164,7 @@ class VoucherService {
       voucher.status = 'USED';
       await voucher.save();
 
-      console.log(`✅ Voucher ${code} applied to order ${orderId} by user ${userId}`);
+      // Voucher applied to order
 
       return {
         success: true,
@@ -176,7 +172,7 @@ class VoucherService {
         voucherId: voucher._id
       };
     } catch (error) {
-      console.error('❌ Error applying voucher:', error);
+      // Error applying voucher
       throw error;
     }
   }
@@ -201,7 +197,7 @@ class VoucherService {
         vouchers
       };
     } catch (error) {
-      console.error('❌ Error getting user vouchers:', error);
+      // Error getting user vouchers
       throw error;
     }
   }

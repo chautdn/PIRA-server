@@ -3,17 +3,13 @@ const nodemailer = require('nodemailer');
 
 const sendMail = async ({ email, subject, html }) => {
   try {
-    console.log('=== Sending Email ===');
-    console.log('To:', email);
-    console.log('Subject:', subject);
-    console.log('MAIL_HOST:', process.env.MAIL_HOST);
-    console.log('MAIL_HOST_USERNAME:', process.env.MAIL_HOST_USERNAME);
-    console.log('MAIL_HOST_PASSWORD exists:', !!process.env.MAIL_HOST_PASSWORD);
-    console.log('MAIL_FROM_NAME:', process.env.MAIL_FROM_NAME);
+    // Sending email
 
     // Validate email configuration
     if (!process.env.MAIL_HOST_USERNAME || !process.env.MAIL_HOST_PASSWORD) {
-      throw new Error('Email configuration is missing. Please check MAIL_HOST_USERNAME and MAIL_HOST_PASSWORD in .env file');
+      throw new Error(
+        'Email configuration is missing. Please check MAIL_HOST_USERNAME and MAIL_HOST_PASSWORD in .env file'
+      );
     }
 
     const transporter = nodemailer.createTransport({
@@ -32,7 +28,7 @@ const sendMail = async ({ email, subject, html }) => {
 
     // Verify transporter configuration
     await transporter.verify();
-    console.log('✅ Email transporter verified successfully');
+    // Email transporter verified successfully
 
     const message = {
       from: `"${process.env.MAIL_FROM_NAME || 'PIRA'}" <${process.env.MAIL_HOST_USERNAME}>`,
@@ -41,21 +37,14 @@ const sendMail = async ({ email, subject, html }) => {
       html
     };
 
-    console.log('Sending email message...');
+    // Sending email message
     const result = await transporter.sendMail(message);
-    console.log('✅ Email sent successfully');
-    console.log('Message ID:', result.messageId);
-    console.log('Response:', result.response);
-    console.log('===================');
-    
+    // Email sent successfully
+
     return result;
   } catch (error) {
-    console.error('❌ Error sending email:');
-    console.error('Error message:', error.message);
-    console.error('Error code:', error.code);
-    console.error('Error stack:', error.stack);
-    console.error('===================');
-    
+    // Error sending email
+
     // Throw detailed error
     throw new Error(`Không thể gửi email: ${error.message}`);
   }
@@ -64,16 +53,24 @@ const sendMail = async ({ email, subject, html }) => {
 /**
  * Send shipper notification email about new shipment
  */
-const sendShipperNotificationEmail = async (shipper, shipment, product, renterInfo, orderDetails) => {
+const sendShipperNotificationEmail = async (
+  shipper,
+  shipment,
+  product,
+  renterInfo,
+  orderDetails
+) => {
   try {
     const emailTemplates = require('./emailTemplates');
-    
+
     if (!shipper.email) {
-      console.warn('⚠️ Shipper email not found:', shipper._id);
+      // Shipper email not found
       return null;
     }
 
-    const shipperName = `${shipper.profile?.firstName || ''} ${shipper.profile?.lastName || ''}`.trim() || shipper.email;
+    const shipperName =
+      `${shipper.profile?.firstName || ''} ${shipper.profile?.lastName || ''}`.trim() ||
+      shipper.email;
     const shipmentType = shipment.type === 'DELIVERY' ? 'Giao hàng' : 'Nhận trả';
     const scheduledDate = new Date(shipment.scheduledAt).toLocaleDateString('vi-VN', {
       weekday: 'long',
@@ -102,11 +99,7 @@ const sendShipperNotificationEmail = async (shipper, shipment, product, renterIn
 
     const subject = `[PIRA] Đơn hàng vận chuyển mới #${shipment.shipmentId} - ${shipmentType}`;
 
-    console.log(`📧 Sending shipper notification email to ${shipper.email}:`);
-    console.log(`   Shipper: ${shipperName}`);
-    console.log(`   Shipment ID: ${shipment.shipmentId}`);
-    console.log(`   Type: ${shipmentType}`);
-    console.log(`   Scheduled: ${scheduledDate}`);
+    // Sending shipper notification email
 
     const result = await sendMail({
       email: shipper.email,
@@ -114,10 +107,10 @@ const sendShipperNotificationEmail = async (shipper, shipment, product, renterIn
       html
     });
 
-    console.log(`✅ Shipper notification email sent successfully to ${shipper.email}`);
+    // Shipper notification email sent successfully
     return result;
   } catch (error) {
-    console.error('❌ Error sending shipper notification email:', error.message);
+    // Error sending shipper notification email
     throw error;
   }
 };
@@ -132,32 +125,34 @@ const sendShipperNotificationEmail = async (shipper, shipment, product, renterIn
 const sendDisputeNotificationEmail = async (respondent, complainant, dispute, productName) => {
   try {
     const emailTemplates = require('./emailTemplates');
-    
+
     if (!respondent.email) {
-      console.warn('⚠️ Respondent email not found:', respondent._id);
+      // Respondent email not found
       return null;
     }
 
-    const respondentName = respondent.profile?.fullName || 
-      `${respondent.profile?.firstName || ''} ${respondent.profile?.lastName || ''}`.trim() || 
+    const respondentName =
+      respondent.profile?.fullName ||
+      `${respondent.profile?.firstName || ''} ${respondent.profile?.lastName || ''}`.trim() ||
       respondent.email;
-    
-    const complainantName = complainant.profile?.fullName || 
-      `${complainant.profile?.firstName || ''} ${complainant.profile?.lastName || ''}`.trim() || 
+
+    const complainantName =
+      complainant.profile?.fullName ||
+      `${complainant.profile?.firstName || ''} ${complainant.profile?.lastName || ''}`.trim() ||
       complainant.email;
 
     // Mapping dispute type to Vietnamese label
     const disputeTypeLabels = {
-      'WRONG_PRODUCT': 'Sản phẩm sai mô tả',
-      'DAMAGED_ON_DELIVERY': 'Hư hỏng khi giao hàng',
-      'DAMAGED_ON_RETURN': 'Hư hỏng khi trả hàng',
-      'DAMAGED_BY_SHIPPER': 'Hư hỏng do shipper',
-      'RENTER_NO_RETURN': 'Renter không trả hàng',
-      'OTHER': 'Khác'
+      WRONG_PRODUCT: 'Sản phẩm sai mô tả',
+      DAMAGED_ON_DELIVERY: 'Hư hỏng khi giao hàng',
+      DAMAGED_ON_RETURN: 'Hư hỏng khi trả hàng',
+      DAMAGED_BY_SHIPPER: 'Hư hỏng do shipper',
+      RENTER_NO_RETURN: 'Renter không trả hàng',
+      OTHER: 'Khác'
     };
-    
+
     const disputeTypeLabel = disputeTypeLabels[dispute.type] || dispute.type;
-    
+
     const createdAt = new Date(dispute.createdAt).toLocaleString('vi-VN', {
       weekday: 'long',
       year: 'numeric',
@@ -167,7 +162,7 @@ const sendDisputeNotificationEmail = async (respondent, complainant, dispute, pr
       minute: '2-digit'
     });
 
-    const disputeUrl = `${process.env.CLIENT_URL || 'http://localhost:5173'}/disputes/${dispute._id}`;
+    const disputeUrl = `${process.env.CLIENT_URL || 'https://pira.asia'}/disputes/${dispute._id}`;
 
     const html = emailTemplates.disputeNotificationEmail(
       respondentName,
@@ -182,11 +177,7 @@ const sendDisputeNotificationEmail = async (respondent, complainant, dispute, pr
 
     const subject = `[PIRA] ⚠️ Bạn có khiếu nại mới #${dispute.disputeId}`;
 
-    console.log(`📧 Sending dispute notification email to ${respondent.email}:`);
-    console.log(`   Respondent: ${respondentName}`);
-    console.log(`   Complainant: ${complainantName}`);
-    console.log(`   Dispute ID: ${dispute.disputeId}`);
-    console.log(`   Dispute Type: ${disputeTypeLabel}`);
+    // Sending dispute notification email
 
     const result = await sendMail({
       email: respondent.email,
@@ -194,10 +185,10 @@ const sendDisputeNotificationEmail = async (respondent, complainant, dispute, pr
       html
     });
 
-    console.log(`✅ Dispute notification email sent successfully to ${respondent.email}`);
+    // Dispute notification email sent successfully
     return result;
   } catch (error) {
-    console.error('❌ Error sending dispute notification email:', error.message);
+    // Error sending dispute notification email
     // Don't throw error to prevent blocking the main flow
     return null;
   }

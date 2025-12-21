@@ -135,12 +135,7 @@ const updateProfileByKyc = async (id) => {
 
     const updates = {};
 
-    console.log('🔄 Applying CCCD data to profile:', {
-      fullName: cccdData.fullName,
-      dateOfBirth: cccdData.dateOfBirth,
-      gender: cccdData.gender,
-      address: cccdData.address
-    });
+    // Applying CCCD data to profile
 
     // **CẬP NHẬT PROFILE TỪ THÔNG TIN CCCD**
 
@@ -181,16 +176,16 @@ const updateProfileByKyc = async (id) => {
       updates['address.streetAddress'] = normalizeAddress(cccdData.address);
     }
 
-    console.log('📝 Updates to apply:', updates);
+    // Updates to apply
 
     // Áp dụng các thay đổi
     const updatedUser = await User.findByIdAndUpdate(id, { $set: updates }, { new: true });
 
-    console.log('✅ Profile updated successfully from CCCD data');
+    // Profile updated successfully from CCCD data
 
     return updatedUser;
   } catch (error) {
-    console.error('❌ Update profile by KYC error:', error);
+    // Update profile by KYC error
     throw error;
   }
 };
@@ -380,7 +375,7 @@ const uploadAvatar = async (userId, buffer) => {
       },
       async (error, result) => {
         if (error) {
-          console.error('Cloudinary upload error:', error);
+          // Cloudinary upload error
           reject(new Error(`Cloudinary upload failed: ${error.message}`));
         } else {
           try {
@@ -390,7 +385,7 @@ const uploadAvatar = async (userId, buffer) => {
             });
             resolve(result.secure_url);
           } catch (dbError) {
-            console.error('Database update error:', dbError);
+            // Database update error
             reject(new Error('Failed to update avatar in database'));
           }
         }

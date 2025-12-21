@@ -90,7 +90,7 @@ const checkCCCDExists = async (cccdNumber, excludeUserId = null) => {
     const existingUser = await User.findOne(query);
 
     if (existingUser) {
-      console.log(`⚠️ CCCD ID ${cccdId} đã được xác thực bởi user ${existingUser.email}`);
+      
       return true;
     }
 
@@ -367,7 +367,6 @@ const normalizeCCCDData = (ocrData) => {
 // Upload CCCD với mã hóa và kiểm tra trùng lặp
 const uploadCCCD = async (userId, files) => {
   try {
-    console.log('Files structure:', files);
 
     if (!files || Object.keys(files).length === 0) {
       throw new ValidationError('Cần upload ít nhất một ảnh CCCD');
@@ -396,12 +395,10 @@ const uploadCCCD = async (userId, files) => {
       const frontResult = await uploadToCloudinary(frontFile.buffer, `cccd/${userId}/front`);
       frontImageUrl = encryptUrl(frontResult.secure_url);
 
-      console.log('Extracting info from front image using FPT.AI...');
       const ocrResult = await extractCCCDInfo(frontFile.buffer);
 
       if (ocrResult.success && ocrResult.data) {
         extractedInfo = normalizeCCCDData(ocrResult.data);
-        console.log('OCR extracted info:', extractedInfo);
       }
     }
 
@@ -420,12 +417,12 @@ const uploadCCCD = async (userId, files) => {
       backImageUrl = encryptUrl(backResult.secure_url);
 
       if (!extractedInfo) {
-        console.log('Extracting info from back image using FPT.AI...');
+       
         const ocrResult = await extractCCCDInfo(backFile.buffer);
 
         if (ocrResult.success && ocrResult.data) {
           extractedInfo = normalizeCCCDData(ocrResult.data);
-          console.log('OCR extracted info from back:', extractedInfo);
+          
         }
       }
     }
@@ -467,8 +464,6 @@ const uploadCCCD = async (userId, files) => {
         // Tạo CCCD ID để track verification
         cccdData.id = generateCCCDId(extractedInfo.cccdNumber);
         cccdData.cccdNumber = encryptCCCDNumber(extractedInfo.cccdNumber);
-
-        console.log(`📝 Generated CCCD ID: ${cccdData.id} for verification tracking`);
       }
       if (extractedInfo.fullName) {
         cccdData.fullName = extractedInfo.fullName;
@@ -503,13 +498,11 @@ const uploadCCCD = async (userId, files) => {
         user.profile.gender = extractedInfo.gender;
       }
 
-      console.log('✅ Đã lưu thông tin OCR vào CCCD fields và profile');
     } else {
       // Nếu không có OCR data, đánh dấu là chưa xác thực
       cccdData.isVerified = false;
       cccdData.verifiedAt = null;
       cccdData.verificationSource = null;
-      console.log('⚠️ Không có thông tin OCR, CCCD chưa được xác thực');
     }
 
     user.cccd = cccdData;
@@ -757,7 +750,6 @@ const getKYCStatus = async (userId) => {
 
     const cccd = user.cccd || {};
 
-    console.log('🔍 Service - User CCCD:', cccd);
 
     return {
       isVerified: cccd.isVerified || false,

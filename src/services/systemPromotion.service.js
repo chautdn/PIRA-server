@@ -86,16 +86,8 @@ const systemPromotionService = {
 
     // Emit socket event for real-time updates
     if (global.chatGateway) {
-      console.log(
-        '[SystemPromotion] ✅ ChatGateway found, emitting socket event for promotion:',
-        promotion.title
-      );
-      console.log(
-        '[SystemPromotion] Promotion data:',
-        JSON.stringify(promotion.toObject(), null, 2)
-      );
+      
       global.chatGateway.emitSystemPromotionCreated(promotion.toObject());
-      console.log('[SystemPromotion] ✅ Socket event emitted successfully');
     } else {
       console.log(
         '[SystemPromotion] ❌ Warning: chatGateway not initialized - socket event NOT sent'
@@ -147,10 +139,6 @@ const systemPromotionService = {
     }));
 
     await Notification.insertMany(notifications);
-
-    console.log(
-      `Created ${notifications.length} notifications for system promotion: ${promotion.code}`
-    );
   },
 
   /**

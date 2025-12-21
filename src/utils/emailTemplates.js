@@ -125,7 +125,7 @@ const emailTemplates = {
             <table role="presentation" border="0" cellpadding="0" cellspacing="0" style="margin: 20px auto;">
               <tr>
                 <td style="text-align: center;">
-                  <a href="${process.env.CLIENT_URL || 'http://localhost:5173'}/owner/products" style="display: inline-block; padding: 12px 24px; background-color: #007bff; color: #ffffff; text-decoration: none; font-size: 16px; border-radius: 4px; font-weight: bold;">Xem sản phẩm của tôi</a>
+                  <a href="${process.env.CLIENT_URL || 'https://pira.asia'}/owner/products" style="display: inline-block; padding: 12px 24px; background-color: #007bff; color: #ffffff; text-decoration: none; font-size: 16px; border-radius: 4px; font-weight: bold;">Xem sản phẩm của tôi</a>
                 </td>
               </tr>
             </table>
@@ -258,7 +258,7 @@ const emailTemplates = {
             <table role="presentation" border="0" cellpadding="0" cellspacing="0" style="margin: 20px auto;">
               <tr>
                 <td style="text-align: center;">
-                  <a href="${process.env.CLIENT_URL || 'http://localhost:5173'}/shipper/shipments" style="display: inline-block; padding: 12px 24px; background-color: #28a745; color: #ffffff; text-decoration: none; font-size: 16px; border-radius: 4px; font-weight: bold;">Xem đơn hàng của tôi</a>
+                  <a href="${process.env.CLIENT_URL || 'https://pira.asia'}/shipper/shipments" style="display: inline-block; padding: 12px 24px; background-color: #28a745; color: #ffffff; text-decoration: none; font-size: 16px; border-radius: 4px; font-weight: bold;">Xem đơn hàng của tôi</a>
                 </td>
               </tr>
             </table>

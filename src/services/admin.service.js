@@ -1303,40 +1303,37 @@ class AdminService {
         }
       };
     } catch (error) {
-      console.error('Error in getAllProducts:', error);
+      // Error in getAllProducts
       throw new Error(`Lỗi khi lấy danh sách sản phẩm: ${error.message}`);
     }
   }
   async getProductById(productId) {
-    console.log('=== Admin Service getProductById ===');
-    console.log('ProductId received:', productId);
-    console.log('ProductId type:', typeof productId);
+    // Admin Service getProductById
 
     // Validate productId
     if (!productId) {
-      console.log('ProductId is missing');
+      // ProductId is missing
       throw new Error('ID sản phẩm không hợp lệ');
     }
 
     const mongoose = require('mongoose');
     if (!mongoose.Types.ObjectId.isValid(productId)) {
-      console.log('ProductId is not a valid ObjectId:', productId);
+      // ProductId is not a valid ObjectId
       throw new Error('ID sản phẩm không hợp lệ');
     }
 
     try {
-      console.log('Searching for product in database...');
+      // Searching for product in database
       const product = await Product.findById(productId)
         .populate('owner', 'fullName username email phone profile createdAt')
         .populate('category', 'name slug description')
         .populate('subCategory', 'name slug description')
         .lean(); // Convert to plain object for better performance
 
-      console.log('Database query completed');
-      console.log('Product found:', !!product);
+      // Database query completed
 
       if (!product) {
-        console.log('Product not found in database');
+        // Product not found in database
         throw new Error('Không tìm thấy sản phẩm');
       }
 
@@ -1363,27 +1360,20 @@ class AdminService {
         product.metrics = product.metrics || {};
         product.metrics.averageRating = Math.round(reviewStats[0].averageRating * 10) / 10; // Round to 1 decimal
         product.metrics.reviewCount = reviewStats[0].reviewCount;
-        console.log('Updated metrics from reviews:', product.metrics);
+        // Updated metrics from reviews
       } else {
         // No reviews yet
         product.metrics = product.metrics || {};
         product.metrics.averageRating = 0;
         product.metrics.reviewCount = 0;
-        console.log('No approved reviews found for this product');
+        // No approved reviews found for this product
       }
 
-      console.log('Product data retrieved successfully');
-      console.log('Product title:', product.title);
-      console.log('Product status:', product.status);
-      console.log('Product owner:', product.owner?.email);
-      console.log('Product metrics:', product.metrics);
+      // Product data retrieved successfully
 
       return product;
     } catch (error) {
-      console.error('=== Admin Service getProductById ERROR ===');
-      console.error('Error during database query:', error.message);
-      console.error('Error stack:', error.stack);
-      console.error('========================================');
+      // Admin Service getProductById ERROR
 
       if (error.message === 'Không tìm thấy sản phẩm') {
         throw error;
@@ -1394,8 +1384,7 @@ class AdminService {
   }
 
   async updateProductStatus(productId, status, adminId) {
-    console.log('=== Admin Service updateProductStatus ===');
-    console.log('Input params:', { productId, status, adminId });
+    // Admin Service updateProductStatus
 
     // Validate productId
     if (!productId) {
@@ -1428,7 +1417,7 @@ class AdminService {
         updateData['moderation.suspendedAt'] = new Date();
       }
 
-      console.log('Updating product with data:', updateData);
+      // Updating product with data
 
       const product = await Product.findByIdAndUpdate(productId, updateData, {
         new: true,
@@ -1441,7 +1430,7 @@ class AdminService {
         throw new Error('Không tìm thấy sản phẩm');
       }
 
-      console.log('Product status updated successfully:', product.status);
+      // Product status updated successfully
 
       // Gửi email thông báo nếu sản phẩm bị đình chỉ
       if (status === 'SUSPENDED' && product.owner && product.owner.email) {
@@ -1472,16 +1461,16 @@ class AdminService {
             )
           });
 
-          console.log('Suspension notification email sent to:', product.owner.email);
+          // Suspension notification email sent to
         } catch (emailError) {
-          console.error('Error sending suspension email:', emailError.message);
+          // Error sending suspension email
           // Không throw error để không ảnh hưởng đến việc đình chỉ sản phẩm
         }
       }
 
       return product;
     } catch (error) {
-      console.error('Error updating product status:', error.message);
+      // Error updating product status
 
       if (error.message === 'Không tìm thấy sản phẩm') {
         throw error;
@@ -1535,8 +1524,7 @@ class AdminService {
   // }
 
   async suspendProduct(productId, adminId, reason = '') {
-    console.log('=== Admin Service suspendProduct ===');
-    console.log('Input params:', { productId, adminId, reason });
+    // Admin Service suspendProduct
 
     // Validate productId
     if (!productId) {
@@ -1560,7 +1548,7 @@ class AdminService {
         updateData['moderation.suspensionReason'] = reason;
       }
 
-      console.log('Suspending product with data:', updateData);
+      // Suspending product with data
 
       const product = await Product.findByIdAndUpdate(productId, updateData, {
         new: true,
@@ -1573,7 +1561,7 @@ class AdminService {
         throw new Error('Không tìm thấy sản phẩm');
       }
 
-      console.log('Product suspended successfully:', product._id);
+      // Product suspended successfully
 
       // Gửi email thông báo cho chủ sản phẩm
       if (product.owner && product.owner.email) {
@@ -1601,16 +1589,16 @@ class AdminService {
             )
           });
 
-          console.log('Suspension notification email sent to:', product.owner.email);
+          // Suspension notification email sent to
         } catch (emailError) {
-          console.error('Error sending suspension email:', emailError.message);
+          // Error sending suspension email
           // Không throw error để không ảnh hưởng đến việc đình chỉ sản phẩm
         }
       }
 
       return product;
     } catch (error) {
-      console.error('Error suspending product:', error.message);
+      // Error suspending product
 
       if (error.message === 'Không tìm thấy sản phẩm') {
         throw error;
@@ -2072,16 +2060,16 @@ class AdminService {
    */
   async verifyBankAccount(userId, adminNote = '') {
     try {
-      console.log('verifyBankAccount service called with:', { userId, adminNote });
+      // verifyBankAccount service called with
 
       const user = await User.findById(userId);
-      console.log('User found:', user ? 'Yes' : 'No');
+      // User found
 
       if (!user) {
         throw new Error('Không tìm thấy người dùng');
       }
 
-      console.log('User bankAccount:', user.bankAccount);
+      // User bankAccount
 
       if (!user.bankAccount || !user.bankAccount.accountNumber) {
         throw new Error('Người dùng chưa có tài khoản ngân hàng');
@@ -2103,17 +2091,17 @@ class AdminService {
         user.profile.gender &&
         !['MALE', 'FEMALE', 'OTHER'].includes(user.profile.gender)
       ) {
-        console.log('Cleaning invalid gender value:', user.profile.gender);
+        // Cleaning invalid gender value
         user.profile.gender = undefined;
       }
 
-      console.log('Saving user with updated bank account...');
+      // Saving user with updated bank account
       await user.save();
-      console.log('User saved successfully');
+      // User saved successfully
 
       return user;
     } catch (error) {
-      console.error('Error in verifyBankAccount service:', error);
+      // Error in verifyBankAccount service
       throw new Error(`Lỗi khi xác minh tài khoản ngân hàng: ${error.message}`);
     }
   }

@@ -23,7 +23,6 @@ class PaymentQueue {
     };
 
     this.queue.push(job);
-    console.log(`📋 Payment job queued: ${job.id}`, metadata);
 
     // Process queue in background (non-blocking)
     setImmediate(() => this.processQueue());
@@ -45,16 +44,13 @@ class PaymentQueue {
       const job = this.queue.shift();
       
       try {
-        console.log(`💰 Processing payment job: ${job.id}`);
         const startTime = Date.now();
         
         await job.transferFn();
         
         const duration = Date.now() - startTime;
-        console.log(`✅ Payment job completed: ${job.id} (${duration}ms)`);
       } catch (error) {
-        console.error(`❌ Payment job failed: ${job.id}`, error.message);
-        // Log error but continue processing other jobs
+        // Payment job failed
       }
     }
 

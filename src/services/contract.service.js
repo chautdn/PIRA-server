@@ -329,9 +329,7 @@ class ContractService {
           (refundDetails.shippingRefund || 0);
 
         if (totalRefund > 0) {
-          console.log(
-            `💰 Processing deferred refund after renter signed contract: ${totalRefund.toLocaleString('vi-VN')}đ`
-          );
+          
 
           const Wallet = require('../models/Wallet');
           const Transaction = require('../models/Transaction');
@@ -400,9 +398,7 @@ class ContractService {
             }
             await subOrder.save();
 
-            console.log(
-              `✅ Refunded ${totalRefund.toLocaleString('vi-VN')}đ after contract signing`
-            );
+           
           } else {
             console.error(`❌ Wallet not found for renter ${renterId}`);
           }

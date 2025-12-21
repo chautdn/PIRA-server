@@ -13,21 +13,22 @@ function startShipmentCronJob() {
   if (cronJob) return;
 
   cronJob = cron.schedule(CRON_SCHEDULE, async () => {
-    console.log('\n🕐 SHIPMENT CRON STARTED', new Date().toLocaleString('vi-VN'));
+    // Shipment cron started
     try {
       if (mongoose.connection.readyState !== 1) {
-        console.error('DB not connected, skipping shipment cron');
+        // DB not connected, skipping shipment cron
         return;
       }
 
       const result = await ShipmentService.autoConfirmDelivered(24);
-      console.log('✅ Shipment cron processed:', result);
+      // Shipment cron processed
     } catch (err) {
-      console.error('❌ Shipment cron failed:', err.message);
+      // Shipment cron failed
     }
   });
 
-  console.log('✅ Shipment cron scheduled:', CRON_SCHEDULE);
+  // Shipment cron scheduled
+
 }
 
 // Run notification email job every hour (01:00, 02:00, etc)
@@ -35,22 +36,23 @@ function startShipperNotificationEmailCronJob() {
   if (notificationCronJob) return;
 
   notificationCronJob = cron.schedule(CRON_SCHEDULE, async () => {
-    console.log('\n🕐 SHIPPER NOTIFICATION EMAIL CRON STARTED', new Date().toLocaleString('vi-VN'));
+    // Shipper notification email cron started
     try {
       if (mongoose.connection.readyState !== 1) {
-        console.error('DB not connected, skipping shipper notification cron');
+        // DB not connected, skipping shipper notification cron
         return;
       }
 
       const result = await shipperNotificationEmailJob();
-      console.log('✅ Shipper notification email cron processed:', result);
+      // Shipper notification email cron processed
     } catch (err) {
-      console.error('❌ Shipper notification email cron failed:', err.message);
+      // Shipper notification email cron failed
     }
   });
 
-  console.log('✅ Shipper notification email cron scheduled:', CRON_SCHEDULE);
+  // Shipper notification email cron scheduled
 }
+
 
 function stopShipmentCronJob() {
   if (cronJob) {

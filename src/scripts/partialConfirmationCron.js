@@ -29,10 +29,7 @@ function startPartialConfirmationCron() {
 
   cronJob = cron.schedule(CRON_SCHEDULE, async () => {
     const startTime = Date.now();
-    console.log('\n🕐 ============================================');
-    console.log('🕐 PARTIAL CONFIRMATION CRON JOB STARTED');
-    console.log(`🕐 Time: ${new Date().toLocaleString('vi-VN')}`);
-    console.log('🕐 ============================================\n');
+    
 
     try {
       // Kiểm tra kết nối database
@@ -45,10 +42,6 @@ function startPartialConfirmationCron() {
       await RentalOrderService.autoRejectExpiredPendingProducts();
 
       const duration = Date.now() - startTime;
-      console.log('\n✅ ============================================');
-      console.log('✅ PARTIAL CONFIRMATION CRON JOB COMPLETED');
-      console.log(`✅ Duration: ${duration}ms`);
-      console.log('✅ ============================================\n');
     } catch (error) {
       console.error('\n❌ ============================================');
       console.error('❌ PARTIAL CONFIRMATION CRON JOB FAILED');
@@ -58,8 +51,6 @@ function startPartialConfirmationCron() {
     }
   });
 
-  console.log('✅ Partial confirmation cron job started successfully');
-  console.log(`📅 Schedule: ${CRON_SCHEDULE} (every 10 minutes)`);
 }
 
 /**
@@ -69,7 +60,6 @@ function stopPartialConfirmationCron() {
   if (cronJob) {
     cronJob.stop();
     cronJob = null;
-    console.log('⏹️ Partial confirmation cron job stopped');
   } else {
     console.log('⚠️ Partial confirmation cron job is not running');
   }
@@ -79,10 +69,8 @@ function stopPartialConfirmationCron() {
  * Chạy thủ công (cho testing)
  */
 async function runManually() {
-  console.log('🔧 Running partial confirmation cron job manually...');
   try {
     await RentalOrderService.autoRejectExpiredPendingProducts();
-    console.log('✅ Manual run completed successfully');
   } catch (error) {
     console.error('❌ Manual run failed:', error);
     throw error;

@@ -45,12 +45,10 @@ global.io = io; // Make Socket.IO instance available globally for order/contract
 
 // Initialize order socket for real-time order/contract updates
 orderSocket(io);
-console.log('✅ Order socket initialized for real-time updates');
 
 // Initialize dispute socket for real-time dispute updates
 const disputeSocketHandlers = disputeSocket(io);
 global.disputeSocket = disputeSocketHandlers; // Make dispute socket available globally
-console.log('✅ Dispute socket initialized for real-time updates');
 
 // Initialize promotion cron job
 const { startPromotionCronJob, runImmediately } = require('./scripts/promotionCron');
@@ -68,7 +66,6 @@ runEarlyReturnImmediately(); // Run cleanup on startup
 // Initialize partial confirmation cron job
 const { startPartialConfirmationCron } = require('./scripts/partialConfirmationCron');
 startPartialConfirmationCron();
-console.log('✅ Partial confirmation cron job initialized');
 
 // Initialize shipment cron job
 const {
@@ -77,7 +74,6 @@ const {
 } = require('./scripts/shipmentCron');
 startShipmentCronJob();
 startShipperNotificationEmailCronJob();
-console.log('✅ Shipment cron job initialized');
 
 // Initialize frozen balance unlock cron job
 const {
@@ -86,53 +82,47 @@ const {
 } = require('./scripts/frozenBalanceUnlockCron');
 startFrozenBalanceUnlockCron();
 runFrozenBalanceUnlockImmediately(); // Run on startup
-console.log('✅ Frozen balance unlock cron job initialized (runs every 5 seconds)');
 
 // Initialize dispute escalation cron job (daily at 2:00 AM)
 const { startDisputeEscalationCron } = require('./scripts/disputeEscalationCron');
 startDisputeEscalationCron();
-console.log('✅ Dispute escalation cron job initialized');
 
 // Initialize extension auto-refund cron job (every 10 minutes)
 const { startExtensionAutoRefundCron } = require('./scripts/extensionAutoRefundCron');
 startExtensionAutoRefundCron();
-console.log('✅ Extension auto-refund cron job initialized');
 
 // Initialize auto-confirm delivery cron job (every hour)
 const { startAutoConfirmDeliveryCron } = require('./scripts/autoConfirmDeliveryCron');
 startAutoConfirmDeliveryCron();
-console.log('✅ Auto-confirm delivery cron job initialized');
 
 // Log Socket.IO events for monitoring
 io.engine.on('connection_error', (err) => {
-  console.error('Socket.IO connection error:', err);
+  // Socket.IO connection error occurred
 });
 
 // Use server instead of app for listening
 server.listen(PORT, '0.0.0.0', () => {
-  console.log(`Server running on http://localhost:${PORT}`);
-  console.log(`Server accessible on network: http://10.12.64.43:${PORT}`);
-  console.log('Socket.IO enabled for real-time chat');
+  // Server started successfully
 });
 
 // Handle server errors
 server.on('error', (error) => {
-  console.error('❌ Server error:', error);
+  // Server error occurred
   if (error.code === 'EADDRINUSE') {
-    console.error(`Port ${PORT} is already in use`);
+    // Port is already in use
     process.exit(1);
   }
 });
 
 // Handle uncaught exceptions
 process.on('uncaughtException', (error) => {
-  console.error('❌ Uncaught Exception:', error);
+  // Uncaught exception occurred
   process.exit(1);
 });
 
 // Handle unhandled rejections
 process.on('unhandledRejection', (reason, promise) => {
-  console.error('❌ Unhandled Rejection at:', promise, 'reason:', reason);
+  // Unhandled rejection occurred
   process.exit(1);
 });
 

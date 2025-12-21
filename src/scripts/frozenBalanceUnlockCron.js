@@ -24,7 +24,6 @@ function startFrozenBalanceUnlockCron() {
 
   cronJob = { stop: () => clearInterval(interval) };
 
-  console.log('🕐 Frozen balance unlock cron job started (runs every 5 seconds)');
 }
 
 /**
@@ -34,7 +33,7 @@ function stopFrozenBalanceUnlockCron() {
   if (cronJob) {
     cronJob.stop();
     cronJob = null;
-    console.log('🛑 Frozen balance unlock cron job stopped');
+    
   }
 }
 
@@ -43,9 +42,9 @@ function stopFrozenBalanceUnlockCron() {
  */
 async function runFrozenBalanceUnlockImmediately() {
   try {
-    console.log('▶️  Running frozen balance unlock immediately...');
+    
     const result = await FrozenBalanceService.unlockExpiredFrozenFunds();
-    console.log('✅ Immediate run completed:', result);
+    
     return result;
   } catch (error) {
     console.error('❌ Error running frozen balance unlock immediately:', error);

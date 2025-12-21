@@ -296,9 +296,6 @@ class ExtensionService {
           }
         }
       );
-
-      console.log(`✅ Đã trừ ${amount.toLocaleString('vi-VN')}đ từ ví renter ${renterId} cho yêu cầu gia hạn`);
-
       // Emit wallet update realtime
       if (global.chatGateway) {
         const updatedWallet = await user.wallet.populate('user');
@@ -527,8 +524,7 @@ class ExtensionService {
       const ownerCompensation = Math.floor(extensionRequest.totalCost * 0.9); // 90% of extension fee
       
       if (ownerCompensation > 0) {
-        console.log(`💰 Chuyển 90% tiền gia hạn cho owner: ${ownerCompensation.toLocaleString()} VND`);
-        
+
         try {
           const adminId = process.env.SYSTEM_ADMIN_ID || 'SYSTEM_AUTO_TRANSFER';
           const transferResult = await SystemWalletService.transferToUserFrozen(
@@ -553,9 +549,6 @@ class ExtensionService {
               }
             );
           }
-
-          console.log(`✅ Đã chuyển ${ownerCompensation.toLocaleString()} VND vào frozen wallet owner ${ownerId}`);
-          
           // Emit wallet update realtime for owner (frozen balance increased)
           if (global.chatGateway && transferResult?.userWallet) {
             global.chatGateway.emitWalletUpdate(ownerId.toString(), {
@@ -734,9 +727,6 @@ class ExtensionService {
           totalCost,
           reason
         );
-        
-        console.log(`✅ Hoàn ${totalCost.toLocaleString('vi-VN')}đ tiền gia hạn về ví renter ${renter} - Lý do: ${reason}`);
-        
         // Emit wallet update realtime for refund
         if (global.chatGateway && refundResult?.userWallet) {
           global.chatGateway.emitWalletUpdate(renter.toString(), {
@@ -811,9 +801,6 @@ class ExtensionService {
           message: 'No expired extension requests to process'
         };
       }
-
-      console.log(`🔄 Processing ${expiredRequests.length} expired extension requests...`);
-
       const results = [];
       for (const request of expiredRequests) {
         try {
@@ -841,8 +828,6 @@ class ExtensionService {
             refundAmount: request.totalCost,
             status: 'SUCCESS'
           });
-
-          console.log(`✅ Auto-rejected and refunded request ${request._id} - ${request.totalCost}đ to ${request.renter?.email}`);
         } catch (error) {
           console.error(`❌ Error processing request ${request._id}:`, error.message);
           results.push({

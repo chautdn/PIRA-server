@@ -13,15 +13,14 @@ class ChatGateway {
 
   setupSocketHandlers() {
     this.io.on('connection', (socket) => {
-      console.log(`[ChatGateway] 🔌 New socket connection: ${socket.id}`);
-      console.log(`[ChatGateway] Total connected clients: ${this.io.sockets.sockets.size}`);
+      // New socket connection
 
       // Handle authentication
       socket.on('authenticate', async (token) => {
         try {
           await this.authenticateSocket(socket, token);
         } catch (error) {
-          console.error('[ChatGateway] ❌ Authentication failed for socket:', socket.id);
+          // Authentication failed for socket
           socket.emit('auth:error', { message: 'Authentication failed' });
           socket.disconnect();
         }
@@ -48,8 +47,7 @@ class ChatGateway {
 
       // Handle disconnect
       socket.on('disconnect', () => {
-        console.log(`[ChatGateway] 🔌 Socket disconnected: ${socket.id}`);
-        console.log(`[ChatGateway] Remaining connected clients: ${this.io.sockets.sockets.size}`);
+        // Socket disconnected
         this.handleDisconnect(socket);
       });
 
@@ -84,14 +82,14 @@ class ChatGateway {
 
       // Join user to their personal room
       socket.join(`user:${socket.userId}`);
-      console.log(`[ChatGateway] ✅ User ${socket.userId} joined room: user:${socket.userId}`);
+      // User joined room
 
-      // Emit online status
+      // Emit online users
       this.emitOnlineUsers();
 
       // Send authentication success
       socket.emit('auth:success', { user: user });
-      console.log(`[ChatGateway] ✅ Authentication success sent to user ${socket.userId}`);
+      // Authentication success sent to user
     } catch (error) {
       throw new Error(`Authentication failed: ${error.message}`);
     }
@@ -247,7 +245,7 @@ class ChatGateway {
         timestamp: new Date()
       });
     } catch (error) {
-      console.error('Error emitting message deleted:', error);
+      // Error emitting message deleted
     }
   }
 
@@ -286,7 +284,7 @@ class ChatGateway {
         timestamp: new Date().toISOString()
       });
     } catch (error) {
-      console.error(`Error emitting ${eventName} to user ${userId}:`, error);
+      // Error emitting event to user
     }
   }
 
@@ -300,7 +298,7 @@ class ChatGateway {
         timestamp: new Date().toISOString()
       });
     } catch (error) {
-      console.error('Error emitting wallet update:', error);
+      // Error emitting wallet update
     }
   }
 
@@ -312,7 +310,7 @@ class ChatGateway {
         timestamp: new Date().toISOString()
       });
     } catch (error) {
-      console.error('Error emitting transaction update:', error);
+      // Error emitting transaction update
     }
   }
 
@@ -324,7 +322,7 @@ class ChatGateway {
         timestamp: new Date().toISOString()
       });
     } catch (error) {
-      console.error('Error emitting payment status update:', error);
+      // Error emitting payment status update
     }
   }
 
@@ -347,7 +345,7 @@ class ChatGateway {
         this.io.emit('wallet-maintenance', notification);
       }
     } catch (error) {
-      console.error('Error broadcasting wallet maintenance:', error);
+      // Error broadcasting wallet maintenance
     }
   }
 
@@ -357,18 +355,16 @@ class ChatGateway {
   emitSystemPromotionCreated(promotionData) {
     try {
       const connectedClients = this.io.sockets.sockets.size;
-      console.log(
-        `[ChatGateway] 📡 Emitting system:promotion:created to ${connectedClients} connected clients`
-      );
+      // Emitting system promotion created
 
       this.io.emit('system:promotion:created', {
         promotion: promotionData,
         timestamp: new Date().toISOString()
       });
 
-      console.log('[ChatGateway] ✅ Event emitted successfully');
+      // Event emitted successfully
     } catch (error) {
-      console.error('[ChatGateway] ❌ Error emitting system promotion created:', error);
+      // Error emitting system promotion created
     }
   }
 
@@ -380,7 +376,7 @@ class ChatGateway {
         timestamp: new Date().toISOString()
       });
     } catch (error) {
-      console.error('Error emitting system promotion updated:', error);
+      // Error emitting system promotion updated
     }
   }
 
@@ -392,7 +388,7 @@ class ChatGateway {
         timestamp: new Date().toISOString()
       });
     } catch (error) {
-      console.error('Error emitting system promotion ended:', error);
+      // Error emitting system promotion ended
     }
   }
 
@@ -404,7 +400,7 @@ class ChatGateway {
         timestamp: new Date().toISOString()
       });
     } catch (error) {
-      console.error('Error emitting promotion notification:', error);
+      // Error emitting promotion notification
     }
   }
 
@@ -413,14 +409,14 @@ class ChatGateway {
   // Emit new notification to user
   emitNotification(userId, notificationData) {
     try {
-      console.log(`[ChatGateway] 🔔 Emitting notification to user ${userId}:`, notificationData);
+      // Emitting notification to user
       this.io.to(`user:${userId}`).emit('notification:new', {
         notification: notificationData,
         timestamp: new Date().toISOString()
       });
-      console.log(`[ChatGateway] ✅ Notification emitted successfully`);
+      // Notification emitted successfully
     } catch (error) {
-      console.error('[ChatGateway] ❌ Error emitting notification:', error);
+      // Error emitting notification
     }
   }
 
@@ -429,44 +425,44 @@ class ChatGateway {
   // Emit system wallet balance update to all admins
   emitSystemWalletUpdate(balanceData) {
     try {
-      console.log(`[ChatGateway] 💰 Emitting system wallet update:`, balanceData);
+      // Emitting system wallet update
       this.io.emit('system:wallet:update', {
         balance: balanceData,
         timestamp: new Date().toISOString()
       });
-      console.log(`[ChatGateway] ✅ System wallet update emitted successfully`);
+      // System wallet update emitted successfully
     } catch (error) {
-      console.error('[ChatGateway] ❌ Error emitting system wallet update:', error);
+      // Error emitting system wallet update
     }
   }
 
   // Emit notification count update
   emitNotificationCount(userId, count) {
     try {
-      console.log(`[ChatGateway] 🔢 Emitting notification count ${count} to user ${userId}`);
+      // Emitting notification count
       this.io.to(`user:${userId}`).emit('notification:count', {
         unreadCount: count,
         timestamp: new Date().toISOString()
       });
-      console.log(`[ChatGateway] ✅ Notification count emitted successfully`);
+      // Notification count emitted successfully
     } catch (error) {
-      console.error('[ChatGateway] ❌ Error emitting notification count:', error);
+      // Error emitting notification count
     }
   }
 
   // SHIPMENT REAL-TIME UPDATES
-  
+
   // Emit new shipment created to shipper
   emitShipmentCreated(shipperId, shipmentData) {
     try {
-      console.log(`[ChatGateway] 📦 Emitting shipment created to shipper ${shipperId}:`, shipmentData.shipmentId);
+      // Emitting shipment created to shipper
       this.io.to(`user:${shipperId}`).emit('shipment:created', {
         shipment: shipmentData,
         timestamp: new Date().toISOString()
       });
-      console.log(`[ChatGateway] ✅ Shipment created event emitted successfully`);
+      // Shipment created event emitted successfully
     } catch (error) {
-      console.error('[ChatGateway] ❌ Error emitting shipment created:', error);
+      // Error emitting shipment created
     }
   }
 
