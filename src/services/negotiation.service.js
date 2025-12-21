@@ -9,6 +9,51 @@ const notificationService = require('./notification.service');
 
 class NegotiationService {
   /**
+   * Helper: Emit socket event cho dispute (real-time updates)
+   * @param {String} event - Tên event
+   * @param {Object} data - Dữ liệu để emit
+   * @param {Array|String} userIds - ID(s) của user(s) cần nhận event
+   * @param {Boolean} includeAdmins - Có thêm tất cả Admin vào recipients không (default: true)
+   */
+  async _emitDisputeSocket(event, data, userIds, includeAdmins = true) {
+    try {
+      if (!global.disputeSocket) {
+        console.warn('Dispute socket not initialized');
+        return;
+      }
+
+      let ids = Array.isArray(userIds) ? userIds : [userIds];
+      
+      // Convert to string IDs - handle both ObjectId and populated User objects
+      ids = ids.map(id => {
+        if (!id) return null;
+        // If it's a populated User object, get _id
+        if (id._id) return id._id.toString();
+        // If it's an ObjectId or string
+        return id.toString();
+      }).filter(Boolean);
+      
+      // Auto-add all Admins to recipients for dispute events
+      if (includeAdmins) {
+        const User = require('../models/User');
+        const admins = await User.find({ role: 'ADMIN' }).select('_id');
+        const adminIds = admins.map(a => a._id.toString());
+        ids = [...ids, ...adminIds];
+        // Remove duplicates
+        ids = [...new Set(ids)];
+      }
+      
+      global.disputeSocket.emitToUsers(ids, event, {
+        ...data,
+        timestamp: new Date()
+      });
+      console.log(`📡 [Negotiation] Emitted ${event} to users:`, ids);
+    } catch (error) {
+      console.error('Error emitting dispute socket from negotiation:', error);
+    }
+  }
+
+  /**
    * Helper: Tạo query tìm dispute theo _id hoặc disputeId
    */
   _buildDisputeQuery(disputeId) {
@@ -104,6 +149,16 @@ class NegotiationService {
     });
 
     await dispute.save();
+
+    // ===== EMIT SOCKET: Thông báo negotiation bắt đầu =====
+    await this._emitDisputeSocket('dispute:statusChanged', {
+      disputeId: dispute._id,
+      disputeNumber: dispute.disputeId,
+      status: 'IN_NEGOTIATION',
+      previousStatus: 'NEGOTIATION_NEEDED',
+      message: 'Phòng đàm phán đã được mở. Vui lòng tham gia thương lượng.'
+    }, [dispute.complainant, dispute.respondent]);
+
     return dispute.populate(['complainant', 'respondent', 'negotiationRoom.chatRoomId']);
   }
 
@@ -185,6 +240,20 @@ class NegotiationService {
     } catch (error) {
       console.error('Failed to create proposal notification:', error);
     }
+
+    // ===== EMIT SOCKET: Thông báo đề xuất thương lượng mới =====
+    const userInfo = await User.findById(userId);
+    const otherParty = isComplainant ? dispute.respondent : dispute.complainant;
+    await this._emitDisputeSocket('dispute:negotiationUpdate', {
+      disputeId: dispute._id,
+      disputeNumber: dispute.disputeId,
+      senderId: userId,
+      senderName: userInfo?.profile?.fullName || 'Người dùng',
+      type: 'OFFER',
+      proposalText,
+      proposalAmount,
+      message: `${userInfo?.profile?.fullName || 'Đối phương'} đã gửi đề xuất thương lượng mới`
+    }, otherParty);
 
     return dispute.populate(['complainant', 'respondent']);
   }
@@ -334,6 +403,35 @@ class NegotiationService {
       }
     } catch (error) {
       console.error('Failed to create agreement response notification:', error);
+    }
+
+    // ===== EMIT SOCKET: Thông báo kết quả đàm phán =====
+    const userInfo = await User.findById(userId);
+    const statusChanged = dispute.status === 'NEGOTIATION_AGREED';
+    
+    await this._emitDisputeSocket('dispute:negotiationResult', {
+      disputeId: dispute._id,
+      disputeNumber: dispute.disputeId,
+      responderId: userId,
+      responderName: userInfo?.profile?.fullName || 'Người dùng',
+      response: accepted ? 'ACCEPTED' : 'REJECTED',
+      newStatus: statusChanged ? 'NEGOTIATION_AGREED' : 'IN_NEGOTIATION',
+      message: accepted 
+        ? (statusChanged 
+            ? 'Cả hai bên đã đồng ý thỏa thuận - chờ admin xác nhận' 
+            : `${userInfo?.profile?.fullName || 'Đối phương'} đã chấp nhận đề xuất`)
+        : `${userInfo?.profile?.fullName || 'Đối phương'} đã từ chối đề xuất`
+    }, [dispute.complainant, dispute.respondent]);
+
+    // Nếu đã thống nhất, emit thêm status change
+    if (statusChanged) {
+      await this._emitDisputeSocket('dispute:statusChanged', {
+        disputeId: dispute._id,
+        disputeNumber: dispute.disputeId,
+        status: 'NEGOTIATION_AGREED',
+        previousStatus: 'IN_NEGOTIATION',
+        message: 'Hai bên đã thống nhất thương lượng - chờ xác nhận từ Admin'
+      }, [dispute.complainant, dispute.respondent]);
     }
 
     return dispute.populate(['complainant', 'respondent']);
@@ -543,6 +641,26 @@ class NegotiationService {
     }
 
     await dispute.save();
+
+    // ===== EMIT SOCKET: Thông báo renter phản hồi quyết định owner =====
+    if (accepted) {
+      await this._emitDisputeSocket('dispute:statusChanged', {
+        disputeId: dispute._id,
+        disputeNumber: dispute.disputeId,
+        status: 'NEGOTIATION_AGREED',
+        previousStatus: 'IN_NEGOTIATION',
+        message: 'Renter đã đồng ý với quyết định của owner - chờ admin xử lý'
+      }, [dispute.complainant, dispute.respondent]);
+    } else {
+      await this._emitDisputeSocket('dispute:escalatedNotification', {
+        disputeId: dispute._id,
+        disputeNumber: dispute.disputeId,
+        escalatedTo: 'THIRD_PARTY',
+        escalatedBy: renterId,
+        message: 'Renter từ chối quyết định của owner - chuyển cho bên thứ 3 xác minh'
+      }, [dispute.complainant, dispute.respondent]);
+    }
+
     return dispute.populate(['complainant', 'respondent', 'negotiationRoom.chatRoomId']);
   }
 
@@ -1010,6 +1128,15 @@ class NegotiationService {
       });
 
       await dispute.save();
+
+      // ===== EMIT SOCKET: Thông báo đàm phán thất bại =====
+      await this._emitDisputeSocket('dispute:statusChanged', {
+        disputeId: dispute._id,
+        disputeNumber: dispute.disputeId,
+        status: 'NEGOTIATION_FAILED',
+        previousStatus: 'IN_NEGOTIATION',
+        message: 'Đàm phán thất bại do quá hạn 3 ngày'
+      }, [dispute.complainant, dispute.respondent]);
     }
 
     return dispute;
@@ -1095,6 +1222,16 @@ class NegotiationService {
     });
 
     await dispute.save();
+
+    // ===== EMIT SOCKET: Thông báo escalate lên third party =====
+    await this._emitDisputeSocket('dispute:escalatedNotification', {
+      disputeId: dispute._id,
+      disputeNumber: dispute.disputeId,
+      escalatedTo: 'THIRD_PARTY',
+      escalatedBy: userId,
+      message: `Khiếu nại đã được chuyển cho bên thứ 3 để xác minh. Lý do: ${reason || 'Không thể thỏa thuận'}`
+    }, [dispute.complainant, dispute.respondent]);
+
     return dispute;
   }
 
@@ -1151,6 +1288,27 @@ class NegotiationService {
     });
 
     await dispute.save();
+
+    // ===== EMIT SOCKET: Thông báo bằng chứng mới =====
+    const uploaderInfo = await User.findById(userId);
+    await this._emitDisputeSocket('dispute:newEvidence', {
+      disputeId: dispute._id,
+      disputeNumber: dispute.disputeId,
+      uploaderId: userId,
+      uploaderName: uploaderInfo?.profile?.fullName || 'Bên thứ 3',
+      evidenceType: 'THIRD_PARTY',
+      message: `${uploaderInfo?.profile?.fullName || 'Bên thứ 3'} đã cung cấp bằng chứng xác minh`
+    }, [dispute.complainant, dispute.respondent]);
+
+    // Emit status change
+    await this._emitDisputeSocket('dispute:statusChanged', {
+      disputeId: dispute._id,
+      disputeNumber: dispute.disputeId,
+      status: 'THIRD_PARTY_EVIDENCE_UPLOADED',
+      previousStatus: 'THIRD_PARTY_ESCALATED',
+      message: 'Bằng chứng từ bên thứ 3 đã được upload - chờ Admin xử lý'
+    }, [dispute.complainant, dispute.respondent]);
+
     await dispute.populate([
       { path: 'complainant', select: 'profile email' },
       { path: 'respondent', select: 'profile email' },

@@ -9,6 +9,7 @@ const http = require('http');
 const { Server } = require('socket.io');
 const ChatGateway = require('./socket/chat.gateway');
 const orderSocket = require('./socket/orderSocket');
+const disputeSocket = require('./socket/disputeSocket');
 
 const PORT = process.env.PORT || 5000;
 
@@ -45,6 +46,11 @@ global.io = io; // Make Socket.IO instance available globally for order/contract
 // Initialize order socket for real-time order/contract updates
 orderSocket(io);
 console.log('✅ Order socket initialized for real-time updates');
+
+// Initialize dispute socket for real-time dispute updates
+const disputeSocketHandlers = disputeSocket(io);
+global.disputeSocket = disputeSocketHandlers; // Make dispute socket available globally
+console.log('✅ Dispute socket initialized for real-time updates');
 
 // Initialize promotion cron job
 const { startPromotionCronJob, runImmediately } = require('./scripts/promotionCron');
