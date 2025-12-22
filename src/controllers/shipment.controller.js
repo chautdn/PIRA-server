@@ -59,6 +59,20 @@ class ShipmentController {
     }
   }
 
+  async shipperReject(req, res) {
+    try {
+      // only shipper can reject
+      if (req.user.role !== 'SHIPPER') return res.status(403).json({ status: 'error', message: 'Only shippers can reject shipments' });
+
+      const { reason } = req.body;
+      const result = await ShipmentService.shipperReject(req.params.id, req.user._id, reason);
+      return res.json({ status: 'success', message: 'Shipment rejected and reassigned to another shipper', data: result });
+    } catch (err) {
+      console.error('shipperReject error', err.message);
+      return res.status(400).json({ status: 'error', message: err.message });
+    }
+  }
+
   async listMyShipments(req, res) {
     try {
       if (req.user.role !== 'SHIPPER') return res.status(403).json({ status: 'error', message: 'Only shippers can view their shipments' });

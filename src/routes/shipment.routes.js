@@ -32,6 +32,9 @@ router.get('/:id', [param('id').isMongoId().withMessage('Invalid ID'), validateR
 // Shipper accepts
 router.post('/:id/accept', [param('id').isMongoId().withMessage('Invalid ID'), validateRequest], ShipmentController.shipperAccept);
 
+// Shipper rejects and reassign to another shipper
+router.post('/:id/reject', [param('id').isMongoId().withMessage('Invalid ID'), validateRequest], ShipmentController.shipperReject);
+
 // Pickup / mark in transit - ONLY SHIPPER can pickup shipments
 router.post('/:id/pickup', [
   param('id').isMongoId().withMessage('Invalid ID'), 

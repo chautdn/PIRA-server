@@ -34,12 +34,22 @@ function generateMasterOrderNumber() {
 
 /**
  * Generate unique Shipment ID
- * Format: SHP{timestamp}{random}
+ * Format: SHPddmmyyyyhhmmssDE/RE (e.g., SHP22122025123230DE for DELIVERY)
+ * @param {String} type - 'DELIVERY' or 'RETURN'
  */
-function generateShipmentId() {
-  const timestamp = Date.now();
-  const random = Math.random().toString(36).substr(2, 5).toUpperCase();
-  return `SHP${timestamp}${random}`;
+function generateShipmentId(type = 'DELIVERY') {
+  const now = new Date();
+  
+  const day = String(now.getDate()).padStart(2, '0');
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  const year = now.getFullYear();
+  const hours = String(now.getHours()).padStart(2, '0');
+  const minutes = String(now.getMinutes()).padStart(2, '0');
+  const seconds = String(now.getSeconds()).padStart(2, '0');
+  
+  const suffix = type === 'RETURN' ? 'RE' : 'DE';
+  
+  return `SHP${day}${month}${year}${hours}${minutes}${seconds}${suffix}`;
 }
 
 module.exports = {

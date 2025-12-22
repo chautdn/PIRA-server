@@ -2394,7 +2394,7 @@ class DisputeService {
         console.log('[Dispute Service] 📦 Creating reschedule shipment for product:', product?.name || 'Unknown');
         
         newShipment = new Shipment({
-          shipmentId: generateShipmentId(),
+          shipmentId: generateShipmentId('RETURN'),
           subOrder: dispute.subOrder._id,
           productId: dispute.productId,
           productIndex: dispute.productIndex,
@@ -2783,7 +2783,7 @@ class DisputeService {
 
       // Tạo shipment mới với ngày đã thỏa thuận
       newShipment = new Shipment({
-        shipmentId: generateShipmentId(),
+        shipmentId: generateShipmentId('RETURN'),
         subOrder: dispute.subOrder._id,
         productId: dispute.productId,
         productIndex: dispute.productIndex,

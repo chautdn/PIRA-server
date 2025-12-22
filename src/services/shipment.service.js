@@ -120,7 +120,8 @@ class ShipmentService {
   }
 
   async createShipment(payload) {
-    const shipmentId = `SHP${Date.now()}${Math.random().toString(36).substr(2, 5).toUpperCase()}`;
+    const { generateShipmentId } = require('../utils/idGenerator');
+    const shipmentId = generateShipmentId(payload.type); // Pass type: 'DELIVERY' or 'RETURN'
     const shipment = new Shipment({ shipmentId, ...payload });
     await shipment.save();
     return shipment;
@@ -332,6 +333,352 @@ class ShipmentService {
 
     await shipment.save();
     return shipment;
+  }
+
+  /**
+   * Shipper rejects shipment and reassign to another shipper in same area
+   * @param {String} shipmentId - Shipment ID
+   * @param {String} shipperId - Current shipper ID who is rejecting
+   * @param {String} reason - Reason for rejection
+   */
+  async shipperReject(shipmentId, shipperId, reason = 'Không phù hợp lịch trình') {
+    const shipment = await Shipment.findById(shipmentId)
+      .populate({
+        path: 'subOrder',
+        populate: [
+          { path: 'owner', select: 'profile email phone address' },
+          { path: 'products.product', select: 'name title' },
+          {
+            path: 'masterOrder',
+            populate: { path: 'renter', select: 'profile email phone' }
+          }
+        ]
+      });
+
+    if (!shipment) throw new Error('Shipment not found');
+
+    // Validate shipment status
+    if (shipment.status !== 'PENDING') {
+      throw new Error(`Cannot reject shipment with status ${shipment.status}. Must be PENDING.`);
+    }
+
+    // Validate shipper is assigned to this shipment
+    if (!shipment.shipper || String(shipment.shipper) !== String(shipperId)) {
+      throw new Error('You are not assigned to this shipment');
+    }
+
+    // Log rejection
+    console.log(`📝 Shipper ${shipperId} rejecting shipment ${shipmentId}. Reason: ${reason}`);
+
+    // Get owner address for finding new shipper in same area
+    const ownerAddress = shipment.subOrder?.owner?.address;
+    if (!ownerAddress) {
+      throw new Error('Owner address not found - cannot reassign shipment');
+    }
+
+    // Find another shipper in same area (excluding current shipper)
+    const newShipper = await this.findShipperInSameArea(ownerAddress, shipperId);
+
+    if (!newShipper) {
+      throw new Error('No other shipper available in this area. Cannot reject shipment.');
+    }
+
+    console.log(`✅ Found new shipper ${newShipper._id} to reassign shipment`);
+
+    // Reassign shipment to new shipper
+    const oldShipperId = shipment.shipper;
+    shipment.shipper = newShipper._id;
+    
+    // Add rejection record to tracking
+    if (!shipment.tracking) {
+      shipment.tracking = {};
+    }
+    if (!shipment.tracking.rejections) {
+      shipment.tracking.rejections = [];
+    }
+    shipment.tracking.rejections.push({
+      shipperId: oldShipperId,
+      reason: reason,
+      rejectedAt: new Date()
+    });
+
+    await shipment.save();
+
+    // ====== XỬ LÝ THEO LOẠI ĐỠN ======
+    let relatedShipment = null;
+    
+    if (shipment.type === 'DELIVERY') {
+      // Nếu từ chối đơn GIAO: tìm và gán cả đơn TRẢ cho shipper mới
+      console.log(`🔍 Shipment is DELIVERY - finding related RETURN shipment`);
+      
+      relatedShipment = await Shipment.findOne({
+        subOrder: shipment.subOrder._id,
+        productId: shipment.productId,
+        productIndex: shipment.productIndex,
+        type: 'RETURN',
+        status: 'PENDING'
+      });
+
+      if (relatedShipment) {
+        console.log(`✅ Found related RETURN shipment ${relatedShipment.shipmentId} - assigning to same shipper`);
+        
+        relatedShipment.shipper = newShipper._id;
+        
+        // Add rejection record to RETURN shipment tracking
+        if (!relatedShipment.tracking) {
+          relatedShipment.tracking = {};
+        }
+        if (!relatedShipment.tracking.rejections) {
+          relatedShipment.tracking.rejections = [];
+        }
+        relatedShipment.tracking.rejections.push({
+          shipperId: oldShipperId,
+          reason: `Reassigned due to DELIVERY rejection: ${reason}`,
+          rejectedAt: new Date()
+        });
+        
+        await relatedShipment.save();
+        console.log(`✅ RETURN shipment reassigned to shipper ${newShipper._id}`);
+      } else {
+        console.log(`⚠️ No related RETURN shipment found`);
+      }
+      
+    } else if (shipment.type === 'RETURN') {
+      // Nếu từ chối đơn TRẢ: tìm đơn GIAO và copy thông tin sang
+      console.log(`🔍 Shipment is RETURN - finding related DELIVERY shipment to copy data`);
+      
+      relatedShipment = await Shipment.findOne({
+        subOrder: shipment.subOrder._id,
+        productId: shipment.productId,
+        productIndex: shipment.productIndex,
+        type: 'DELIVERY'
+      }).sort({ createdAt: -1 }); // Lấy đơn DELIVERY mới nhất
+
+      if (relatedShipment) {
+        console.log(`✅ Found related DELIVERY shipment ${relatedShipment.shipmentId} - copying data`);
+        
+        // Copy thông tin từ đơn DELIVERY sang đơn RETURN
+        if (relatedShipment.tracking) {
+          // Copy tracking info (không copy rejections)
+          if (!shipment.tracking) {
+            shipment.tracking = {};
+          }
+          
+          // Copy pickup/delivery info
+          if (relatedShipment.tracking.pickedUpAt) {
+            shipment.tracking.deliveryPickupInfo = {
+              pickedUpAt: relatedShipment.tracking.pickedUpAt,
+              pickupPhotos: relatedShipment.tracking.pickupPhotos || [],
+              pickupNotes: relatedShipment.tracking.pickupNotes || ''
+            };
+          }
+          
+          if (relatedShipment.tracking.deliveredAt) {
+            shipment.tracking.deliveryCompletionInfo = {
+              deliveredAt: relatedShipment.tracking.deliveredAt,
+              deliveryPhotos: relatedShipment.tracking.deliveryPhotos || [],
+              deliveryVideos: relatedShipment.tracking.deliveryVideos || [],
+              deliveryNotes: relatedShipment.tracking.deliveryNotes || '',
+              recipientSignature: relatedShipment.tracking.recipientSignature || null
+            };
+          }
+        }
+        
+        // Copy status info if DELIVERY is completed
+        if (relatedShipment.status === 'COMPLETED') {
+          shipment.deliveryReference = {
+            deliveryShipmentId: relatedShipment._id,
+            deliveryShipmentIdCode: relatedShipment.shipmentId,
+            deliveryStatus: relatedShipment.status,
+            deliveryCompletedAt: relatedShipment.completedAt,
+            copiedAt: new Date()
+          };
+        }
+        
+        await shipment.save();
+        console.log(`✅ DELIVERY data copied to RETURN shipment`);
+      } else {
+        console.log(`⚠️ No related DELIVERY shipment found`);
+      }
+    }
+
+    // Send notification and email to new shipper
+    try {
+      const NotificationService = require('./notification.service');
+      const { sendShipperNotificationEmail } = require('../utils/mailer');
+
+      // Get product info
+      const productItem = shipment.subOrder?.products?.[shipment.productIndex];
+      const product = productItem?.product;
+      const productName = product?.title || product?.name || 'sản phẩm';
+
+      const owner = shipment.subOrder?.owner;
+      const renter = shipment.subOrder?.masterOrder?.renter;
+      
+      const ownerName = owner?.profile?.firstName || owner?.profile?.fullName || 'chủ hàng';
+      const renterName = renter?.profile?.firstName || renter?.profile?.fullName || 'khách hàng';
+
+      const scheduledDateStr = shipment.scheduledAt
+        ? new Date(shipment.scheduledAt).toLocaleDateString('vi-VN')
+        : 'chưa xác định';
+
+      const shipmentTypeLabel = shipment.type === 'DELIVERY' ? 'giao hàng' : 'trả hàng';
+      const notificationTitle = shipment.type === 'DELIVERY' ? '📦 Đơn giao hàng mới (reassigned)' : '🔄 Đơn trả hàng mới (reassigned)';
+
+      // Create notification
+      const notification = await NotificationService.createNotification({
+        recipient: newShipper._id,
+        title: notificationTitle,
+        message: `Bạn có đơn ${shipmentTypeLabel} mới được gán lại: ${ownerName} ${shipment.type === 'DELIVERY' ? 'gửi' : 'nhận'} ${productName} ${shipment.type === 'DELIVERY' ? 'cho' : 'từ'} ${renterName}. Dự kiến: ${scheduledDateStr}`,
+        type: 'SHIPMENT',
+        category: 'INFO',
+        data: {
+          shipmentId: shipment.shipmentId,
+          shipmentObjectId: shipment._id,
+          shipmentType: shipment.type,
+          productName: productName,
+          ownerName: ownerName,
+          renterName: renterName,
+          scheduledAt: shipment.scheduledAt,
+          reassigned: true,
+          previousShipper: oldShipperId
+        }
+      });
+
+      // Emit real-time notification
+      if (global.chatGateway && typeof global.chatGateway.emitNotification === 'function') {
+        global.chatGateway.emitNotification(newShipper._id.toString(), notification);
+      }
+
+      // Emit shipment:created event
+      if (global.chatGateway && typeof global.chatGateway.emitShipmentCreated === 'function') {
+        global.chatGateway.emitShipmentCreated(newShipper._id.toString(), {
+          shipment: {
+            _id: shipment._id,
+            shipmentId: shipment.shipmentId,
+            type: shipment.type,
+            status: shipment.status,
+            scheduledAt: shipment.scheduledAt,
+            productName: productName,
+            ownerName: ownerName,
+            renterName: renterName,
+            reassigned: true
+          },
+          timestamp: new Date().toISOString()
+        });
+      }
+
+      // Send email
+      try {
+        await sendShipperNotificationEmail(
+          newShipper,
+          shipment,
+          { name: productName },
+          {
+            name: renter?.profile?.fullName || 'Renter',
+            phone: renter?.phone || '',
+            email: renter?.email || ''
+          },
+          {
+            rentalStartDate: productItem?.rentalPeriod?.startDate
+              ? new Date(productItem.rentalPeriod.startDate).toLocaleDateString('vi-VN')
+              : 'N/A',
+            rentalEndDate: productItem?.rentalPeriod?.endDate
+              ? new Date(productItem.rentalPeriod.endDate).toLocaleDateString('vi-VN')
+              : 'N/A',
+            notes: `Đơn được gán lại từ shipper khác. ${shipment.contactInfo?.notes || ''}`
+          }
+        );
+        console.log(`✅ Email sent to new shipper ${newShipper.email}`);
+      } catch (emailErr) {
+        console.error('❌ Failed to send email to new shipper:', emailErr.message);
+      }
+
+    } catch (notifErr) {
+      console.error('❌ Failed to send notification to new shipper:', notifErr.message);
+    }
+
+    // Send notification for related shipment if exists (DELIVERY rejected -> notify about RETURN)
+    if (relatedShipment && shipment.type === 'DELIVERY') {
+      try {
+        const NotificationService = require('./notification.service');
+        
+        // Get product info
+        const productItem = shipment.subOrder?.products?.[shipment.productIndex];
+        const product = productItem?.product;
+        const productName = product?.title || product?.name || 'sản phẩm';
+
+        const owner = shipment.subOrder?.owner;
+        const renter = shipment.subOrder?.masterOrder?.renter;
+        
+        const ownerName = owner?.profile?.firstName || owner?.profile?.fullName || 'chủ hàng';
+        const renterName = renter?.profile?.firstName || renter?.profile?.fullName || 'khách hàng';
+
+        const scheduledDateStr = relatedShipment.scheduledAt
+          ? new Date(relatedShipment.scheduledAt).toLocaleDateString('vi-VN')
+          : 'chưa xác định';
+
+        // Create notification for RETURN shipment
+        const returnNotification = await NotificationService.createNotification({
+          recipient: newShipper._id,
+          title: '🔄 Đơn trả hàng đi kèm (reassigned)',
+          message: `Đơn trả hàng đi kèm với đơn giao: ${ownerName} nhận ${productName} từ ${renterName}. Dự kiến: ${scheduledDateStr}`,
+          type: 'SHIPMENT',
+          category: 'INFO',
+          data: {
+            shipmentId: relatedShipment.shipmentId,
+            shipmentObjectId: relatedShipment._id,
+            shipmentType: relatedShipment.type,
+            productName: productName,
+            ownerName: ownerName,
+            renterName: renterName,
+            scheduledAt: relatedShipment.scheduledAt,
+            reassigned: true,
+            relatedToDelivery: shipment.shipmentId
+          }
+        });
+
+        // Emit real-time notification
+        if (global.chatGateway && typeof global.chatGateway.emitNotification === 'function') {
+          global.chatGateway.emitNotification(newShipper._id.toString(), returnNotification);
+        }
+
+        // Emit shipment:created event for RETURN
+        if (global.chatGateway && typeof global.chatGateway.emitShipmentCreated === 'function') {
+          global.chatGateway.emitShipmentCreated(newShipper._id.toString(), {
+            shipment: {
+              _id: relatedShipment._id,
+              shipmentId: relatedShipment.shipmentId,
+              type: relatedShipment.type,
+              status: relatedShipment.status,
+              scheduledAt: relatedShipment.scheduledAt,
+              productName: productName,
+              ownerName: ownerName,
+              renterName: renterName,
+              reassigned: true
+            },
+            timestamp: new Date().toISOString()
+          });
+        }
+
+        console.log(`✅ Notification sent for related RETURN shipment`);
+      } catch (relatedNotifErr) {
+        console.error('❌ Failed to send notification for related shipment:', relatedNotifErr.message);
+      }
+    }
+
+    return {
+      message: 'Shipment rejected and reassigned successfully',
+      oldShipper: oldShipperId,
+      newShipper: newShipper._id,
+      shipment: shipment,
+      relatedShipment: relatedShipment ? {
+        _id: relatedShipment._id,
+        shipmentId: relatedShipment.shipmentId,
+        type: relatedShipment.type,
+        status: relatedShipment.status
+      } : null
+    };
   }
 
   async updatePickup(shipmentId, data) {
@@ -914,15 +1261,26 @@ class ShipmentService {
             });
             await deliveryProof.save();
 
-            // Assign shipper if provided
-            if (shipperId) {
-              outboundShipment.shipper = shipperId;
+            // Assign shipper if provided, or auto-select if not
+            let assignedShipperId = shipperId;
+            
+            // Auto-select shipper if not provided
+            if (!assignedShipperId) {
+              const autoSelectedShipper = await this.findShipperInSameArea(ownerAddress);
+              if (autoSelectedShipper) {
+                assignedShipperId = autoSelectedShipper._id;
+                console.log(`🤖 Auto-selected shipper ${assignedShipperId} for DELIVERY shipment`);
+              }
+            }
+            
+            if (assignedShipperId) {
+              outboundShipment.shipper = assignedShipperId;
               await outboundShipment.save();
 
               // Send real-time notification and schedule email
               try {
                 const NotificationService = require('./notification.service');
-                const shipperUser = await User.findById(shipperId).select('_id profile email');
+                const shipperUser = await User.findById(assignedShipperId).select('_id profile email');
 
                 // Get product info - need to populate if not already
                 let productInfo = product;
@@ -940,7 +1298,7 @@ class ShipmentService {
                   : 'chưa xác định';
 
                 const deliveryNotif = await NotificationService.createNotification({
-                  recipient: shipperId,
+                  recipient: assignedShipperId,
                   title: '📦 Đơn giao hàng mới',
                   message: `Bạn có đơn giao hàng mới: ${ownerName} gửi ${productName} cho ${renterName}. Dự kiến: ${scheduledDateStr}`,
                   type: 'SHIPMENT',
@@ -961,7 +1319,7 @@ class ShipmentService {
                   global.chatGateway &&
                   typeof global.chatGateway.emitNotification === 'function'
                 ) {
-                  global.chatGateway.emitNotification(shipperId.toString(), deliveryNotif);
+                  global.chatGateway.emitNotification(assignedShipperId.toString(), deliveryNotif);
                 }
 
                 // ✅ Emit shipment:created event for real-time shipment list update
@@ -969,7 +1327,7 @@ class ShipmentService {
                   global.chatGateway &&
                   typeof global.chatGateway.emitShipmentCreated === 'function'
                 ) {
-                  global.chatGateway.emitShipmentCreated(shipperId.toString(), {
+                  global.chatGateway.emitShipmentCreated(assignedShipperId.toString(), {
                     shipment: {
                       _id: outboundShipment._id,
                       shipmentId: outboundShipment.shipmentId,
@@ -1097,15 +1455,26 @@ class ShipmentService {
             });
             await returnProof.save();
 
-            // Assign shipper if provided
-            if (shipperId) {
-              returnShipment.shipper = shipperId;
+            // Assign shipper if provided, or auto-select if not
+            let assignedReturnShipperId = shipperId;
+            
+            // Auto-select shipper if not provided
+            if (!assignedReturnShipperId) {
+              const autoSelectedShipper = await this.findShipperInSameArea(ownerAddress);
+              if (autoSelectedShipper) {
+                assignedReturnShipperId = autoSelectedShipper._id;
+                console.log(`🤖 Auto-selected shipper ${assignedReturnShipperId} for RETURN shipment`);
+              }
+            }
+            
+            if (assignedReturnShipperId) {
+              returnShipment.shipper = assignedReturnShipperId;
               await returnShipment.save();
 
               // Send real-time notification and schedule email
               try {
                 const NotificationService = require('./notification.service');
-                const shipperUser = await User.findById(shipperId).select('_id profile email');
+                const shipperUser = await User.findById(assignedReturnShipperId).select('_id profile email');
 
                 // Get product info - need to populate if not already
                 let productInfo = product;
@@ -1123,7 +1492,7 @@ class ShipmentService {
                   : 'chưa xác định';
 
                 const returnNotif = await NotificationService.createNotification({
-                  recipient: shipperId,
+                  recipient: assignedReturnShipperId,
                   title: '🔄 Đơn trả hàng mới',
                   message: `Bạn có đơn trả hàng mới: ${ownerName} nhận ${productName} từ ${renterName}. Dự kiến: ${scheduledDateStr}`,
                   type: 'SHIPMENT',
@@ -1144,7 +1513,7 @@ class ShipmentService {
                   global.chatGateway &&
                   typeof global.chatGateway.emitNotification === 'function'
                 ) {
-                  global.chatGateway.emitNotification(shipperId.toString(), returnNotif);
+                  global.chatGateway.emitNotification(assignedReturnShipperId.toString(), returnNotif);
                 }
 
                 // ✅ Emit shipment:created event for real-time shipment list update
@@ -1152,7 +1521,7 @@ class ShipmentService {
                   global.chatGateway &&
                   typeof global.chatGateway.emitShipmentCreated === 'function'
                 ) {
-                  global.chatGateway.emitShipmentCreated(shipperId.toString(), {
+                  global.chatGateway.emitShipmentCreated(assignedReturnShipperId.toString(), {
                     shipment: {
                       _id: returnShipment._id,
                       shipmentId: returnShipment.shipmentId,
@@ -1225,68 +1594,97 @@ class ShipmentService {
     }
   }
 
-  async findShipperInSameArea(ownerAddress) {
+  async findShipperInSameArea(ownerAddress, excludeShipperId = null) {
     try {
       if (!ownerAddress) {
         // findShipperInSameArea: ownerAddress is null/undefined
         return null;
       }
 
-      let shipper = null;
+      let shippers = [];
 
+      // Tìm tất cả shippers trong cùng district
       if (ownerAddress.district) {
-        // Tìm shipper cùng district
-        shipper = await User.findOne({
+        const query = {
           role: 'SHIPPER',
           'address.district': ownerAddress.district,
           status: 'ACTIVE'
-        }).select('_id email phone profile address');
-
-        if (shipper) {
-          return shipper;
+        };
+        // Exclude current shipper if provided
+        if (excludeShipperId) {
+          query._id = { $ne: excludeShipperId };
         }
+        shippers = await User.find(query).select('_id email phone profile address');
       }
 
-      if (!shipper && ownerAddress.city) {
-        // Tìm shipper cùng city nhưng khác district
-        shipper = await User.findOne({
+      // Nếu không có shipper trong district, tìm trong city
+      if (shippers.length === 0 && ownerAddress.city) {
+        const query = {
           role: 'SHIPPER',
           'address.city': ownerAddress.city,
           status: 'ACTIVE'
-        }).select('_id email phone profile address');
-
-        if (shipper) {
-          return shipper;
+        };
+        if (excludeShipperId) {
+          query._id = { $ne: excludeShipperId };
         }
+        shippers = await User.find(query).select('_id email phone profile address');
       }
 
-      if (!shipper && ownerAddress.province) {
-        // Tìm shipper cùng province
-        shipper = await User.findOne({
+      // Nếu không có shipper trong city, tìm trong province
+      if (shippers.length === 0 && ownerAddress.province) {
+        const query = {
           role: 'SHIPPER',
           'address.province': ownerAddress.province,
           status: 'ACTIVE'
-        }).select('_id email phone profile address');
-
-        if (shipper) {
-          return shipper;
+        };
+        if (excludeShipperId) {
+          query._id = { $ne: excludeShipperId };
         }
+        shippers = await User.find(query).select('_id email phone profile address');
       }
 
-      // Nếu không tìm thấy, lấy shipper bất kỳ
-      if (!shipper) {
-        shipper = await User.findOne({
+      // Nếu không tìm thấy, lấy tất cả shippers
+      if (shippers.length === 0) {
+        const query = {
           role: 'SHIPPER',
           status: 'ACTIVE'
-        }).select('_id email phone profile address');
-
-        if (shipper) {
-          return shipper;
+        };
+        if (excludeShipperId) {
+          query._id = { $ne: excludeShipperId };
         }
+        shippers = await User.find(query).select('_id email phone profile address');
       }
 
-      // No shipper found
-      return null;
+      // Nếu không có shipper nào
+      if (shippers.length === 0) {
+        return null;
+      }
+
+      // Đếm số đơn đang PENDING của từng shipper
+      const Shipment = require('../models/Shipment');
+      const shipperOrderCounts = await Promise.all(
+        shippers.map(async (shipper) => {
+          const count = await Shipment.countDocuments({
+            shipper: shipper._id,
+            status: 'PENDING'
+          });
+          return { shipper, count };
+        })
+      );
+
+      // Tìm số đơn ít nhất
+      const minCount = Math.min(...shipperOrderCounts.map(s => s.count));
+
+      // Lọc các shippers có số đơn ít nhất
+      const shippersWithMinOrders = shipperOrderCounts.filter(s => s.count === minCount);
+
+      // Random chọn 1 shipper từ danh sách có ít đơn nhất
+      const randomIndex = Math.floor(Math.random() * shippersWithMinOrders.length);
+      const selectedShipper = shippersWithMinOrders[randomIndex].shipper;
+
+      console.log(`✅ Selected shipper ${selectedShipper._id} with ${minCount} pending orders (from ${shippersWithMinOrders.length} shippers with same minimum)${excludeShipperId ? ` [excluded ${excludeShipperId}]` : ''}`);
+
+      return selectedShipper;
     } catch (error) {
       // Error finding shipper in same area
       throw error;
