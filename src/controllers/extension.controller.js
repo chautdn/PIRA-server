@@ -23,8 +23,10 @@ class ExtensionController {
         throw new BadRequest('Missing required fields: subOrderId, selectedProducts');
       }
 
-      // Get suborder with master order info
-      const subOrder = await SubOrder.findById(subOrderId).populate('masterOrder owner');
+      // Get suborder with master order info and products
+      const subOrder = await SubOrder.findById(subOrderId)
+        .populate('masterOrder owner')
+        .populate('products.product');
       if (!subOrder) {
         throw new NotFoundError('SubOrder not found');
       }
@@ -65,7 +67,7 @@ class ExtensionController {
         const productData = {
           productId: product._id,
           owner: subOrder.owner._id,
-          productName: product.name,
+          productName: product.product?.title || product.name || 'Sản phẩm',
           currentEndDate,
           newEndDate,
           extensionDays,
@@ -73,20 +75,6 @@ class ExtensionController {
           extensionFee,
           status: 'PENDING'
         };
-
-        console.log('📋 Product extension details:', {
-          productId: product._id,
-          productName: product.name,
-          currentEndDate,
-          newEndDate,
-          extensionDays,
-          dailyRentalPrice,
-          extensionFee,
-          receivedFromFrontend: {
-            extensionFee: selectedProduct.extensionFee,
-            dailyRentalPrice: selectedProduct.dailyRentalPrice
-          }
-        });
 
         productsList.push(productData);
         totalExtensionFee += extensionFee;
@@ -133,7 +121,6 @@ class ExtensionController {
       });
 
       await wallet.save();
-      console.log(`💰 Deducted ${totalExtensionFee}đ from renter wallet - Transaction: ${transactionId}`);
 
       // Create extension request with payment info
       const extension = new Extension({
@@ -163,13 +150,6 @@ class ExtensionController {
         const owner = subOrder.owner;
         const ownerProducts = extension.products;
         const productNames = ownerProducts.map(p => p.productName).join(', ');
-        
-        console.log('📢 Sending extension notification:', {
-          ownerId: owner._id,
-          ownerEmail: owner.profile?.email,
-          products: productNames,
-          totalExtensionFee
-        });
 
         await sendNotification(
           owner._id.toString(),
@@ -189,7 +169,6 @@ class ExtensionController {
           }
         );
         
-        console.log('✅ Extension notification sent successfully');
       } catch (notifErr) {
         console.error('❌ Failed to send extension notification:', notifErr.message);
       }
@@ -255,8 +234,6 @@ class ExtensionController {
       const skip = (page - 1) * limit;
       const ownerObjectId = new mongoose.Types.ObjectId(ownerId);
 
-      console.log('📥 Getting extension requests for owner:', { ownerId, status, page, limit });
-
       // Use aggregation pipeline to fetch data
       const extensionsWithProducts = await Extension.aggregate([
         // Match extensions that have products owned by this owner
@@ -321,15 +298,6 @@ class ExtensionController {
         // No $group! Keep flat structure - 1 document per product
       ]);
 
-      console.log('📋 Aggregation result:', {
-        count: extensionsWithProducts.length,
-        items: extensionsWithProducts.map(e => ({
-          extensionId: e._id,
-          productName: e.products?.productName || 'unknown',
-          hasProductDetail: !!e.productDetail
-        }))
-      });
-
       // Transform data to match expected format
       // After removing $group, each document represents one product in one extension
       const flattenedRequests = extensionsWithProducts.map(ext => ({
@@ -360,13 +328,6 @@ class ExtensionController {
         { $count: 'total' }
       ]);
       const total = totalResult[0]?.total || 0;
-
-      console.log('📊 Final response:', {
-        found: flattenedRequests.length,
-        total,
-        page,
-        pages: Math.ceil(total / limit)
-      });
 
       res.json({
         success: true,
@@ -428,12 +389,50 @@ class ExtensionController {
       const { productId } = req.body; // Optional: Approve specific product only
       const ownerId = req.user.id;
 
-      console.log('🔄 Approving extension:', { requestId, productId, ownerId });
-
-      // Fetch extension
-      const extension = await Extension.findById(requestId).populate('masterOrder renter subOrder');
+      // Fetch extension with subOrder and nested products populated
+      const extension = await Extension.findById(requestId)
+        .populate('masterOrder renter')
+        .populate({
+          path: 'subOrder',
+          populate: {
+            path: 'products.product',
+            select: 'title'
+          }
+        });
+        
       if (!extension) {
         throw new NotFoundError('Extension request not found');
+      }
+
+      // Fetch product names from populated SubOrder
+      
+      if (extension.products && extension.products.length > 0 && extension.subOrder && extension.subOrder.products) {
+        for (let product of extension.products) {
+          if (product.productId && !product.productName) {
+            // Find matching product in subOrder
+            const subOrderProduct = extension.subOrder.products.find(
+              p => p.product && p.product._id && p.product._id.toString() === product.productId.toString()
+            );
+            
+            if (subOrderProduct && subOrderProduct.product && subOrderProduct.product.title) {
+              product.productName = subOrderProduct.product.title;
+            } else {
+              // Fallback: try direct fetch
+              try {
+                const Product = require('../models/Product');
+                const productDoc = await Product.findById(product.productId).select('title');
+                if (productDoc && productDoc.title) {
+                  product.productName = productDoc.title;
+                } else {
+                  product.productName = 'Sản phẩm';
+                }
+              } catch (err) {
+                console.error('❌ [APPROVE] Error:', err.message);
+                product.productName = 'Sản phẩm';
+              }
+            }
+          }
+        }
       }
 
       // Check if this is old format (with products array) or new format (single extension)
@@ -462,18 +461,6 @@ class ExtensionController {
         p => p.productId.toString() === productId && p.owner.toString() === ownerId
       );
 
-      console.log('🔍 Looking for product:', {
-        targetProductId: productId,
-        ownerId,
-        found: productIndex !== -1,
-        allProducts: extension.products.map(p => ({ 
-          productId: p.productId.toString(), 
-          owner: p.owner.toString(),
-          ownerType: typeof p.owner,
-          matches: p.productId.toString() === productId && p.owner.toString() === ownerId
-        }))
-      });
-
       if (productIndex === -1) {
         throw new BadRequest('Product not found or you are not the owner');
       }
@@ -490,13 +477,6 @@ class ExtensionController {
       if (!subOrder) {
         throw new NotFoundError('SubOrder not found');
       }
-
-      console.log('📦 SubOrder loaded:', {
-        subOrderId: subOrder._id,
-        productCount: subOrder.products.length,
-        rentalProductId: productToApprove.productId
-      });
-
       // Tiền đã được trừ từ renter khi gửi yêu cầu gia hạn
       // Bây giờ chỉ cần chuyển 90% vào frozen wallet của owner
 
@@ -507,7 +487,6 @@ class ExtensionController {
           p => p.product._id.toString() === productToApprove.productId.toString()
         );
         productName = subOrderProduct?.product?.name || 'Unknown Product';
-        console.log('⚠️ ProductName not in extension, fetched from subOrder:', productName);
       }
 
       // Transfer 90% extension fee to owner (frozen until order completed)
@@ -516,13 +495,7 @@ class ExtensionController {
       const subOrderId = extension.subOrder;
 
       if (ownerCompensation > 0) {
-        console.log('💰 Transferring extension payment to owner:', {
-          owner: ownerId,
-          amount: ownerCompensation,
-          extensionFee: productToApprove.extensionFee,
-          productName,
-          extensionDays: productToApprove.extensionDays
-        });
+
 
         try {
           const adminId = process.env.SYSTEM_ADMIN_ID || 'SYSTEM_AUTO_TRANSFER';
@@ -550,7 +523,6 @@ class ExtensionController {
             );
           }
 
-          console.log(`   ✅ Extension payment completed: ${ownerCompensation.toLocaleString()} VND to owner ${ownerId}`);
         } catch (err) {
           console.error(`   ❌ Extension payment failed:`, err.message);
           console.error('   Error details:', err);
@@ -562,11 +534,6 @@ class ExtensionController {
       const subOrderProduct = subOrder.products.find(p => p._id.toString() === productToApprove.productId.toString());
       if (subOrderProduct && subOrderProduct.rentalPeriod) {
         subOrderProduct.rentalPeriod.endDate = new Date(productToApprove.newEndDate);
-        console.log('📅 Updated product period:', {
-          productId: subOrderProduct._id,
-          productName: productToApprove.productName,
-          newEndDate: productToApprove.newEndDate
-        });
       }
 
       // Update return shipment endDate if exists
@@ -581,12 +548,6 @@ class ExtensionController {
         if (returnShipment) {
           returnShipment.scheduledAt = new Date(productToApprove.newEndDate);
           await returnShipment.save();
-          console.log('🚚 Updated return shipment:', {
-            shipmentId: returnShipment._id,
-            productName: productName,
-            newScheduleDate: productToApprove.newEndDate,
-            shipperId: returnShipment.shipper?._id
-          });
 
           // Send notification to shipper about updated schedule
           if (returnShipment.shipper) {
@@ -608,7 +569,6 @@ class ExtensionController {
                   }
                 }
               );
-              console.log('✅ Schedule update notification sent to shipper');
 
               // Emit socket event to shipper for real-time update
               const io = req.app.get('io');
@@ -619,7 +579,6 @@ class ExtensionController {
                   newScheduledAt: productToApprove.newEndDate,
                   extensionDays: productToApprove.extensionDays
                 });
-                console.log('📡 Socket event emitted to shipper:', `user:${returnShipment.shipper._id}`);
               }
             } catch (notifErr) {
               console.error('Failed to notify shipper about schedule update:', notifErr.message);
@@ -637,23 +596,11 @@ class ExtensionController {
       productToApprove.status = 'APPROVED';
       productToApprove.approvedAt = new Date();
 
-      console.log('✅ Product marked as approved:', {
-        productId: productToApprove.productId,
-        status: productToApprove.status,
-        approvedAt: productToApprove.approvedAt
-      });
 
       // Update extension overall status based on all products
       const pendingCount = extension.products.filter(p => p.status === 'PENDING').length;
       const approvedCount = extension.products.filter(p => p.status === 'APPROVED').length;
       const rejectedCount = extension.products.filter(p => p.status === 'REJECTED').length;
-      
-      console.log('📊 Extension product status summary:', {
-        pending: pendingCount,
-        approved: approvedCount,
-        rejected: rejectedCount,
-        total: extension.products.length
-      });
 
       if (pendingCount === 0 && rejectedCount === 0) {
         extension.status = 'APPROVED';
@@ -661,16 +608,9 @@ class ExtensionController {
         extension.status = 'PARTIALLY_APPROVED';
       }
 
-      console.log('📝 Extension status updated to:', extension.status);
-
       // Save the extension with updated products and status
       await extension.save();
 
-      console.log('💾 Extension saved with updated status:', {
-        extensionId: extension._id,
-        status: extension.status,
-        products: extension.products.map(p => ({ id: p.productId, status: p.status, name: p.productName }))
-      });
 
       // Send notification to renter
       try {
@@ -689,7 +629,6 @@ class ExtensionController {
             }
           }
         );
-        console.log('✅ Approval notification sent');
       } catch (notifErr) {
         console.error('Failed to send approval notification:', notifErr.message);
       }
@@ -724,20 +663,51 @@ class ExtensionController {
         throw new BadRequest('Rejection reason is required');
       }
 
-      const extension = await Extension.findById(requestId);
+      const extension = await Extension.findById(requestId)
+        .populate('subOrder')
+        .populate({
+          path: 'subOrder',
+          populate: {
+            path: 'products.product',
+            select: 'title'
+          }
+        });
+        
       if (!extension) {
         throw new NotFoundError('Extension request not found');
       }
 
-      console.log('🔍 Extension found:', {
-        extensionId: extension._id,
-        productCount: extension.products.length,
-        products: extension.products.map(p => ({ 
-          productId: p.productId, 
-          owner: p.owner,
-          name: p.productName 
-        }))
-      });
+      // Fetch product names from populated SubOrder
+      
+      if (extension.subOrder && extension.subOrder.products) {
+        for (let product of extension.products) {
+          if (product.productId && !product.productName) {
+            // Find matching product in subOrder
+            const subOrderProduct = extension.subOrder.products.find(
+              p => p.product && p.product._id && p.product._id.toString() === product.productId.toString()
+            );
+            
+            if (subOrderProduct && subOrderProduct.product && subOrderProduct.product.title) {
+              product.productName = subOrderProduct.product.title;
+            } else {
+              // Fallback: try direct fetch
+              try {
+                const Product = require('../models/Product');
+                const productDoc = await Product.findById(product.productId).select('title');
+                if (productDoc && productDoc.title) {
+                  product.productName = productDoc.title;
+                } else {
+                  product.productName = 'Sản phẩm';
+                }
+              } catch (err) {
+                console.error('❌ [REJECT] Error:', err.message);
+                product.productName = 'Sản phẩm';
+              }
+            }
+          }
+        }
+      }
+      
 
       // Find the specific product to reject
       const productIndex = extension.products.findIndex(
@@ -769,23 +739,11 @@ class ExtensionController {
       productToReject.rejectedAt = new Date();
       productToReject.rejectionReason = rejectionReason;
 
-      console.log('✅ Product marked as rejected:', {
-        productId: productToReject.productId,
-        status: productToReject.status,
-        rejectionReason
-      });
-
       // Update extension overall status based on all products
       const pendingCount = extension.products.filter(p => p.status === 'PENDING').length;
       const approvedCount = extension.products.filter(p => p.status === 'APPROVED').length;
       const rejectedCount = extension.products.filter(p => p.status === 'REJECTED').length;
 
-      console.log('📊 Extension product status summary after rejection:', {
-        pending: pendingCount,
-        approved: approvedCount,
-        rejected: rejectedCount,
-        total: extension.products.length
-      });
 
       // Update status logic:
       // - If all products are rejected → REJECTED
@@ -819,7 +777,6 @@ class ExtensionController {
               });
               
               await renter.wallet.save();
-              console.log(`💰 Refunded ${refundAmount}đ to renter ${extension.renter} - All products rejected`);
             }
           } catch (refundError) {
             console.error('❌ Error refunding payment:', refundError.message);
@@ -855,7 +812,6 @@ class ExtensionController {
               });
               
               await renter.wallet.save();
-              console.log(`💰 Partial refund ${refundAmount}đ to renter ${extension.renter} - Product rejected: ${productToReject.productName}`);
             }
           } catch (refundError) {
             console.error('❌ Error processing partial refund:', refundError.message);
@@ -867,28 +823,15 @@ class ExtensionController {
       extension.rejectionReason = rejectionReason;
       extension.rejectedAt = new Date();
 
-      console.log('📝 Extension status updated to:', extension.status);
 
       // Save the extension with updated products and status
       await extension.save();
-
-      console.log('💾 Extension saved with updated status:', {
-        extensionId: extension._id,
-        status: extension.status,
-        products: extension.products.map(p => ({ id: p.productId, status: p.status, name: p.productName }))
-      });
 
       // Send notification to renter
       try {
         const ownerObj = await User.findById(ownerId);
         const ownerName = (ownerObj?.profile?.firstName || ownerObj?.firstName || 'Chủ hàng');
         
-        console.log('📢 Sending rejection notification:', {
-          renterId: extension.renter._id,
-          rejectedProduct: productToReject.productName,
-          rejectionReason,
-          ownerName
-        });
 
         await sendNotification(
           extension.renter._id,
@@ -904,7 +847,6 @@ class ExtensionController {
             }
           }
         );
-        console.log('✅ Rejection notification sent successfully');
       } catch (notifErr) {
         console.error('Failed to send rejection notification:', notifErr.message);
       }
