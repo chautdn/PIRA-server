@@ -977,9 +977,25 @@ const ownerProductService = {
         product.videos = [...(product.videos || []), ...videoData];
       }
 
+      // If product is currently non-public, auto-reactivate on successful safe edits
+      // Do NOT override explicit owner-hidden or owner-deleted states
+      const nonPublicStatuses = ['DRAFT', 'INACTIVE', 'PENDING'];
+      if (nonPublicStatuses.includes(product.status)) {
+        product.status = 'ACTIVE';
+        // Ensure availability if quantity is valid
+        if (product.availability) {
+          product.availability.isAvailable = (product.availability.quantity || 0) > 0;
+        }
+      }
+
       // Update the safe fields
       Object.assign(product, safeFields);
       const updatedProduct = await product.save();
+
+      // Clear promoted product cache if a promoted product was updated
+      if (updatedProduct.isPromoted) {
+        promotedProductCache.clear();
+      }
 
       return await Product.findById(updatedProduct._id)
         .populate('category', 'name slug')
