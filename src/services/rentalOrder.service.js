@@ -3548,17 +3548,31 @@ class RentalOrderService {
 <body>
   <h1>HỢP ĐỒNG THUÊ ĐỒ</h1>
   <p style="text-align: center; font-weight: bold;">Số: ${contractNumber}</p>
+  <p style="text-align: center;">Ngày lập: ${new Date().toLocaleDateString('vi-VN')}</p>
 
   <div class="info">
-    <p><strong>BÊN CHO THUÊ:</strong> ${subOrder.owner?.profile?.firstName || 'N/A'} ${subOrder.owner?.profile?.lastName || ''}</p>
+    <p><strong>BÊN CHO THUÊ (BÊN A):</strong> ${subOrder.owner?.profile?.firstName || 'N/A'} ${subOrder.owner?.profile?.lastName || ''}</p>
     <p><strong>Số điện thoại:</strong> ${subOrder.owner?.phone || 'N/A'}</p>
     <p><strong>Email:</strong> ${subOrder.owner?.email || 'N/A'}</p>
+    <p><strong>Mã người dùng:</strong> ${subOrder.owner?.id || 'N/A'}</p>
   </div>
 
   <div class="info">
-    <p><strong>BÊN THUÊ:</strong> ${renter?.profile?.firstName || 'N/A'} ${renter?.profile?.lastName || ''}</p>
+    <p><strong>BÊN THUÊ (BÊN B):</strong> ${renter?.profile?.firstName || 'N/A'} ${renter?.profile?.lastName || ''}</p>
     <p><strong>Số điện thoại:</strong> ${renter?.phone || 'N/A'}</p>
     <p><strong>Email:</strong> ${renter?.email || 'N/A'}</p>
+    <p><strong>Mã người dùng:</strong> ${renter?.id || 'N/A'}</p>
+  </div>
+
+  <div class="info">
+    <p><strong>BÊN TRUNG GIAN (BÊN C):</strong> Nền tảng PIRA</p>
+    <p><strong>Website:</strong> https://pira.asia/</p>
+    <p><strong>Vai trò:</strong> Cung cấp nền tảng kết nối và làm trung gian trong giao dịch thuê đồ</p>
+  </div>
+
+  <div class="note" style="background-color: #fff3cd; border-left: 4px solid #ffc107; padding: 15px; margin: 20px 0;">
+    <strong>⚠️ TUYÊN BỐ HIỆU LỰC HỢP ĐỒNG:</strong>
+    <p>Hợp đồng này được lập trên nền tảng PIRA và chỉ có hiệu lực pháp lý khi được <strong>CẢ HAI BÊN (Bên A và Bên B) xác nhận và ký kết điện tử</strong> thông qua hệ thống của PIRA. Bằng việc ký kết hợp đồng này, cả hai bên đã đọc, hiểu rõ và đồng ý tuân thủ mọi điều khoản ghi trong hợp đồng cũng như Điều khoản sử dụng dịch vụ của nền tảng PIRA.</p>
   </div>
 
   <div class="note">
@@ -3601,11 +3615,88 @@ class RentalOrderService {
   </div>
 
   <h3>ĐIỀU KHOẢN HỢP ĐỒNG</h3>
-  <ol>
+  
+  <h4>Điều 1: Hiệu lực và Phạm vi áp dụng</h4>
+  <ol style="list-style-type: lower-alpha;">
+    <li>Hợp đồng này được lập trên nền tảng PIRA và chính thức có hiệu lực kể từ thời điểm cả Bên A và Bên B hoàn tất ký kết điện tử thông qua hệ thống.</li>
+    <li>Hợp đồng điện tử này có giá trị pháp lý tương đương với hợp đồng giấy theo quy định của pháp luật Việt Nam về giao dịch điện tử.</li>
+    <li>Mọi thông tin và chữ ký điện tử trong hợp đồng được PIRA lưu trữ và bảo mật theo quy định pháp luật.</li>
+  </ol>
+
+  <h4>Điều 2: Vai trò và Trách nhiệm của Nền tảng PIRA</h4>
+  <ol style="list-style-type: lower-alpha;">
+    <li><strong>Vai trò trung gian:</strong> PIRA đóng vai trò là bên trung gian trung lập, cung cấp nền tảng kết nối giữa Bên Cho Thuê và Bên Thuê.</li>
+    <li><strong>Giải quyết tranh chấp:</strong> PIRA có quyền và trách nhiệm can thiệp, hòa giải và giải quyết các mâu thuẫn, tranh chấp phát sinh giữa hai bên trong quá trình thực hiện hợp đồng. Quyết định của PIRA dựa trên bằng chứng và điều khoản hợp đồng sẽ có tính ràng buộc đối với cả hai bên.</li>
+    <li><strong>Quản lý thanh toán:</strong> PIRA giữ vai trò quản lý và giám sát các khoản thanh toán, tiền cọc để đảm bảo quyền lợi cho cả hai bên.</li>
+    <li><strong>Xác minh và đánh giá:</strong> PIRA có quyền yêu cầu cung cấp bằng chứng, hình ảnh, thông tin liên quan để xác minh tình trạng sản phẩm và giải quyết khiếu nại.</li>
+    <li><strong>Xử lý vi phạm:</strong> PIRA có quyền áp dụng các biện pháp xử lý vi phạm bao gồm trừ điểm Credit, khóa tài khoản tạm thời hoặc vĩnh viễn đối với bên vi phạm nghiêm trọng hoặc vi phạm nhiều lần.</li>
+  </ol>
+
+  <h4>Điều 3: Nghĩa vụ của Bên Cho Thuê</h4>
+  <ol style="list-style-type: lower-alpha;">
+    <li>Bàn giao sản phẩm đúng như mô tả, đầy đủ và trong tình trạng tốt cho Bên Thuê.</li>
+    <li>Có mặt đúng thời gian và địa điểm đã thỏa thuận để bàn giao sản phẩm.</li>
+    <li>Cung cấp hướng dẫn sử dụng (nếu cần thiết) và thông báo các lưu ý đặc biệt về sản phẩm.</li>
+    <li>Chịu trách nhiệm về chất lượng và tính an toàn của sản phẩm cho thuê.</li>
+  </ol>
+
+  <h4>Điều 4: Nghĩa vụ của Bên Thuê</h4>
+  <ol style="list-style-type: lower-alpha;">
     <li>Bên thuê cam kết sử dụng sản phẩm đúng mục đích và giữ gìn cẩn thận.</li>
-    <li>Tiền cọc sẽ được hoàn trả sau khi trả sản phẩm trong tình trạng tốt.</li>
-    <li>Nếu trả trễ, bên thuê phải chịu phí phạt theo quy định.</li>
-    <li>Nếu sản phẩm bị hư hỏng, bên thuê phải bồi thường theo giá trị thực tế.</li>
+    <li>Thanh toán đầy đủ và đúng hạn các khoản phí thuê và tiền cọc theo thỏa thuận.</li>
+    <li>Có mặt đúng thời gian và địa điểm để nhận và trả sản phẩm.</li>
+    <li>Trả lại sản phẩm đúng hạn và trong tình trạng như ban đầu (hao mòn tự nhiên được chấp nhận).</li>
+    <li>Thông báo ngay cho Bên Cho Thuê và PIRA nếu sản phẩm gặp sự cố trong quá trình sử dụng.</li>
+  </ol>
+
+  <h4>Điều 5: Về Tiền cọc và Hoàn trả</h4>
+  <ol style="list-style-type: lower-alpha;">
+    <li>Tiền cọc sẽ được PIRA giữ trong suốt thời gian thuê để đảm bảo nghĩa vụ của Bên Thuê.</li>
+    <li>Tiền cọc sẽ được hoàn trả đầy đủ sau khi Bên Thuê trả sản phẩm trong tình trạng tốt và không có tranh chấp nào phát sinh.</li>
+    <li>Trong trường hợp sản phẩm bị hư hỏng hoặc mất mát, PIRA sẽ xác minh và quyết định mức độ khấu trừ tiền cọc hợp lý dựa trên bằng chứng của cả hai bên.</li>
+  </ol>
+
+  <h4>Điều 6: Xử lý Vi phạm và Phạt</h4>
+  <ol style="list-style-type: lower-alpha;">
+    <li><strong>Trả trễ:</strong> Nếu trả trễ, Bên Thuê phải chịu phí phạt theo quy định của Bên Cho Thuê hoặc theo chính sách của PIRA.</li>
+    <li><strong>Hư hỏng sản phẩm:</strong> Nếu sản phẩm bị hư hỏng, Bên Thuê phải bồi thường theo giá trị thực tế được xác định bởi PIRA sau khi xem xét bằng chứng từ cả hai bên.</li>
+    <li><strong>Phạt không xuất hiện hoặc từ chối hàng:</strong> Nếu Bên Thuê không xuất hiện tại địa điểm giao hàng hoặc từ chối nhận hàng không có lý do chính đáng, Bên Thuê sẽ bị trừ một khoản tiền tương đương với giá thuê 1 ngày của toàn bộ sản phẩm trong đơn hàng. Khoản tiền này sẽ không được hoàn lại.</li>
+  </ol>
+
+  <h4>Điều 7: Hệ thống Điểm Credit</h4>
+  <ol style="list-style-type: lower-alpha;">
+    <li>PIRA sử dụng hệ thống điểm Credit để đánh giá uy tín và lịch sử giao dịch của người dùng trên nền tảng.</li>
+    <li>Khi Bên Thuê hoặc Bên Cho Thuê không xuất hiện đúng thời điểm và địa điểm đã thỏa thuận (giao hàng hoặc trả hàng) mà không có lý do chính đáng, tài khoản vi phạm sẽ bị trừ điểm Credit.</li>
+    <li>Điểm Credit thấp có thể ảnh hưởng đến khả năng sử dụng dịch vụ, mức độ ưu tiên và uy tín trên nền tảng PIRA.</li>
+    <li>Vi phạm nghiêm trọng hoặc vi phạm nhiều lần có thể dẫn đến việc tài khoản bị khóa tạm thời hoặc vĩnh viễn.</li>
+  </ol>
+
+  <h4>Điều 8: Nghĩa vụ Có mặt tại Địa điểm Giao/Nhận hàng</h4>
+  <ol style="list-style-type: lower-alpha;">
+    <li>Bên Thuê và Bên Cho Thuê cam kết có mặt đúng thời gian và địa điểm đã thỏa thuận để bàn giao và nhận lại sản phẩm.</li>
+    <li>Nếu có sự cố bất khả kháng, bên không thể có mặt phải thông báo trước cho bên kia và PIRA ít nhất 2 giờ để sắp xếp lại lịch.</li>
+    <li>Việc vắng mặt không có lý do chính đáng sẽ bị xử phạt theo Điều 6 và Điều 7.</li>
+  </ol>
+
+  <h4>Điều 9: Giải quyết Tranh chấp</h4>
+  <ol style="list-style-type: lower-alpha;">
+    <li>Mọi tranh chấp phát sinh trong quá trình thực hiện hợp đồng sẽ được giải quyết thông qua đàm phán hòa giải giữa các bên với sự trung gian của PIRA.</li>
+    <li>PIRA có quyền yêu cầu cả hai bên cung cấp bằng chứng (hình ảnh, video, tin nhắn, v.v.) để làm cơ sở giải quyết tranh chấp.</li>
+    <li>Quyết định của PIRA dựa trên các điều khoản hợp đồng và bằng chứng có tính ràng buộc. Các bên cam kết tuân thủ quyết định này.</li>
+    <li>Trường hợp không thể thỏa thuận, tranh chấp sẽ được giải quyết theo pháp luật Việt Nam tại cơ quan có thẩm quyền.</li>
+  </ol>
+
+  <h4>Điều 10: Bảo mật Thông tin</h4>
+  <ol style="list-style-type: lower-alpha;">
+    <li>PIRA cam kết bảo mật thông tin cá nhân và chi tiết giao dịch của cả hai bên theo chính sách bảo mật của nền tảng.</li>
+    <li>Thông tin trong hợp đồng chỉ được sử dụng cho mục đích thực hiện giao dịch và giải quyết tranh chấp (nếu có).</li>
+  </ol>
+
+  <h4>Điều 11: Chấm dứt Hợp đồng</h4>
+  <ol style="list-style-type: lower-alpha;">
+    <li>Hợp đồng tự động chấm dứt sau khi Bên Thuê trả sản phẩm, Bên Cho Thuê xác nhận và mọi nghĩa vụ tài chính được thanh toán đầy đủ.</li>
+    <li>Hợp đồng có thể chấm dứt sớm nếu cả hai bên thỏa thuận và được PIRA xác nhận.</li>
+    <li>Trường hợp chấm dứt sớm, các khoản phí được tính toán theo thỏa thuận giữa hai bên hoặc theo chính sách của PIRA.</li>
   </ol>
 
   <h3>ĐIỀU KHOẢN GIA HẠN</h3>
@@ -3623,7 +3714,7 @@ class RentalOrderService {
     editableTerms?.additionalTerms && editableTerms.additionalTerms.length > 0
       ? `
   <h3>ĐIỀU KHOẢN BỔ SUNG</h3>
-  <ol start="5">
+  <ol start="8">
     ${editableTerms.additionalTerms.map((term) => `<li><strong>${term.title}:</strong> ${term.content}</li>`).join('')}
   </ol>
   `
