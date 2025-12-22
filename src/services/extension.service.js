@@ -158,7 +158,7 @@ class ExtensionService {
       // Send real-time notification to owner
       try {
         const Notification = require('../models/Notification');
-        
+
         // Get product name from subOrder
         let productName = 'sản phẩm';
         if (subOrder.products && subOrder.products.length > 0) {
@@ -167,7 +167,7 @@ class ExtensionService {
             productName = product.title || product.name || product.productName || 'sản phẩm';
           }
         }
-        
+
         const notification = new Notification({
           recipient: ownerId,
           sender: renterId,
@@ -198,12 +198,13 @@ class ExtensionService {
             data: {
               extensionId: extensionRequest._id,
               subOrderNumber: subOrder.subOrderNumber,
-              renterName: `${extensionRequest.renter.profile?.firstName || ''} ${extensionRequest.renter.profile?.lastName || ''}`.trim(),
+              renterName:
+                `${extensionRequest.renter.profile?.firstName || ''} ${extensionRequest.renter.profile?.lastName || ''}`.trim(),
               extensionDays: extensionRequest.extensionDays,
               totalCost: extensionRequest.totalCost
             }
           });
-          
+
           // Emit custom extension-request event
           global.chatGateway.emitToUser(ownerId.toString(), 'extension-request', {
             type: 'extension_requested',
@@ -292,7 +293,7 @@ class ExtensionService {
       // Chuyển tiền từ renter vào system wallet ngay lập tức
       const SystemWalletService = require('./systemWallet.service');
       const transactionId = `EXT_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`;
-      
+
       await SystemWalletService.transferFromUser(
         renterId,
         renterId,
@@ -368,8 +369,8 @@ class ExtensionService {
         orderCode,
         amount: Math.round(amount),
         description: `Extension: ${extensionRequest?.extensionDays || 'N/A'} ngày`.substring(0, 25),
-        returnUrl: `${process.env.CLIENT_URL || 'http://localhost:3000'}/rental-orders?payment=success&orderCode=${orderCode}`,
-        cancelUrl: `${process.env.CLIENT_URL || 'http://localhost:3000'}/rental-orders?payment=cancel&orderCode=${orderCode}`,
+        returnUrl: `${process.env.CLIENT_URL || 'https://pira.asia'}/rental-orders?payment=success&orderCode=${orderCode}`,
+        cancelUrl: `${process.env.CLIENT_URL || 'https://pira.asia'}/rental-orders?payment=cancel&orderCode=${orderCode}`,
         buyerName: renter.profile?.fullName || renter.profile?.firstName || 'Renter',
         buyerEmail: renter.email,
         buyerPhone: renter.phone || '',
@@ -535,9 +536,8 @@ class ExtensionService {
       // Transfer 90% extension fee to owner (frozen until order completed)
       const SystemWalletService = require('./systemWallet.service');
       const ownerCompensation = Math.floor(extensionRequest.totalCost * 0.9); // 90% of extension fee
-      
+
       if (ownerCompensation > 0) {
-        
         try {
           const adminId = process.env.SYSTEM_ADMIN_ID || 'SYSTEM_AUTO_TRANSFER';
           const transferResult = await SystemWalletService.transferToUserFrozen(
@@ -550,20 +550,16 @@ class ExtensionService {
 
           // Update transaction metadata with subOrderId for unlock tracking
           if (transferResult?.transactions?.user?._id) {
-            await Transaction.findByIdAndUpdate(
-              transferResult.transactions.user._id,
-              {
-                $set: {
-                  'metadata.subOrderId': extensionRequest.subOrder,
-                  'metadata.action': 'RECEIVED_EXTENSION_FEE',
-                  'metadata.extensionId': extensionRequest._id,
-                  'metadata.extensionDays': extensionRequest.extensionDays
-                }
+            await Transaction.findByIdAndUpdate(transferResult.transactions.user._id, {
+              $set: {
+                'metadata.subOrderId': extensionRequest.subOrder,
+                'metadata.action': 'RECEIVED_EXTENSION_FEE',
+                'metadata.extensionId': extensionRequest._id,
+                'metadata.extensionDays': extensionRequest.extensionDays
               }
-            );
+            });
           }
 
-          
           // Emit wallet update realtime for owner (frozen balance increased)
           if (global.chatGateway && transferResult?.userWallet) {
             global.chatGateway.emitWalletUpdate(ownerId.toString(), {
@@ -612,7 +608,7 @@ class ExtensionService {
         if (global.chatGateway) {
           // Emit notification with full notification object including _id
           global.chatGateway.emitNotification(result.renter._id.toString(), notification);
-          
+
           global.chatGateway.emitToUser(result.renter._id.toString(), 'extension-approved', {
             type: 'extension_approved',
             extensionId: requestId,
@@ -702,7 +698,7 @@ class ExtensionService {
         if (global.chatGateway) {
           // Emit notification with full notification object including _id
           global.chatGateway.emitNotification(result.renter._id.toString(), notification);
-          
+
           global.chatGateway.emitToUser(result.renter._id.toString(), 'extension-rejected', {
             type: 'extension_rejected',
             extensionId: requestId,
@@ -735,15 +731,14 @@ class ExtensionService {
         // Hoàn tiền gia hạn từ system wallet về ví renter
         const SystemWalletService = require('./systemWallet.service');
         const adminId = process.env.SYSTEM_ADMIN_ID || 'SYSTEM_AUTO_TRANSFER';
-        
+
         const refundResult = await SystemWalletService.transferToUser(
           adminId,
           renter,
           totalCost,
           reason
         );
-        
-        
+
         // Emit wallet update realtime for refund
         if (global.chatGateway && refundResult?.userWallet) {
           global.chatGateway.emitWalletUpdate(renter.toString(), {
@@ -785,10 +780,7 @@ class ExtensionService {
 
       // Refund payment with reason
       if (extensionRequest.paymentStatus === 'PAID') {
-        await this.refundExtensionPayment(
-          extensionRequest,
-          'Người thuê hủy yêu cầu gia hạn'
-        );
+        await this.refundExtensionPayment(extensionRequest, 'Người thuê hủy yêu cầu gia hạn');
       }
 
       return extensionRequest;
@@ -803,7 +795,7 @@ class ExtensionService {
   async autoRejectExpiredExtensions() {
     try {
       const now = new Date();
-      
+
       // Find all PENDING extension requests where currentEndDate has passed
       const expiredRequests = await ExtensionRequest.find({
         status: 'PENDING',
@@ -818,7 +810,6 @@ class ExtensionService {
           message: 'No expired extension requests to process'
         };
       }
-
 
       const results = [];
       for (const request of expiredRequests) {
@@ -840,14 +831,13 @@ class ExtensionService {
           );
 
           await request.save();
-          
+
           results.push({
             requestId: request._id,
             renter: request.renter?.email || 'N/A',
             refundAmount: request.totalCost,
             status: 'SUCCESS'
           });
-
         } catch (error) {
           console.error(`❌ Error processing request ${request._id}:`, error.message);
           results.push({
